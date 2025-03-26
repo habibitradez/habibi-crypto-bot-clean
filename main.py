@@ -75,8 +75,7 @@ def fetch_tweets(users):
             for tweet in tweets:
                 text = tweet.get("text", "")
                 cas = extract_contract_addresses(text)
-                formatted = f"🐦 **@{user}**:
-{text}"
+                formatted = f"🐦 **@{user}**:\n{text}"
                 if cas:
                     formatted += "\n📌 CA(s): " + ", ".join(cas)
                 out.append((formatted, cas[0] if cas else None))
@@ -107,6 +106,7 @@ def fetch_reddit_ca_mentions():
 
 def fetch_additional_social_mentions():
     results = []
+    # YouTube
     try:
         yt_query = safe_json_request("https://www.googleapis.com/youtube/v3/search?q=crypto&part=snippet&type=video&key=YOUR_YOUTUBE_API_KEY")
         for item in yt_query.get("items", [])[:3]:
@@ -115,8 +115,27 @@ def fetch_additional_social_mentions():
             results.append((f"📺 **YouTube**: {title}\n{link}", None))
     except:
         results.append(("📺 YouTube detection coming soon...", None))
-    results.append(("🎵 TikTok detection coming soon...", None))
-    results.append(("📸 Instagram detection coming soon...", None))
+
+    # TikTok (scraped)
+    try:
+        tiktok_resp = requests.get("https://www.tiktok.com/tag/crypto").text
+        tiktok_posts = re.findall(r'https://www\.tiktok\.com/@[\w\.-]+/video/\d+', tiktok_resp)
+        for url in list(set(tiktok_posts))[:3]:
+            results.append((f"🎵 TikTok Mention:
+{url}", None))
+    except:
+        results.append(("🎵 TikTok detection coming soon...", None))
+
+    # Instagram (scraped)
+    try:
+        insta_resp = requests.get("https://www.instagram.com/explore/tags/crypto/").text
+        insta_posts = re.findall(r"https://www\.instagram\.com/p/[\w-]+", insta_resp)
+        for url in list(set(insta_posts))[:3]:
+            results.append((f"📸 Instagram Mention:
+{url}", None))
+    except:
+        results.append(("📸 Instagram detection coming soon...", None))
+
     return results
 
 @bot.event
