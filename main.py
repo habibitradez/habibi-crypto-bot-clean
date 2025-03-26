@@ -75,7 +75,7 @@ def fetch_tweets(users):
             for tweet in tweets:
                 text = tweet.get("text", "")
                 cas = extract_contract_addresses(text)
-                formatted = f"🐦 **@{user}**:\n{text}"
+                formatted = f"🐦 **@{user}**\n{text}"
                 if cas:
                     formatted += "\n📌 CA(s): " + ", ".join(cas)
                 out.append((formatted, cas[0] if cas else None))
@@ -106,7 +106,6 @@ def fetch_reddit_ca_mentions():
 
 def fetch_additional_social_mentions():
     results = []
-    # YouTube
     try:
         yt_query = safe_json_request("https://www.googleapis.com/youtube/v3/search?q=crypto&part=snippet&type=video&key=YOUR_YOUTUBE_API_KEY")
         for item in yt_query.get("items", [])[:3]:
@@ -116,16 +115,14 @@ def fetch_additional_social_mentions():
     except:
         results.append(("📺 YouTube detection coming soon...", None))
 
-    # TikTok (scraped)
     try:
         tiktok_resp = requests.get("https://www.tiktok.com/tag/crypto").text
-        tiktok_posts = re.findall(r'https://www\\.tiktok\\.com/@[\w\\.-]+/video/\\d+', tiktok_resp)
+        tiktok_posts = re.findall(r'https://www\.tiktok\.com/@[\w\.-]+/video/\d+', tiktok_resp)
         for url in list(set(tiktok_posts))[:3]:
             results.append((f"🎵 TikTok Mention:\n{url}", None))
     except:
         results.append(("🎵 TikTok detection coming soon...", None))
 
-    # Instagram (scraped)
     try:
         insta_resp = requests.get("https://www.instagram.com/explore/tags/crypto/").text
         insta_posts = re.findall(r"https://www\\.instagram\\.com/p/[\w-]+", insta_resp)
@@ -144,25 +141,20 @@ async def on_ready():
         await alert_channel.send("💹 Habibi Bot is online and watching the crypto streets...")
     post_updates.start()
 
-@tasks.loop(seconds=60)
+@tasks.loop(seconds=30)
 async def post_updates():
     channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if not channel:
         return
-
     try:
         for msg, ca in fetch_tweets(["kanyewest", "elonmusk", "FIFAWorldCup"]):
             await channel.send(content=msg, view=create_trade_buttons(ca))
-
         for msg, _ in fetch_reddit_memes():
             await channel.send(msg)
-
         for msg, ca in fetch_reddit_ca_mentions():
             await channel.send(content=msg, view=create_trade_buttons(ca))
-
         for msg, _ in fetch_additional_social_mentions():
             await channel.send(msg)
-
     except Exception as e:
         logging.error(f"❌ Error in post_updates: {e}")
 
@@ -174,6 +166,11 @@ async def wallet_command(interaction: discord.Interaction):
 @bot.tree.command(name="trade", description="Trigger trading menu manually")
 async def trade_command(interaction: discord.Interaction):
     await interaction.response.send_message("📈 Trading Panel", view=create_trade_buttons("exampleCA"))
+
+@bot.tree.command(name="alerts", description="Manually trigger crypto alerts")
+async def alerts_command(interaction: discord.Interaction):
+    await interaction.response.send_message("🔔 Posting updates now...")
+    await post_updates()
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
