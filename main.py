@@ -16,7 +16,6 @@ import re
 from dotenv import load_dotenv
 from solders.keypair import Keypair
 from solana.rpc.api import Client
-from solana.transactions import Transaction  # ✅ Corrected import (transactions)
 from solana.publickey import PublicKey
 from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
