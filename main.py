@@ -12,6 +12,7 @@ import requests
 import openai
 import os
 import logging
+import re
 from dotenv import load_dotenv
 
 # --- LOAD .env CONFIG ---
@@ -20,7 +21,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
-PHANTOM_WALLET_ADDRESS = os.getenv("PHANTOM_WALLET_ADDRESS")  # Optional for later use
+PHANTOM_WALLET_ADDRESS = os.getenv("PHANTOM_WALLET_ADDRESS")
 
 openai.api_key = OPENAI_API_KEY
 
@@ -40,6 +41,14 @@ def safe_json_request(url, headers=None):
     except Exception as e:
         logging.error(f"❌ Error fetching {url}: {e}")
         return {}
+
+def extract_contract_address(text):
+    matches = re.findall(r"0x[a-fA-F0-9]{40}", text)
+    return matches[0] if matches else None
+
+def auto_snipe_token(ca):
+    # Simulate a Phantom wallet auto-buy
+    return f"🚀 Auto-sniped token at {ca} using Phantom Wallet {PHANTOM_WALLET_ADDRESS}"
 
 def get_twitter_mentions():
     headers = {
@@ -72,7 +81,46 @@ def get_twitter_mentions():
                 if media_url:
                     formatted += f"\n📸 {media_url}"
                 mentions.append(formatted)
+
+                # Auto-snipe if CA detected
+                ca = extract_contract_address(text)
+                if ca:
+                    mentions.append(auto_snipe_token(ca))
     return "\n\n".join(mentions) if mentions else None
+
+def get_trending_news():
+    url = f"https://newsapi.org/v2/top-headlines?category=business&q=crypto&apiKey={NEWSAPI_KEY}"
+    res = safe_json_request(url)
+    articles = res.get("articles", [])
+    if articles:
+        return f"📰 **{articles[0]['title']}**\n{articles[0]['url']}"
+    return None
+
+def get_crypto_memes():
+    url = "https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day"
+    headers = {"User-agent": "HabibiBot"}
+    res = safe_json_request(url, headers)
+    posts = res.get("data", {}).get("children", [])
+    if posts:
+        post = posts[0]["data"]
+        return f"😂 {post['title']}\nhttps://reddit.com{post['permalink']}"
+    return None
+
+def get_auto_snipes():
+    url = "https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new"
+    headers = {"User-agent": "HabibiBot"}
+    res = safe_json_request(url, headers)
+    posts = res.get("data", {}).get("children", [])
+    snipes = []
+    for post in posts[:5]:
+        title = post["data"].get("title", "")
+        if "0x" in title:
+            link = f"https://reddit.com{post['data']['permalink']}"
+            snipes.append(f"🎯 Auto-snipe detected: {title}\n{link}")
+            ca = extract_contract_address(title)
+            if ca:
+                snipes.append(auto_snipe_token(ca))
+    return "\n\n".join(snipes) if snipes else None
 
 # --- EVENTS ---
 @bot.event
@@ -85,13 +133,16 @@ async def on_ready():
         print(f"❌ Sync failed: {e}")
     run_all_alerts.start()
 
-@tasks.loop(seconds=10)
+@tasks.loop(seconds=15)
 async def run_all_alerts():
     channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if not channel:
         return
     funcs = [
-        get_twitter_mentions
+        get_twitter_mentions,
+        get_trending_news,
+        get_crypto_memes,
+        get_auto_snipes
     ]
     for func in funcs:
         try:
@@ -153,3 +204,4 @@ async def on_socket_response(payload):
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
+
