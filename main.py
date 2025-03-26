@@ -119,20 +119,18 @@ def fetch_additional_social_mentions():
     # TikTok (scraped)
     try:
         tiktok_resp = requests.get("https://www.tiktok.com/tag/crypto").text
-        tiktok_posts = re.findall(r'https://www\.tiktok\.com/@[\w\.-]+/video/\d+', tiktok_resp)
+        tiktok_posts = re.findall(r'https://www\\.tiktok\\.com/@[\w\\.-]+/video/\\d+', tiktok_resp)
         for url in list(set(tiktok_posts))[:3]:
-            results.append((f"🎵 TikTok Mention:
-{url}", None))
+            results.append((f"🎵 TikTok Mention:\n{url}", None))
     except:
         results.append(("🎵 TikTok detection coming soon...", None))
 
     # Instagram (scraped)
     try:
         insta_resp = requests.get("https://www.instagram.com/explore/tags/crypto/").text
-        insta_posts = re.findall(r"https://www\.instagram\.com/p/[\w-]+", insta_resp)
+        insta_posts = re.findall(r"https://www\\.instagram\\.com/p/[\w-]+", insta_resp)
         for url in list(set(insta_posts))[:3]:
-            results.append((f"📸 Instagram Mention:
-{url}", None))
+            results.append((f"📸 Instagram Mention:\n{url}", None))
     except:
         results.append(("📸 Instagram detection coming soon...", None))
 
