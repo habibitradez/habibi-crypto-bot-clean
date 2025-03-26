@@ -20,6 +20,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
+PHANTOM_WALLET_ADDRESS = os.getenv("PHANTOM_WALLET_ADDRESS")  # Optional for later use
 
 openai.api_key = OPENAI_API_KEY
 
@@ -28,6 +29,8 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 logging.basicConfig(level=logging.INFO)
+
+user_wallets = {}  # Simulated wallet balances
 
 # --- HELPER FUNCTIONS ---
 def safe_json_request(url, headers=None):
@@ -82,7 +85,7 @@ async def on_ready():
         print(f"❌ Sync failed: {e}")
     run_all_alerts.start()
 
-@tasks.loop(seconds=15)  # Post faster: every 15 seconds
+@tasks.loop(seconds=10)
 async def run_all_alerts():
     channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if not channel:
@@ -98,6 +101,55 @@ async def run_all_alerts():
         except Exception as e:
             logging.error(f"❌ Error in {func.__name__}: {e}")
 
+# --- PHANTOM WALLET & BUY/SELL FEATURES ---
+@bot.command()
+async def connectwallet(ctx):
+    user_wallets[ctx.author.id] = user_wallets.get(ctx.author.id, {"SOL": 2.5})
+    await ctx.send("🔐 Phantom Wallet connected! You can now use buttons to buy/sell tokens.")
+
+@bot.command()
+async def balance(ctx):
+    wallet = user_wallets.get(ctx.author.id, {"SOL": 0})
+    await ctx.send(f"💰 Balance: {wallet['SOL']} SOL")
+
+@bot.command()
+async def trade(ctx):
+    view = discord.ui.View()
+    for amount in [0.5, 1, 2, 3, 5]:
+        view.add_item(discord.ui.Button(label=f"Buy {amount} SOL", style=discord.ButtonStyle.green, custom_id=f"buy_{amount}"))
+        view.add_item(discord.ui.Button(label=f"Sell {amount} SOL", style=discord.ButtonStyle.red, custom_id=f"sell_{amount}"))
+    await ctx.send("🪙 Choose your trade action:", view=view)
+
+@bot.event
+async def on_socket_response(payload):
+    if payload.get("t") != "INTERACTION_CREATE":
+        return
+    data = payload.get("d", {})
+    custom_id = data.get("data", {}).get("custom_id")
+    user_id = int(data.get("member", {}).get("user", {}).get("id", 0))
+    if custom_id and user_id:
+        action, amount = custom_id.split("_")
+        amount = float(amount)
+        wallet = user_wallets.setdefault(user_id, {"SOL": 2.5})
+
+        if action == "buy":
+            if wallet["SOL"] + amount > 10:
+                message = f"⚠️ Cannot hold more than 10 SOL."
+            else:
+                wallet["SOL"] += amount
+                message = f"🟢 Bought {amount} SOL. New balance: {wallet['SOL']} SOL"
+
+        elif action == "sell":
+            if wallet["SOL"] < amount:
+                message = f"❌ Not enough SOL to sell."
+            else:
+                wallet["SOL"] -= amount
+                message = f"🔴 Sold {amount} SOL. New balance: {wallet['SOL']} SOL"
+
+        channel_id = int(data.get("channel_id"))
+        channel = bot.get_channel(channel_id)
+        if channel:
+            await channel.send(message)
+
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
-
