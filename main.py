@@ -65,8 +65,7 @@ def get_twitter_mentions():
                 media_keys = tweet.get("attachments", {}).get("media_keys", [])
                 if media_keys:
                     media_url = media_map.get(media_keys[0], "")
-                formatted = f"🐦 **@{user}**:
-{text}\n{tweet_url}"
+                formatted = f"🐦 **@{user}**:\n{text}\n{tweet_url}"
                 if media_url:
                     formatted += f"\n📸 {media_url}"
                 mentions.append(formatted)
@@ -101,3 +100,4 @@ async def run_all_alerts():
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
+
