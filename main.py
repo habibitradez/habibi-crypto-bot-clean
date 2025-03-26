@@ -16,8 +16,6 @@ import re
 from dotenv import load_dotenv
 from solders.keypair import Keypair
 from solana.rpc.api import Client
-from solana.publickey import PublicKey
-from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
 
 # --- LOAD .env CONFIG ---
@@ -32,7 +30,7 @@ PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 openai.api_key = OPENAI_API_KEY
 solana_client = Client("https://api.mainnet-beta.solana.com")
 phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY)
-phantom_wallet = PublicKey(PHANTOM_PUBLIC_KEY)
+phantom_wallet = PHANTOM_PUBLIC_KEY  # Not using PublicKey class
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -173,3 +171,4 @@ async def alerts_command(interaction: discord.Interaction):
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
+
