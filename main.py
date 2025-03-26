@@ -19,7 +19,7 @@ load_dotenv()
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TWITTER_BEARER_TOKEN = "AAAAAAAAAAAAAAAAAAAAAAOb0AEAAAAACMYR%2BPqdDgB5XreJwpWAmHsRidU%3DlrpGW9u4lbPouN05th1j804d8ZBEYxQB8LdFKvTvazXd43NK43"
+TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")  # Changed to use .env properly
 
 openai.api_key = OPENAI_API_KEY
 
@@ -31,9 +31,17 @@ logging.basicConfig(level=logging.INFO)
 
 # --- HELPER FUNCTIONS ---
 
+def safe_json_request(url, headers=None):
+    try:
+        res = requests.get(url, headers=headers, timeout=10)
+        return res.json()
+    except Exception as e:
+        logging.error(f"❌ Error fetching {url}: {e}")
+        return {}
+
 def get_trending_news():
     url = f"https://newsapi.org/v2/top-headlines?category=business&q=crypto&apiKey={NEWSAPI_KEY}"
-    res = requests.get(url).json()
+    res = safe_json_request(url)
     articles = res.get("articles", [])
     if len(articles) >= 2:
         second_news = articles[1]
@@ -43,10 +51,12 @@ def get_trending_news():
 def get_crypto_memes():
     reddit_url = "https://www.reddit.com/r/cryptomemes/top.json?limit=5&t=day"
     headers = {"User-agent": "HabibiBot"}
-    res = requests.get(reddit_url, headers=headers).json()
-    memes = res["data"]["children"]
-    meme = memes[0]["data"]
-    return f"{meme['title']}\nhttps://reddit.com{meme['permalink']}"
+    res = safe_json_request(reddit_url, headers)
+    memes = res.get("data", {}).get("children", [])
+    if memes:
+        meme = memes[0]["data"]
+        return f"{meme['title']}\nhttps://reddit.com{meme['permalink']}"
+    return None
 
 def ask_habibi(prompt):
     response = openai.ChatCompletion.create(
@@ -60,7 +70,7 @@ def ask_habibi(prompt):
 
 def get_whale_alert():
     url = "https://api.whale-alert.io/v1/transactions?api_key=demo&min_value=500000&currency=btc"
-    res = requests.get(url).json()
+    res = safe_json_request(url)
     txns = res.get("transactions", [])
     if txns:
         txn = txns[0]
@@ -69,7 +79,7 @@ def get_whale_alert():
 
 def get_price_alert():
     url = "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd&include_24hr_change=true"
-    res = requests.get(url).json()
+    res = safe_json_request(url)
     btc = res.get("bitcoin", {})
     eth = res.get("ethereum", {})
     alert = []
@@ -90,7 +100,7 @@ def get_celeb_mentions():
     for celeb in celebs:
         url = f"https://www.reddit.com/user/{celeb}/submitted.json?limit=5"
         headers = {"User-agent": "HabibiBot"}
-        res = requests.get(url, headers=headers).json()
+        res = safe_json_request(url, headers)
         posts = res.get("data", {}).get("children", [])
         for post in posts:
             title = post["data"].get("title", "")
@@ -101,7 +111,7 @@ def get_celeb_mentions():
 def get_ca_mentions():
     search_url = "https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new"
     headers = {"User-agent": "HabibiBot"}
-    res = requests.get(search_url, headers=headers).json()
+    res = safe_json_request(search_url, headers)
     posts = res.get("data", {}).get("children", [])
     mentions = []
     for post in posts[:5]:
@@ -122,11 +132,11 @@ def get_twitter_mentions():
     mentions = []
     for user in users:
         url = f"https://api.twitter.com/2/users/by/username/{user}"
-        res = requests.get(url, headers=headers).json()
+        res = safe_json_request(url, headers)
         user_id = res.get("data", {}).get("id")
         if user_id:
             timeline_url = f"https://api.twitter.com/2/users/{user_id}/tweets?max_results=5&tweet.fields=created_at"
-            tweets = requests.get(timeline_url, headers=headers).json().get("data", [])
+            tweets = safe_json_request(timeline_url, headers).get("data", [])
             for tweet in tweets:
                 mentions.append(f"🐦 @{user}: {tweet['text']}")
     return "\n\n".join(mentions) if mentions else None
@@ -141,7 +151,7 @@ async def on_ready():
     except Exception as e:
         print(f"❌ Sync failed: {e}")
 
-    run_all_alerts.start()  # Start the background loop
+    run_all_alerts.start()
 
 @tasks.loop(seconds=30)
 async def run_all_alerts():
@@ -168,4 +178,5 @@ async def run_all_alerts():
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
+
 
