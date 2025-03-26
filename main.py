@@ -14,6 +14,11 @@ import os
 import logging
 import re
 from dotenv import load_dotenv
+from solders.keypair import Keypair
+from solana.rpc.api import Client
+from solana.transaction import Transaction
+from solana.publickey import PublicKey
+from solana.system_program import TransferParams, transfer
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -21,17 +26,19 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 NEWSAPI_KEY = os.getenv("NEWSAPI_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
-PHANTOM_WALLET_ADDRESS = os.getenv("PHANTOM_WALLET_ADDRESS")
+PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
+PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 
 openai.api_key = OPENAI_API_KEY
+solana_client = Client("https://api.mainnet-beta.solana.com")
+phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+phantom_wallet = PublicKey(PHANTOM_PUBLIC_KEY)
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 logging.basicConfig(level=logging.INFO)
-
-user_wallets = {}  # Simulated wallet balances
 
 # --- HELPER FUNCTIONS ---
 def safe_json_request(url, headers=None):
@@ -47,161 +54,88 @@ def extract_contract_address(text):
     return matches[0] if matches else None
 
 def auto_snipe_token(ca):
-    # Simulate a Phantom wallet auto-buy
-    return f"🚀 Auto-sniped token at {ca} using Phantom Wallet {PHANTOM_WALLET_ADDRESS}"
+    recipient = phantom_wallet
+    lamports = int(0.1 * 1_000_000_000)
+    txn = Transaction().add(
+        transfer(
+            TransferParams(
+                from_pubkey=phantom_keypair.public_key,
+                to_pubkey=recipient,
+                lamports=lamports
+            )
+        )
+    )
+    try:
+        res = solana_client.send_transaction(txn, phantom_keypair)
+        sig = res["result"]
+        return f"🚀 **Auto-Snipe Executed**\n📄 Token: `{ca}`\n🔐 [TX on Solscan](https://solscan.io/tx/{sig})"
+    except Exception as e:
+        return f"❌ Auto-Snipe failed: {e}"
 
-def get_twitter_mentions():
-    headers = {
-        "Authorization": f"Bearer {TWITTER_BEARER_TOKEN.strip()}"
-    }
-    users = [
-        "blknoiz06", "larpvontrier", "poe_ether", "thecexoffernder",
-        "arrogantfrfr", "larpalt", "iambroots", "uniswapvillain", "crashiusclay69",
-        "kanyewest", "elonmusk", "FIFAWorldCup"
-    ]
-    mentions = []
+def fetch_tweets(users):
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    out = []
     for user in users:
-        user_url = f"https://api.twitter.com/2/users/by/username/{user}"
-        res = safe_json_request(user_url, headers)
-        user_data = res.get("data", {})
-        user_id = user_data.get("id")
-        if user_id:
-            timeline_url = f"https://api.twitter.com/2/users/{user_id}/tweets?max_results=5&expansions=attachments.media_keys&media.fields=url,preview_image_url,type&tweet.fields=created_at,text"
-            tweets = safe_json_request(timeline_url, headers)
-            tweet_data = tweets.get("data", [])
-            media_map = {m["media_key"]: m.get("url") or m.get("preview_image_url") for m in tweets.get("includes", {}).get("media", [])}
-            for tweet in tweet_data:
+        user_data = safe_json_request(f"https://api.twitter.com/2/users/by/username/{user}", headers)
+        uid = user_data.get("data", {}).get("id")
+        if uid:
+            tweets = safe_json_request(
+                f"https://api.twitter.com/2/users/{uid}/tweets?max_results=5&tweet.fields=created_at", headers
+            ).get("data", [])
+            for tweet in tweets:
                 text = tweet.get("text", "")
-                tweet_url = f"https://twitter.com/{user}/status/{tweet['id']}"
-                media_url = ""
-                media_keys = tweet.get("attachments", {}).get("media_keys", [])
-                if media_keys:
-                    media_url = media_map.get(media_keys[0], "")
-                formatted = f"🐦 **@{user}**:\n{text}\n{tweet_url}"
-                if media_url:
-                    formatted += f"\n📸 {media_url}"
-                mentions.append(formatted)
-
-                # Auto-snipe if CA detected
                 ca = extract_contract_address(text)
-                if ca:
-                    mentions.append(auto_snipe_token(ca))
-    return "\n\n".join(mentions) if mentions else None
+                snipe_result = auto_snipe_token(ca) if ca else ""
+                out.append(f"🐦 **@{user}** posted:\n{text}\n{snipe_result}")
+    return out
 
-def get_trending_news():
-    url = f"https://newsapi.org/v2/top-headlines?category=business&q=crypto&apiKey={NEWSAPI_KEY}"
-    res = safe_json_request(url)
-    articles = res.get("articles", [])
-    if articles:
-        return f"📰 **{articles[0]['title']}**\n{articles[0]['url']}"
-    return None
-
-def get_crypto_memes():
+def fetch_reddit_memes():
+    headers = {"User-agent": "HabibiBot/1.0"}
     url = "https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day"
-    headers = {"User-agent": "HabibiBot"}
-    res = safe_json_request(url, headers)
-    posts = res.get("data", {}).get("children", [])
-    if posts:
-        post = posts[0]["data"]
-        return f"😂 {post['title']}\nhttps://reddit.com{post['permalink']}"
-    return None
+    data = safe_json_request(url, headers)
+    posts = data.get("data", {}).get("children", [])
+    return [f"😂 {p['data']['title']}\nhttps://reddit.com{p['data']['permalink']}" for p in posts]
 
-def get_auto_snipes():
+def fetch_reddit_ca_mentions():
+    headers = {"User-agent": "HabibiBot/1.0"}
     url = "https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new"
-    headers = {"User-agent": "HabibiBot"}
-    res = safe_json_request(url, headers)
-    posts = res.get("data", {}).get("children", [])
-    snipes = []
-    for post in posts[:5]:
-        title = post["data"].get("title", "")
-        if "0x" in title:
-            link = f"https://reddit.com{post['data']['permalink']}"
-            snipes.append(f"🎯 Auto-snipe detected: {title}\n{link}")
-            ca = extract_contract_address(title)
-            if ca:
-                snipes.append(auto_snipe_token(ca))
-    return "\n\n".join(snipes) if snipes else None
+    data = safe_json_request(url, headers)
+    posts = data.get("data", {}).get("children", [])
+    output = []
+    for p in posts[:3]:
+        title = p['data'].get('title', '')
+        link = f"https://reddit.com{p['data']['permalink']}"
+        ca = extract_contract_address(title)
+        snipe = auto_snipe_token(ca) if ca else ""
+        output.append(f"📢 {title}\n{link}\n{snipe}")
+    return output
 
-# --- EVENTS ---
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
-    try:
-        synced = await bot.tree.sync()
-        print(f"🔁 Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"❌ Sync failed: {e}")
-    run_all_alerts.start()
+    alert_channel = discord.utils.get(bot.get_all_channels(), name="alerts")
+    if alert_channel:
+        await alert_channel.send("💹 Habibi Bot is online and watching the crypto streets...")
+    post_updates.start()
 
-@tasks.loop(seconds=15)
-async def run_all_alerts():
+@tasks.loop(seconds=60)
+async def post_updates():
     channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if not channel:
         return
-    funcs = [
-        get_twitter_mentions,
-        get_trending_news,
-        get_crypto_memes,
-        get_auto_snipes
-    ]
-    for func in funcs:
-        try:
-            result = func()
-            if result:
-                await channel.send(result)
-        except Exception as e:
-            logging.error(f"❌ Error in {func.__name__}: {e}")
 
-# --- PHANTOM WALLET & BUY/SELL FEATURES ---
-@bot.command()
-async def connectwallet(ctx):
-    user_wallets[ctx.author.id] = user_wallets.get(ctx.author.id, {"SOL": 2.5})
-    await ctx.send("🔐 Phantom Wallet connected! You can now use buttons to buy/sell tokens.")
+    try:
+        for tweet in fetch_tweets(["kanyewest", "elonmusk", "FIFAWorldCup"]):
+            await channel.send(tweet)
 
-@bot.command()
-async def balance(ctx):
-    wallet = user_wallets.get(ctx.author.id, {"SOL": 0})
-    await ctx.send(f"💰 Balance: {wallet['SOL']} SOL")
+        for meme in fetch_reddit_memes():
+            await channel.send(meme)
 
-@bot.command()
-async def trade(ctx):
-    view = discord.ui.View()
-    for amount in [0.5, 1, 2, 3, 5]:
-        view.add_item(discord.ui.Button(label=f"Buy {amount} SOL", style=discord.ButtonStyle.green, custom_id=f"buy_{amount}"))
-        view.add_item(discord.ui.Button(label=f"Sell {amount} SOL", style=discord.ButtonStyle.red, custom_id=f"sell_{amount}"))
-    await ctx.send("🪙 Choose your trade action:", view=view)
+        for ca_post in fetch_reddit_ca_mentions():
+            await channel.send(ca_post)
 
-@bot.event
-async def on_socket_response(payload):
-    if payload.get("t") != "INTERACTION_CREATE":
-        return
-    data = payload.get("d", {})
-    custom_id = data.get("data", {}).get("custom_id")
-    user_id = int(data.get("member", {}).get("user", {}).get("id", 0))
-    if custom_id and user_id:
-        action, amount = custom_id.split("_")
-        amount = float(amount)
-        wallet = user_wallets.setdefault(user_id, {"SOL": 2.5})
-
-        if action == "buy":
-            if wallet["SOL"] + amount > 10:
-                message = f"⚠️ Cannot hold more than 10 SOL."
-            else:
-                wallet["SOL"] += amount
-                message = f"🟢 Bought {amount} SOL. New balance: {wallet['SOL']} SOL"
-
-        elif action == "sell":
-            if wallet["SOL"] < amount:
-                message = f"❌ Not enough SOL to sell."
-            else:
-                wallet["SOL"] -= amount
-                message = f"🔴 Sold {amount} SOL. New balance: {wallet['SOL']} SOL"
-
-        channel_id = int(data.get("channel_id"))
-        channel = bot.get_channel(channel_id)
-        if channel:
-            await channel.send(message)
+    except Exception as e:
+        logging.error(f"❌ Error in post_updates: {e}")
 
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
-
