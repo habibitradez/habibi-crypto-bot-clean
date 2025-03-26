@@ -29,7 +29,16 @@ PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 
 openai.api_key = OPENAI_API_KEY
 solana_client = Client("https://api.mainnet-beta.solana.com")
-phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+
+phantom_keypair = None
+if PHANTOM_SECRET_KEY:
+    try:
+        phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+    except Exception as e:
+        logging.warning(f"⚠️ Could not initialize Phantom keypair: {e}")
+else:
+    logging.warning("⚠️ No PHANTOM_SECRET_KEY provided. Trading functions will be disabled.")
+
 phantom_wallet = PHANTOM_PUBLIC_KEY  # Not using PublicKey class
 
 intents = discord.Intents.default()
