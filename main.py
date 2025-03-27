@@ -111,12 +111,14 @@ def fetch_tweets(users):
     return out
 
 def fetch_reddit_memes():
-    data = safe_json_request("https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day")
+    headers = {"User-Agent": "HabibiBot/1.0"}
+    data = safe_json_request("https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day", headers)
     posts = data.get("data", {}).get("children", [])
     return [(f"😂 **{p['data']['title']}**\nhttps://reddit.com{p['data']['permalink']}", None) for p in posts]
 
 def fetch_reddit_ca_mentions():
-    data = safe_json_request("https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new")
+    headers = {"User-Agent": "HabibiBot/1.0"}
+    data = safe_json_request("https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new", headers)
     posts = data.get("data", {}).get("children", [])
     output = []
     for p in posts[:3]:
@@ -128,6 +130,11 @@ def fetch_reddit_ca_mentions():
             msg += "\n📌 CA(s): " + ", ".join(cas)
         output.append((msg, cas[0] if cas else None, False))
     return output
+
+def fetch_headlines():
+    url = f"https://newsapi.org/v2/top-headlines?q=crypto&apiKey={NEWSAPI_KEY}&language=en&pageSize=5"
+    headlines = safe_json_request(url).get("articles", [])
+    return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
 def fetch_additional_social_mentions():
     global posted_social_placeholders
@@ -155,6 +162,7 @@ def monitor_token_gains():
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+    await bot.tree.sync()  # Register slash commands
     alert_channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if alert_channel:
         await alert_channel.send("💹 Habibi Bot is online and watching the crypto streets...")
@@ -172,14 +180,20 @@ async def post_updates():
                 if execute_auto_trade(ca, celebrity=celebrity):
                     await channel.send(f"💥 Auto-sniped `{ca}` with {'1 SOL' if celebrity else '0.5 SOL'}!")
                     await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
+
         for msg, _, _ in fetch_reddit_memes():
             await channel.send(msg)
+
         for msg, ca, _ in fetch_reddit_ca_mentions():
             await channel.send(content=msg, view=create_trade_buttons(ca))
             if ca:
                 if execute_auto_trade(ca):
                     await channel.send(f"💥 Auto-sniped `{ca}` with 0.5 SOL!")
                     await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
+
+        for msg in fetch_headlines():
+            await channel.send(msg)
+
         for msg, _, _ in fetch_additional_social_mentions():
             await channel.send(msg)
 
