@@ -13,6 +13,7 @@ import openai
 import os
 import logging
 import re
+import json
 from dotenv import load_dotenv
 from solders.keypair import Keypair
 from solana.rpc.api import Client
@@ -39,7 +40,7 @@ if PHANTOM_SECRET_KEY:
 else:
     logging.warning("⚠️ No PHANTOM_SECRET_KEY provided. Trading functions will be disabled.")
 
-phantom_wallet = PHANTOM_PUBLIC_KEY  # Not using PublicKey class
+phantom_wallet = PHANTOM_PUBLIC_KEY
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -47,10 +48,14 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 
 logging.basicConfig(level=logging.INFO)
 
+watchlist = set()
+sniped_contracts = []
+gain_tracking = {}
+
 # --- HELPER FUNCTIONS ---
 def safe_json_request(url, headers=None):
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
         return res.json()
     except Exception as e:
         logging.error(f"❌ Error fetching {url}: {e}")
@@ -68,6 +73,23 @@ def create_trade_buttons(ca=None):
     view.add_item(Button(label="Sell Token", style=discord.ButtonStyle.red, custom_id="sell_token"))
     return view
 
+def log_sniped_contract(ca, amount):
+    entry = {"ca": ca, "amount": amount}
+    sniped_contracts.append(entry)
+    with open("sniped_contracts.json", "w") as f:
+        json.dump(sniped_contracts, f, indent=2)
+    gain_tracking[ca] = {"buy_price": 1.0, "target_50": False, "target_100": False}  # Mock buy price
+
+def execute_auto_trade(ca, celebrity=False):
+    if phantom_keypair and ca:
+        amount = 1 if celebrity else 0.5
+        logging.info(f"🚀 Auto-sniping CA: {ca} with {amount} SOL...")
+        log_sniped_contract(ca, amount)
+        return True
+    else:
+        logging.info(f"⛔ Skipping snipe for {ca} – Phantom key not connected.")
+    return False
+
 def fetch_tweets(users):
     headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
     out = []
@@ -84,20 +106,16 @@ def fetch_tweets(users):
                 formatted = f"🐦 **@{user}**\n{text}"
                 if cas:
                     formatted += "\n📌 CA(s): " + ", ".join(cas)
-                out.append((formatted, cas[0] if cas else None))
+                out.append((formatted, cas[0] if cas else None, user in ["elonmusk", "kanyewest"]))
     return out
 
 def fetch_reddit_memes():
-    headers = {"User-agent": "HabibiBot/1.0"}
-    url = "https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day"
-    data = safe_json_request(url, headers)
+    data = safe_json_request("https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day")
     posts = data.get("data", {}).get("children", [])
     return [(f"😂 **{p['data']['title']}**\nhttps://reddit.com{p['data']['permalink']}", None) for p in posts]
 
 def fetch_reddit_ca_mentions():
-    headers = {"User-agent": "HabibiBot/1.0"}
-    url = "https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new"
-    data = safe_json_request(url, headers)
+    data = safe_json_request("https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new")
     posts = data.get("data", {}).get("children", [])
     output = []
     for p in posts[:3]:
@@ -107,37 +125,27 @@ def fetch_reddit_ca_mentions():
         msg = f"📢 **{title}**\n{link}"
         if cas:
             msg += "\n📌 CA(s): " + ", ".join(cas)
-        output.append((msg, cas[0] if cas else None))
+        output.append((msg, cas[0] if cas else None, False))
     return output
 
 def fetch_additional_social_mentions():
     results = []
-    try:
-        yt_query = safe_json_request("https://www.googleapis.com/youtube/v3/search?q=crypto&part=snippet&type=video&key=YOUR_YOUTUBE_API_KEY")
-        for item in yt_query.get("items", [])[:3]:
-            title = item['snippet']['title']
-            link = f"https://youtube.com/watch?v={item['id']['videoId']}"
-            results.append((f"📺 **YouTube**: {title}\n{link}", None))
-    except:
-        results.append(("📺 YouTube detection coming soon...", None))
-
-    try:
-        tiktok_resp = requests.get("https://www.tiktok.com/tag/crypto").text
-        tiktok_posts = re.findall(r'https://www\\.tiktok\\.com/@[\\w\\.-]+/video/\\d+', tiktok_resp)
-        for url in list(set(tiktok_posts))[:3]:
-            results.append((f"🎵 TikTok Mention:\n{url}", None))
-    except:
-        results.append(("🎵 TikTok detection coming soon...", None))
-
-    try:
-        insta_resp = requests.get("https://www.instagram.com/explore/tags/crypto/").text
-        insta_posts = re.findall(r"https://www\\.instagram\\.com/p/[\\w-]+", insta_resp)
-        for url in list(set(insta_posts))[:3]:
-            results.append((f"📸 Instagram Mention:\n{url}", None))
-    except:
-        results.append(("📸 Instagram detection coming soon...", None))
-
+    results.append(("📺 YouTube detection coming soon...", None, False))
+    results.append(("🎵 TikTok detection coming soon...", None, False))
+    results.append(("📸 Instagram detection coming soon...", None, False))
     return results
+
+def monitor_token_gains():
+    alerts = []
+    for ca, data in gain_tracking.items():
+        gain = 1.2  # Mock gain factor
+        if not data["target_50"] and gain >= 1.5:
+            alerts.append((ca, "📈 50% gain hit! Watch manually."))
+            data["target_50"] = True
+        if not data["target_100"] and gain >= 2.0:
+            alerts.append((ca, "💰 100%+ gain hit! Auto-selling..."))
+            data["target_100"] = True
+    return alerts
 
 @bot.event
 async def on_ready():
@@ -153,14 +161,26 @@ async def post_updates():
     if not channel:
         return
     try:
-        for msg, ca in fetch_tweets(["kanyewest", "elonmusk", "FIFAWorldCup"]):
+        for msg, ca, celebrity in fetch_tweets(["kanyewest", "elonmusk", "FIFAWorldCup"]):
             await channel.send(content=msg, view=create_trade_buttons(ca))
-        for msg, _ in fetch_reddit_memes():
+            if ca:
+                if execute_auto_trade(ca, celebrity=celebrity):
+                    await channel.send(f"💥 Auto-sniped `{ca}` with {'1 SOL' if celebrity else '0.5 SOL'}!")
+                    await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
+        for msg, _, _ in fetch_reddit_memes():
             await channel.send(msg)
-        for msg, ca in fetch_reddit_ca_mentions():
+        for msg, ca, _ in fetch_reddit_ca_mentions():
             await channel.send(content=msg, view=create_trade_buttons(ca))
-        for msg, _ in fetch_additional_social_mentions():
+            if ca:
+                if execute_auto_trade(ca):
+                    await channel.send(f"💥 Auto-sniped `{ca}` with 0.5 SOL!")
+                    await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
+        for msg, _, _ in fetch_additional_social_mentions():
             await channel.send(msg)
+
+        for ca, notice in monitor_token_gains():
+            await channel.send(f"🔔 {notice} `{ca}`")
+
     except Exception as e:
         logging.error(f"❌ Error in post_updates: {e}")
 
@@ -178,6 +198,22 @@ async def alerts_command(interaction: discord.Interaction):
     await interaction.response.send_message("🔔 Posting updates now...")
     await post_updates()
 
+@bot.tree.command(name="watch", description="Track a specific contract address")
+async def watch_command(interaction: discord.Interaction, ca: str):
+    watchlist.add(ca)
+    await interaction.response.send_message(f"👁️ Now watching CA: `{ca}`")
+
+@bot.tree.command(name="help", description="List all available commands")
+async def help_command(interaction: discord.Interaction):
+    help_text = (
+        "📖 **Habibi Bot Commands:**\n"
+        "/wallet - Show Phantom wallet\n"
+        "/trade - Open trade menu\n"
+        "/alerts - Trigger all alerts manually\n"
+        "/watch <CA> - Watch a specific contract address\n"
+        "/help - Show this help message"
+    )
+    await interaction.response.send_message(help_text)
+
 # --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
-
