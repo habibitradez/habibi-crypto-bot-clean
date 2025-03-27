@@ -130,11 +130,15 @@ def fetch_reddit_ca_mentions():
     return output
 
 def fetch_additional_social_mentions():
-    results = []
-    results.append(("📺 YouTube detection coming soon...", None, False))
-    results.append(("🎵 TikTok detection coming soon...", None, False))
-    results.append(("📸 Instagram detection coming soon...", None, False))
-    return results
+    global posted_social_placeholders
+    if posted_social_placeholders:
+        return []
+    posted_social_placeholders = True
+    return [
+        ("📺 YouTube detection coming soon...", None, False),
+        ("🎵 TikTok detection coming soon...", None, False),
+        ("📸 Instagram detection coming soon...", None, False)
+    ]
 
 def monitor_token_gains():
     alerts = []
@@ -158,7 +162,6 @@ async def on_ready():
 
 @tasks.loop(seconds=30)
 async def post_updates():
-    global posted_social_placeholders
     channel = discord.utils.get(bot.get_all_channels(), name="alerts")
     if not channel:
         return
@@ -177,10 +180,8 @@ async def post_updates():
                 if execute_auto_trade(ca):
                     await channel.send(f"💥 Auto-sniped `{ca}` with 0.5 SOL!")
                     await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
-        if not posted_social_placeholders:
-            for msg, _, _ in fetch_additional_social_mentions():
-                await channel.send(msg)
-            posted_social_placeholders = True
+        for msg, _, _ in fetch_additional_social_mentions():
+            await channel.send(msg)
 
         for ca, notice in monitor_token_gains():
             await channel.send(f"🔔 {notice} `{ca}`")
