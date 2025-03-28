@@ -142,10 +142,10 @@ async def on_ready():
         logging.info(f"✅ Synced {len(synced)} commands with Discord")
     except Exception as e:
         logging.error(f"❌ Command sync failed: {e}")
+    logging.info(f"🤖 Logged in as {bot.user} and ready.")
     post_hourly_news.start()
     monitor_gains.start()
     scan_x.start()
-    logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
 @bot.event
 async def on_error(event, *args, **kwargs):
@@ -162,9 +162,5 @@ async def on_resumed():
 @bot.event
 async def on_connect():
     logging.info("🔌 Bot connecting to Discord...")
-
-@bot.event
-async def on_ready():
-    logging.info("✅ Bot is connected and ready!")
 
 bot.run(DISCORD_TOKEN)
