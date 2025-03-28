@@ -155,6 +155,29 @@ async def monitor_for_contracts():
                                 logging.info(f"📈 Sniped {ca} from post: {title}")
         await asyncio.sleep(60)
 
+async def monitor_twitter_for_contracts():
+    await bot.wait_until_ready()
+    logging.info("🐦 Twitter CA scanner started...")
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    query = "(0x) (crypto OR solana OR token) -is:retweet lang:en"
+    seen_ids = set()
+    while not bot.is_closed():
+        url = f"https://api.twitter.com/2/tweets/search/recent?query={query}&tweet.fields=id,text,author_id&max_results=10"
+        data = safe_json_request(url, headers=headers)
+        tweets = data.get("data", [])
+        for tweet in tweets:
+            tweet_id = tweet.get("id")
+            text = tweet.get("text", "")
+            if tweet_id and tweet_id not in seen_ids:
+                seen_ids.add(tweet_id)
+                cas = extract_contract_addresses(text)
+                if cas:
+                    celeb = "verified" in text.lower() or "elon" in text.lower()
+                    for ca in cas:
+                        if execute_auto_trade(ca, celebrity=celeb):
+                            logging.info(f"🐦 Sniped {ca} from tweet: {text}")
+        await asyncio.sleep(60)
+
 # --- INTERACTION HANDLER ---
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
@@ -209,6 +232,7 @@ async def on_ready():
     await bot.tree.sync()
     post_hourly_news.start()
     bot.loop.create_task(monitor_for_contracts())
+    bot.loop.create_task(monitor_twitter_for_contracts())
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
 bot.run(DISCORD_TOKEN)
