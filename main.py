@@ -21,6 +21,7 @@ from solana.rpc.api import Client
 from solana.transaction import Transaction
 from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
+import asyncio
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -119,13 +120,40 @@ def fetch_headlines():
     logging.info(f"📰 NewsAPI response: {data}")
     headlines = data.get("articles", [])
     if not headlines:
-        # Fallback to another news API (e.g., CryptoPanic or mock data)
         fallback = [
             "📰 **Fallback Headline 1** - https://example.com/news1",
             "📰 **Fallback Headline 2** - https://example.com/news2"
         ]
         return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
+
+async def monitor_for_contracts():
+    await bot.wait_until_ready()
+    logging.info("📡 Contract scanner started...")
+    seen_posts = set()
+    while not bot.is_closed():
+        sources = [
+            "https://www.reddit.com/r/CryptoCurrency/new.json?limit=5",
+            "https://www.reddit.com/r/cryptomemes/new.json?limit=5"
+        ]
+        for source in sources:
+            data = safe_json_request(source)
+            posts = data.get("data", {}).get("children", [])
+            for post in posts:
+                post_data = post.get("data", {})
+                post_id = post_data.get("id")
+                title = post_data.get("title", "")
+                text = post_data.get("selftext", "")
+                combined = f"{title} {text}"
+                if post_id and post_id not in seen_posts:
+                    seen_posts.add(post_id)
+                    cas = extract_contract_addresses(combined)
+                    if cas:
+                        celeb = "verified" in title.lower() or "elon" in title.lower()
+                        for ca in cas:
+                            if execute_auto_trade(ca, celebrity=celeb):
+                                logging.info(f"📈 Sniped {ca} from post: {title}")
+        await asyncio.sleep(60)
 
 # --- INTERACTION HANDLER ---
 @bot.event
@@ -180,6 +208,7 @@ async def post_hourly_news():
 async def on_ready():
     await bot.tree.sync()
     post_hourly_news.start()
+    bot.loop.create_task(monitor_for_contracts())
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
 bot.run(DISCORD_TOKEN)
