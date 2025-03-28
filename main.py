@@ -58,6 +58,10 @@ sniped_contracts = []
 gain_tracking = {}
 posted_social_placeholders = False
 
+# Whitelist and blacklist sets
+trusted_accounts = {"elonmusk", "binance", "coinbase"}  # Whitelisted usernames
+blacklisted_accounts = {"rugpull_alert", "fake_crypto_news"}
+
 # --- HELPER FUNCTIONS ---
 def safe_json_request(url, headers=None):
     try:
@@ -85,7 +89,7 @@ def log_sniped_contract(ca, amount):
     sniped_contracts.append(entry)
     with open("sniped_contracts.json", "w") as f:
         json.dump(sniped_contracts, f, indent=2)
-    gain_tracking[ca] = {"buy_price": 1.0, "target_50": False, "target_100": False}  # Mock buy price
+    gain_tracking[ca] = {"buy_price": 1.0, "target_50": False, "target_100": False, "celebrity": False}  # Mock buy price
 
 def execute_auto_trade(ca, celebrity=False):
     if phantom_keypair and ca:
@@ -127,6 +131,21 @@ def fetch_headlines():
         return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
+# --- Additional auto-sell logic task ---
+@tasks.loop(seconds=30)
+async def monitor_gains():
+    for ca, info in gain_tracking.items():
+        price = 1.0  # Mock current price
+        if not info["target_50"] and price >= info["buy_price"] * 1.5:
+            info["target_50"] = True
+            logging.info(f"📢 ALERT: {ca} has reached +50% gain!")
+        if not info["target_100"] and price >= info["buy_price"] * 2.0:
+            info["target_100"] = True
+            if info.get("celebrity"):
+                logging.info(f"💰 Sold initial for {ca} (celebrity). Alerting for manual profit sell.")
+            else:
+                logging.info(f"💰 Auto-sold {ca} at +100% profit.")
+
 async def monitor_for_contracts():
     await bot.wait_until_ready()
     logging.info("📡 Contract scanner started...")
@@ -152,6 +171,7 @@ async def monitor_for_contracts():
                         celeb = "verified" in title.lower() or "elon" in title.lower()
                         for ca in cas:
                             if execute_auto_trade(ca, celebrity=celeb):
+                                gain_tracking[ca]["celebrity"] = celeb
                                 logging.info(f"📈 Sniped {ca} from post: {title}")
         await asyncio.sleep(60)
 
@@ -168,13 +188,18 @@ async def monitor_twitter_for_contracts():
         for tweet in tweets:
             tweet_id = tweet.get("id")
             text = tweet.get("text", "")
+            username = tweet.get("author_id", "")
             if tweet_id and tweet_id not in seen_ids:
                 seen_ids.add(tweet_id)
                 cas = extract_contract_addresses(text)
                 if cas:
-                    celeb = "verified" in text.lower() or "elon" in text.lower()
+                    celeb = username in trusted_accounts or "verified" in text.lower()
+                    if username in blacklisted_accounts:
+                        logging.info(f"🚫 Skipping tweet from blacklisted user: {username}")
+                        continue
                     for ca in cas:
                         if execute_auto_trade(ca, celebrity=celeb):
+                            gain_tracking[ca]["celebrity"] = celeb
                             logging.info(f"🐦 Sniped {ca} from tweet: {text}")
         await asyncio.sleep(60)
 
@@ -231,6 +256,7 @@ async def post_hourly_news():
 async def on_ready():
     await bot.tree.sync()
     post_hourly_news.start()
+    monitor_gains.start()
     bot.loop.create_task(monitor_for_contracts())
     bot.loop.create_task(monitor_twitter_for_contracts())
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
