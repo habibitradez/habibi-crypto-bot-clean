@@ -48,10 +48,7 @@ else:
 
 phantom_wallet = PHANTOM_PUBLIC_KEY
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.guild_messages = True
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 discord.utils.setup_logging(level=logging.INFO)
@@ -137,20 +134,17 @@ def fetch_headlines():
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
 @bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type.name == "component":
-        custom_id = interaction.data.get("custom_id", "")
-        if custom_id.startswith("buy_"):
-            parts = custom_id.split("_")
-            if len(parts) == 3:
-                amount = float(parts[1])
-                recipient = parts[2]
-                if send_sol(recipient, amount):
-                    await interaction.response.send_message(f"🛒 Sent {amount} SOL to `{recipient}`", ephemeral=True)
-                else:
-                    await interaction.response.send_message("❌ Failed to send SOL.", ephemeral=True)
-        elif custom_id == "sell_token":
-            await interaction.response.send_message("💸 Selling token (mocked)", ephemeral=True)
+async def on_ready():
+    await bot.wait_until_ready()
+    try:
+        synced = await bot.tree.sync()
+        logging.info(f"✅ Synced {len(synced)} commands with Discord")
+    except Exception as e:
+        logging.error(f"❌ Command sync failed: {e}")
+    post_hourly_news.start()
+    monitor_gains.start()
+    scan_x.start()
+    logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
 @bot.tree.command(name="wallet", description="Show Phantom wallet balance")
 async def wallet(interaction: discord.Interaction):
@@ -164,6 +158,13 @@ async def wallet(interaction: discord.Interaction):
         logging.error(f"❌ Error in /wallet command: {e}")
         await interaction.response.send_message(f"❌ Error fetching balance: {e}", ephemeral=True)
 
+@bot.tree.command(name="news", description="Get the latest crypto news")
+async def news(interaction: discord.Interaction):
+    headlines = fetch_headlines()
+    for headline in headlines:
+        await interaction.channel.send(headline)
+    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
+
 @bot.tree.command(name="profits", description="Show tracked token profits")
 async def profits(interaction: discord.Interaction):
     if not profit_log:
@@ -173,13 +174,6 @@ async def profits(interaction: discord.Interaction):
     for ca, info in profit_log.items():
         lines.append(f"`{ca[:6]}...`: Buy {info['buy_price']} | Sell {info['sell_price']} | Status: {info['status']} | PnL: {info['profit']} SOL")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
-
-@bot.tree.command(name="news", description="Get the latest crypto news")
-async def news(interaction: discord.Interaction):
-    headlines = fetch_headlines()
-    for headline in headlines:
-        await interaction.channel.send(headline)
-    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
 
 @tasks.loop(minutes=60)
 async def post_hourly_news():
@@ -252,18 +246,4 @@ async def scan_x():
     except Exception as e:
         logging.error(f"❌ Failed to scan Twitter: {e}")
 
-@bot.event
-async def on_ready():
-    await bot.wait_until_ready()
-    try:
-        synced = await bot.tree.sync()
-        logging.info(f"✅ Synced {len(synced)} commands with Discord")
-    except Exception as e:
-        logging.error(f"❌ Command sync failed: {e}")
-    post_hourly_news.start()
-    monitor_gains.start()
-    scan_x.start()
-    logging.info(f"🤖 Logged in as {bot.user} and ready.")
-
 bot.run(DISCORD_TOKEN)
-
