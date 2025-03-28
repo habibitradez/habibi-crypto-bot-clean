@@ -211,3 +211,15 @@ async def scan_x():
         logging.error(f"❌ Failed to scan Twitter: {e}")
 
 scan_x.start()
+
+@bot.event
+async def on_ready():
+    await bot.wait_until_ready()
+    try:
+        synced = await bot.tree.sync()
+        logging.info(f"✅ Synced {len(synced)} commands with Discord")
+    except Exception as e:
+        logging.error(f"❌ Command sync failed: {e}")
+    logging.info(f"🤖 Logged in as {bot.user} and ready.")
+
+bot.run(DISCORD_TOKEN)
