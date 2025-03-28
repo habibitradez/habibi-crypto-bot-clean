@@ -50,6 +50,7 @@ phantom_wallet = PHANTOM_PUBLIC_KEY
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
+tree = bot.tree
 
 discord.utils.setup_logging(level=logging.INFO)
 
@@ -137,7 +138,7 @@ def fetch_headlines():
 async def on_ready():
     await bot.wait_until_ready()
     try:
-        synced = await bot.tree.sync()
+        synced = await tree.sync()
         logging.info(f"✅ Synced {len(synced)} commands with Discord")
     except Exception as e:
         logging.error(f"❌ Command sync failed: {e}")
@@ -146,104 +147,24 @@ async def on_ready():
     scan_x.start()
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
-@bot.tree.command(name="wallet", description="Show Phantom wallet balance")
-async def wallet(interaction: discord.Interaction):
-    try:
-        if not phantom_wallet:
-            await interaction.response.send_message("❌ Phantom wallet not configured.", ephemeral=True)
-            return
-        balance = solana_client.get_balance(phantom_wallet)["result"]["value"] / 1_000_000_000
-        await interaction.response.send_message(f"💰 Phantom wallet balance: `{balance:.4f} SOL`", ephemeral=True)
-    except Exception as e:
-        logging.error(f"❌ Error in /wallet command: {e}")
-        await interaction.response.send_message(f"❌ Error fetching balance: {e}", ephemeral=True)
+@bot.event
+async def on_error(event, *args, **kwargs):
+    logging.exception(f"Unhandled error in event: {event}")
 
-@bot.tree.command(name="news", description="Get the latest crypto news")
-async def news(interaction: discord.Interaction):
-    headlines = fetch_headlines()
-    for headline in headlines:
-        await interaction.channel.send(headline)
-    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
+@bot.event
+async def on_disconnect():
+    logging.warning("⚠️ Bot disconnected from Discord")
 
-@bot.tree.command(name="profits", description="Show tracked token profits")
-async def profits(interaction: discord.Interaction):
-    if not profit_log:
-        await interaction.response.send_message("📉 No profits to show yet.", ephemeral=True)
-        return
-    lines = []
-    for ca, info in profit_log.items():
-        lines.append(f"`{ca[:6]}...`: Buy {info['buy_price']} | Sell {info['sell_price']} | Status: {info['status']} | PnL: {info['profit']} SOL")
-    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+@bot.event
+async def on_resumed():
+    logging.info("🔄 Bot resumed connection with Discord")
 
-@tasks.loop(minutes=60)
-async def post_hourly_news():
-    if not DISCORD_NEWS_CHANNEL_ID:
-        logging.warning("⚠️ DISCORD_NEWS_CHANNEL_ID not set.")
-        return
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if channel:
-        headlines = fetch_headlines()
-        for headline in headlines:
-            await channel.send(headline)
+@bot.event
+async def on_connect():
+    logging.info("🔌 Bot connecting to Discord...")
 
-@tasks.loop(seconds=30)
-async def monitor_gains():
-    for ca, info in gain_tracking.items():
-        price = 1.0  # Mock price logic
-        if not info["target_50"] and price >= info["buy_price"] * 1.5:
-            info["target_50"] = True
-            logging.info(f"📢 ALERT: {ca} has reached +50% gain!")
-        if not info["target_100"] and price >= info["buy_price"] * 2.0:
-            info["target_100"] = True
-            if info.get("celebrity"):
-                logging.info(f"💰 Sold initial for {ca} (celebrity). Alerting for manual profit sell.")
-                profit_log[ca]["sell_price"] = price
-                profit_log[ca]["profit"] = price - profit_log[ca]["buy_price"]
-                profit_log[ca]["status"] = "partial sell"
-            else:
-                logging.info(f"💰 Auto-sold {ca} at +100% profit.")
-                profit_log[ca]["sell_price"] = price
-                profit_log[ca]["profit"] = price - profit_log[ca]["buy_price"]
-                profit_log[ca]["status"] = "sold"
-
-@tasks.loop(seconds=60)
-async def scan_x():
-    logging.info("🔍 Scanning X for contract mentions...")
-    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-    query = "(CA OR contract OR token) (0x) lang:en -is:retweet"
-    url = f"https://api.twitter.com/2/tweets/search/recent?query={query}&tweet.fields=author_id,text,created_at&expansions=author_id&user.fields=username,public_metrics"
-
-    try:
-        res = requests.get(url, headers=headers)
-        if res.status_code != 200:
-            logging.error(f"❌ Twitter API error: {res.status_code} {res.text}")
-            return
-
-        data = res.json()
-        tweets = data.get("data", [])
-        users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
-
-        for tweet in tweets:
-            text = tweet.get("text", "")
-            ca_list = extract_contract_addresses(text)
-            if not ca_list:
-                continue
-
-            author_id = tweet.get("author_id")
-            user = users.get(author_id, {})
-            username = user.get("username", "")
-            followers = user.get("public_metrics", {}).get("followers_count", 0)
-
-            for ca in ca_list:
-                if username.lower() in blacklisted_accounts:
-                    logging.info(f"🚫 Skipping blacklisted user {username}")
-                    continue
-
-                celebrity = username.lower() in trusted_accounts or followers > 50_000
-                if execute_auto_trade(ca, celebrity=celebrity):
-                    logging.info(f"✅ Sniped CA {ca} from @{username} ({followers} followers)")
-
-    except Exception as e:
-        logging.error(f"❌ Failed to scan Twitter: {e}")
+@bot.event
+async def on_ready():
+    logging.info("✅ Bot is connected and ready!")
 
 bot.run(DISCORD_TOKEN)
