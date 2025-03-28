@@ -22,6 +22,7 @@ from solana.transaction import Transaction
 from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
 import asyncio
+from datetime import datetime
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -57,6 +58,7 @@ watchlist = set()
 sniped_contracts = []
 gain_tracking = {}
 posted_social_placeholders = False
+profit_log = {}
 
 # Whitelist and blacklist sets
 trusted_accounts = {"elonmusk", "binance", "coinbase"}  # Whitelisted usernames
@@ -85,11 +87,12 @@ def create_trade_buttons(ca=None):
     return view
 
 def log_sniped_contract(ca, amount):
-    entry = {"ca": ca, "amount": amount}
+    entry = {"ca": ca, "amount": amount, "timestamp": str(datetime.utcnow())}
     sniped_contracts.append(entry)
     with open("sniped_contracts.json", "w") as f:
         json.dump(sniped_contracts, f, indent=2)
-    gain_tracking[ca] = {"buy_price": 1.0, "target_50": False, "target_100": False, "celebrity": False}  # Mock buy price
+    gain_tracking[ca] = {"buy_price": 1.0, "target_50": False, "target_100": False, "celebrity": False}
+    profit_log[ca] = {"buy_price": 1.0, "sell_price": 0.0, "profit": 0.0, "status": "holding"}
 
 def execute_auto_trade(ca, celebrity=False):
     if phantom_keypair and ca:
@@ -131,6 +134,16 @@ def fetch_headlines():
         return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
+@bot.tree.command(name="profits", description="Show tracked token profits")
+async def profits(interaction: discord.Interaction):
+    if not profit_log:
+        await interaction.response.send_message("📉 No profits to show yet.", ephemeral=True)
+        return
+    lines = []
+    for ca, info in profit_log.items():
+        lines.append(f"`{ca[:6]}...`: Buy {info['buy_price']} | Sell {info['sell_price']} | Status: {info['status']} | PnL: {info['profit']} SOL")
+    await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
 # --- Additional auto-sell logic task ---
 @tasks.loop(seconds=30)
 async def monitor_gains():
@@ -143,122 +156,58 @@ async def monitor_gains():
             info["target_100"] = True
             if info.get("celebrity"):
                 logging.info(f"💰 Sold initial for {ca} (celebrity). Alerting for manual profit sell.")
+                profit_log[ca]["sell_price"] = price
+                profit_log[ca]["profit"] = price - profit_log[ca]["buy_price"]
+                profit_log[ca]["status"] = "partial sell"
             else:
                 logging.info(f"💰 Auto-sold {ca} at +100% profit.")
+                profit_log[ca]["sell_price"] = price
+                profit_log[ca]["profit"] = price - profit_log[ca]["buy_price"]
+                profit_log[ca]["status"] = "sold"
 
-async def monitor_for_contracts():
-    await bot.wait_until_ready()
-    logging.info("📡 Contract scanner started...")
-    seen_posts = set()
-    while not bot.is_closed():
-        sources = [
-            "https://www.reddit.com/r/CryptoCurrency/new.json?limit=5",
-            "https://www.reddit.com/r/cryptomemes/new.json?limit=5"
-        ]
-        for source in sources:
-            data = safe_json_request(source)
-            posts = data.get("data", {}).get("children", [])
-            for post in posts:
-                post_data = post.get("data", {})
-                post_id = post_data.get("id")
-                title = post_data.get("title", "")
-                text = post_data.get("selftext", "")
-                combined = f"{title} {text}"
-                if post_id and post_id not in seen_posts:
-                    seen_posts.add(post_id)
-                    cas = extract_contract_addresses(combined)
-                    if cas:
-                        celeb = "verified" in title.lower() or "elon" in title.lower()
-                        for ca in cas:
-                            if execute_auto_trade(ca, celebrity=celeb):
-                                gain_tracking[ca]["celebrity"] = celeb
-                                logging.info(f"📈 Sniped {ca} from post: {title}")
-        await asyncio.sleep(60)
+monitor_gains.start()
 
-async def monitor_twitter_for_contracts():
-    await bot.wait_until_ready()
-    logging.info("🐦 Twitter CA scanner started...")
+# --- X (Twitter) scanning task ---
+@tasks.loop(seconds=60)
+async def scan_x():
+    logging.info("🔍 Scanning X for contract mentions...")
     headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-    query = "(0x) (crypto OR solana OR token) -is:retweet lang:en"
-    seen_ids = set()
-    while not bot.is_closed():
-        url = f"https://api.twitter.com/2/tweets/search/recent?query={query}&tweet.fields=id,text,author_id&max_results=10"
-        data = safe_json_request(url, headers=headers)
-        tweets = data.get("data", [])
-        for tweet in tweets:
-            tweet_id = tweet.get("id")
-            text = tweet.get("text", "")
-            username = tweet.get("author_id", "")
-            if tweet_id and tweet_id not in seen_ids:
-                seen_ids.add(tweet_id)
-                cas = extract_contract_addresses(text)
-                if cas:
-                    celeb = username in trusted_accounts or "verified" in text.lower()
-                    if username in blacklisted_accounts:
-                        logging.info(f"🚫 Skipping tweet from blacklisted user: {username}")
-                        continue
-                    for ca in cas:
-                        if execute_auto_trade(ca, celebrity=celeb):
-                            gain_tracking[ca]["celebrity"] = celeb
-                            logging.info(f"🐦 Sniped {ca} from tweet: {text}")
-        await asyncio.sleep(60)
+    query = "(CA OR contract OR token) (0x) lang:en -is:retweet"
+    url = f"https://api.twitter.com/2/tweets/search/recent?query={query}&tweet.fields=author_id,text,created_at&expansions=author_id&user.fields=username,public_metrics"
 
-# --- INTERACTION HANDLER ---
-@bot.event
-async def on_interaction(interaction: discord.Interaction):
-    if interaction.type.name == "component":
-        custom_id = interaction.data.get("custom_id", "")
-        if custom_id.startswith("buy_"):
-            parts = custom_id.split("_")
-            if len(parts) == 3:
-                amount = float(parts[1])
-                recipient = parts[2]
-                if send_sol(recipient, amount):
-                    await interaction.response.send_message(f"🛒 Sent {amount} SOL to `{recipient}`", ephemeral=True)
-                else:
-                    await interaction.response.send_message("❌ Failed to send SOL.", ephemeral=True)
-        elif custom_id == "sell_token":
-            await interaction.response.send_message("💸 Selling token (mocked)", ephemeral=True)
-
-# --- SLASH COMMANDS ---
-@bot.tree.command(name="wallet", description="Show Phantom wallet balance")
-async def wallet(interaction: discord.Interaction):
     try:
-        if not phantom_wallet:
-            await interaction.response.send_message("❌ Phantom wallet not configured.", ephemeral=True)
+        res = requests.get(url, headers=headers)
+        if res.status_code != 200:
+            logging.error(f"❌ Twitter API error: {res.status_code} {res.text}")
             return
-        balance = solana_client.get_balance(phantom_wallet)["result"]["value"] / 1_000_000_000
-        await interaction.response.send_message(f"💰 Phantom wallet balance: `{balance:.4f} SOL`", ephemeral=True)
+
+        data = res.json()
+        tweets = data.get("data", [])
+        users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+
+        for tweet in tweets:
+            text = tweet.get("text", "")
+            ca_list = extract_contract_addresses(text)
+            if not ca_list:
+                continue
+
+            author_id = tweet.get("author_id")
+            user = users.get(author_id, {})
+            username = user.get("username", "")
+            followers = user.get("public_metrics", {}).get("followers_count", 0)
+
+            for ca in ca_list:
+                if username.lower() in blacklisted_accounts:
+                    logging.info(f"🚫 Skipping blacklisted user {username}")
+                    continue
+
+                celebrity = username.lower() in trusted_accounts or followers > 50_000
+                verified = followers > 5000
+
+                if execute_auto_trade(ca, celebrity=celebrity):
+                    logging.info(f"✅ Sniped CA {ca} from @{username} ({followers} followers)")
+
     except Exception as e:
-        logging.error(f"❌ Error in /wallet command: {e}")
-        await interaction.response.send_message(f"❌ Error fetching balance: {e}", ephemeral=True)
+        logging.error(f"❌ Failed to scan Twitter: {e}")
 
-@bot.tree.command(name="news", description="Get the latest crypto news")
-async def news(interaction: discord.Interaction):
-    headlines = fetch_headlines()
-    for headline in headlines:
-        await interaction.channel.send(headline)
-    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
-
-# --- BACKGROUND TASK: POST NEWS EVERY HOUR ---
-@tasks.loop(minutes=60)
-async def post_hourly_news():
-    if not DISCORD_NEWS_CHANNEL_ID:
-        logging.warning("⚠️ DISCORD_NEWS_CHANNEL_ID not set.")
-        return
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if channel:
-        headlines = fetch_headlines()
-        for headline in headlines:
-            await channel.send(headline)
-
-@bot.event
-async def on_ready():
-    await bot.tree.sync()
-    post_hourly_news.start()
-    monitor_gains.start()
-    bot.loop.create_task(monitor_for_contracts())
-    bot.loop.create_task(monitor_twitter_for_contracts())
-    logging.info(f"🤖 Logged in as {bot.user} and ready.")
-
-bot.run(DISCORD_TOKEN)
+scan_x.start()
