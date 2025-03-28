@@ -50,9 +50,11 @@ phantom_wallet = PHANTOM_PUBLIC_KEY
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.guild_messages = True
 bot = commands.Bot(command_prefix="/", intents=intents)
 
-logging.basicConfig(level=logging.INFO)
+discord.utils.setup_logging(level=logging.INFO)
 
 watchlist = set()
 sniped_contracts = []
@@ -134,6 +136,34 @@ def fetch_headlines():
         return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type.name == "component":
+        custom_id = interaction.data.get("custom_id", "")
+        if custom_id.startswith("buy_"):
+            parts = custom_id.split("_")
+            if len(parts) == 3:
+                amount = float(parts[1])
+                recipient = parts[2]
+                if send_sol(recipient, amount):
+                    await interaction.response.send_message(f"🛒 Sent {amount} SOL to `{recipient}`", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Failed to send SOL.", ephemeral=True)
+        elif custom_id == "sell_token":
+            await interaction.response.send_message("💸 Selling token (mocked)", ephemeral=True)
+
+@bot.tree.command(name="wallet", description="Show Phantom wallet balance")
+async def wallet(interaction: discord.Interaction):
+    try:
+        if not phantom_wallet:
+            await interaction.response.send_message("❌ Phantom wallet not configured.", ephemeral=True)
+            return
+        balance = solana_client.get_balance(phantom_wallet)["result"]["value"] / 1_000_000_000
+        await interaction.response.send_message(f"💰 Phantom wallet balance: `{balance:.4f} SOL`", ephemeral=True)
+    except Exception as e:
+        logging.error(f"❌ Error in /wallet command: {e}")
+        await interaction.response.send_message(f"❌ Error fetching balance: {e}", ephemeral=True)
+
 @bot.tree.command(name="profits", description="Show tracked token profits")
 async def profits(interaction: discord.Interaction):
     if not profit_log:
@@ -144,11 +174,28 @@ async def profits(interaction: discord.Interaction):
         lines.append(f"`{ca[:6]}...`: Buy {info['buy_price']} | Sell {info['sell_price']} | Status: {info['status']} | PnL: {info['profit']} SOL")
     await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
-# --- Additional auto-sell logic task ---
+@bot.tree.command(name="news", description="Get the latest crypto news")
+async def news(interaction: discord.Interaction):
+    headlines = fetch_headlines()
+    for headline in headlines:
+        await interaction.channel.send(headline)
+    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
+
+@tasks.loop(minutes=60)
+async def post_hourly_news():
+    if not DISCORD_NEWS_CHANNEL_ID:
+        logging.warning("⚠️ DISCORD_NEWS_CHANNEL_ID not set.")
+        return
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        headlines = fetch_headlines()
+        for headline in headlines:
+            await channel.send(headline)
+
 @tasks.loop(seconds=30)
 async def monitor_gains():
     for ca, info in gain_tracking.items():
-        price = 1.0  # Mock current price
+        price = 1.0  # Mock price logic
         if not info["target_50"] and price >= info["buy_price"] * 1.5:
             info["target_50"] = True
             logging.info(f"📢 ALERT: {ca} has reached +50% gain!")
@@ -165,9 +212,6 @@ async def monitor_gains():
                 profit_log[ca]["profit"] = price - profit_log[ca]["buy_price"]
                 profit_log[ca]["status"] = "sold"
 
-monitor_gains.start()
-
-# --- X (Twitter) scanning task ---
 @tasks.loop(seconds=60)
 async def scan_x():
     logging.info("🔍 Scanning X for contract mentions...")
@@ -202,15 +246,11 @@ async def scan_x():
                     continue
 
                 celebrity = username.lower() in trusted_accounts or followers > 50_000
-                verified = followers > 5000
-
                 if execute_auto_trade(ca, celebrity=celebrity):
                     logging.info(f"✅ Sniped CA {ca} from @{username} ({followers} followers)")
 
     except Exception as e:
         logging.error(f"❌ Failed to scan Twitter: {e}")
-
-scan_x.start()
 
 @bot.event
 async def on_ready():
@@ -220,6 +260,10 @@ async def on_ready():
         logging.info(f"✅ Synced {len(synced)} commands with Discord")
     except Exception as e:
         logging.error(f"❌ Command sync failed: {e}")
+    post_hourly_news.start()
+    monitor_gains.start()
+    scan_x.start()
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
 bot.run(DISCORD_TOKEN)
+
