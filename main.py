@@ -16,7 +16,10 @@ import re
 import json
 from dotenv import load_dotenv
 from solders.keypair import Keypair
+from solders.pubkey import Pubkey
 from solana.rpc.api import Client
+from solana.transaction import Transaction
+from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
 
 # --- LOAD .env CONFIG ---
@@ -27,6 +30,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
 PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
+DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 
 openai.api_key = OPENAI_API_KEY
 solana_client = Client("https://api.mainnet-beta.solana.com")
@@ -34,7 +38,7 @@ solana_client = Client("https://api.mainnet-beta.solana.com")
 phantom_keypair = None
 if PHANTOM_SECRET_KEY:
     try:
-        phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+        phantom_keypair = Keypair.from_base58_string(PHANTOM_SECRET_KEY.strip())
     except Exception as e:
         logging.warning(f"⚠️ Could not initialize Phantom keypair: {e}")
 else:
@@ -57,6 +61,7 @@ posted_social_placeholders = False
 def safe_json_request(url, headers=None):
     try:
         res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
+        logging.info(f"✅ Fetched URL: {url}")
         return res.json()
     except Exception as e:
         logging.error(f"❌ Error fetching {url}: {e}")
@@ -91,148 +96,90 @@ def execute_auto_trade(ca, celebrity=False):
         logging.info(f"⛔ Skipping snipe for {ca} – Phantom key not connected.")
     return False
 
-def fetch_tweets(users):
-    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-    out = []
-    for user in users:
-        user_data = safe_json_request(f"https://api.twitter.com/2/users/by/username/{user}", headers)
-        uid = user_data.get("data", {}).get("id")
-        if uid:
-            tweets = safe_json_request(
-                f"https://api.twitter.com/2/users/{uid}/tweets?max_results=5&tweet.fields=created_at", headers
-            ).get("data", [])
-            for tweet in tweets:
-                text = tweet.get("text", "")
-                cas = extract_contract_addresses(text)
-                formatted = f"🐦 **@{user}**\n{text}"
-                if cas:
-                    formatted += "\n📌 CA(s): " + ", ".join(cas)
-                out.append((formatted, cas[0] if cas else None, user in ["elonmusk", "kanyewest"]))
-    return out
-
-def fetch_reddit_memes():
-    headers = {"User-Agent": "HabibiBot/1.0"}
-    data = safe_json_request("https://www.reddit.com/r/cryptomemes/top.json?limit=3&t=day", headers)
-    posts = data.get("data", {}).get("children", [])
-    return [(f"😂 **{p['data']['title']}**\nhttps://reddit.com{p['data']['permalink']}", None) for p in posts]
-
-def fetch_reddit_ca_mentions():
-    headers = {"User-Agent": "HabibiBot/1.0"}
-    data = safe_json_request("https://www.reddit.com/r/CryptoCurrency/search.json?q=0x&restrict_sr=1&sort=new", headers)
-    posts = data.get("data", {}).get("children", [])
-    output = []
-    for p in posts[:3]:
-        title = p['data'].get('title', '')
-        link = f"https://reddit.com{p['data']['permalink']}"
-        cas = extract_contract_addresses(title)
-        msg = f"📢 **{title}**\n{link}"
-        if cas:
-            msg += "\n📌 CA(s): " + ", ".join(cas)
-        output.append((msg, cas[0] if cas else None, False))
-    return output
+def send_sol(recipient_str: str, amount_sol: float):
+    recipient_pubkey = Pubkey.from_string(recipient_str)
+    lamports = int(amount_sol * 1_000_000_000)
+    tx = Transaction()
+    tx.add(transfer(TransferParams(
+        from_pubkey=phantom_keypair.pubkey(),
+        to_pubkey=recipient_pubkey,
+        lamports=lamports
+    )))
+    try:
+        result = solana_client.send_transaction(tx, phantom_keypair)
+        logging.info(f"✅ Sent {amount_sol} SOL to {recipient_str}. Result: {result}")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Error sending SOL: {e}")
+        return False
 
 def fetch_headlines():
     url = f"https://newsapi.org/v2/top-headlines?q=crypto&apiKey={NEWSAPI_KEY}&language=en&pageSize=5"
-    headlines = safe_json_request(url).get("articles", [])
+    data = safe_json_request(url)
+    logging.info(f"📰 NewsAPI response: {data}")
+    headlines = data.get("articles", [])
+    if not headlines:
+        # Fallback to another news API (e.g., CryptoPanic or mock data)
+        fallback = [
+            "📰 **Fallback Headline 1** - https://example.com/news1",
+            "📰 **Fallback Headline 2** - https://example.com/news2"
+        ]
+        return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
-def fetch_additional_social_mentions():
-    global posted_social_placeholders
-    if posted_social_placeholders:
-        return []
-    posted_social_placeholders = True
-    return [
-        ("📺 YouTube detection coming soon...", None, False),
-        ("🎵 TikTok detection coming soon...", None, False),
-        ("📸 Instagram detection coming soon...", None, False)
-    ]
+# --- INTERACTION HANDLER ---
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type.name == "component":
+        custom_id = interaction.data.get("custom_id", "")
+        if custom_id.startswith("buy_"):
+            parts = custom_id.split("_")
+            if len(parts) == 3:
+                amount = float(parts[1])
+                recipient = parts[2]
+                if send_sol(recipient, amount):
+                    await interaction.response.send_message(f"🛒 Sent {amount} SOL to `{recipient}`", ephemeral=True)
+                else:
+                    await interaction.response.send_message("❌ Failed to send SOL.", ephemeral=True)
+        elif custom_id == "sell_token":
+            await interaction.response.send_message("💸 Selling token (mocked)", ephemeral=True)
 
-def monitor_token_gains():
-    alerts = []
-    for ca, data in gain_tracking.items():
-        gain = 1.2  # Mock gain factor
-        if not data["target_50"] and gain >= 1.5:
-            alerts.append((ca, "📈 50% gain hit! Watch manually."))
-            data["target_50"] = True
-        if not data["target_100"] and gain >= 2.0:
-            alerts.append((ca, "💰 100%+ gain hit! Auto-selling..."))
-            data["target_100"] = True
-    return alerts
+# --- SLASH COMMANDS ---
+@bot.tree.command(name="wallet", description="Show Phantom wallet balance")
+async def wallet(interaction: discord.Interaction):
+    try:
+        if not phantom_wallet:
+            await interaction.response.send_message("❌ Phantom wallet not configured.", ephemeral=True)
+            return
+        balance = solana_client.get_balance(phantom_wallet)["result"]["value"] / 1_000_000_000
+        await interaction.response.send_message(f"💰 Phantom wallet balance: `{balance:.4f} SOL`", ephemeral=True)
+    except Exception as e:
+        logging.error(f"❌ Error in /wallet command: {e}")
+        await interaction.response.send_message(f"❌ Error fetching balance: {e}", ephemeral=True)
+
+@bot.tree.command(name="news", description="Get the latest crypto news")
+async def news(interaction: discord.Interaction):
+    headlines = fetch_headlines()
+    for headline in headlines:
+        await interaction.channel.send(headline)
+    await interaction.response.send_message("📰 Latest news posted.", ephemeral=True)
+
+# --- BACKGROUND TASK: POST NEWS EVERY HOUR ---
+@tasks.loop(minutes=60)
+async def post_hourly_news():
+    if not DISCORD_NEWS_CHANNEL_ID:
+        logging.warning("⚠️ DISCORD_NEWS_CHANNEL_ID not set.")
+        return
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        headlines = fetch_headlines()
+        for headline in headlines:
+            await channel.send(headline)
 
 @bot.event
 async def on_ready():
-    print(f"✅ Logged in as {bot.user}")
-    await bot.tree.sync()  # Register slash commands
-    alert_channel = discord.utils.get(bot.get_all_channels(), name="alerts")
-    if alert_channel:
-        await alert_channel.send("💹 Habibi Bot is online and watching the crypto streets...")
-    post_updates.start()
+    await bot.tree.sync()
+    post_hourly_news.start()
+    logging.info(f"🤖 Logged in as {bot.user} and ready.")
 
-@tasks.loop(seconds=30)
-async def post_updates():
-    channel = discord.utils.get(bot.get_all_channels(), name="alerts")
-    if not channel:
-        return
-    try:
-        for msg, ca, celebrity in fetch_tweets(["kanyewest", "elonmusk", "FIFAWorldCup"]):
-            await channel.send(content=msg, view=create_trade_buttons(ca))
-            if ca:
-                if execute_auto_trade(ca, celebrity=celebrity):
-                    await channel.send(f"💥 Auto-sniped `{ca}` with {'1 SOL' if celebrity else '0.5 SOL'}!")
-                    await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
-
-        for msg, _, _ in fetch_reddit_memes():
-            await channel.send(msg)
-
-        for msg, ca, _ in fetch_reddit_ca_mentions():
-            await channel.send(content=msg, view=create_trade_buttons(ca))
-            if ca:
-                if execute_auto_trade(ca):
-                    await channel.send(f"💥 Auto-sniped `{ca}` with 0.5 SOL!")
-                    await channel.send(f"👀 Watching for 50%+ gain or 100%+ for auto-sell on `{ca}`...")
-
-        for msg in fetch_headlines():
-            await channel.send(msg)
-
-        for msg, _, _ in fetch_additional_social_mentions():
-            await channel.send(msg)
-
-        for ca, notice in monitor_token_gains():
-            await channel.send(f"🔔 {notice} `{ca}`")
-
-    except Exception as e:
-        logging.error(f"❌ Error in post_updates: {e}")
-
-# --- SLASH COMMANDS ---
-@bot.tree.command(name="wallet", description="Show your Phantom wallet public address")
-async def wallet_command(interaction: discord.Interaction):
-    await interaction.response.send_message(f"👛 Habibi Wallet: `{phantom_wallet}`")
-
-@bot.tree.command(name="trade", description="Trigger trading menu manually")
-async def trade_command(interaction: discord.Interaction):
-    await interaction.response.send_message("📈 Trading Panel", view=create_trade_buttons("exampleCA"))
-
-@bot.tree.command(name="alerts", description="Manually trigger crypto alerts")
-async def alerts_command(interaction: discord.Interaction):
-    await interaction.response.send_message("🔔 Posting updates now...")
-    await post_updates()
-
-@bot.tree.command(name="watch", description="Track a specific contract address")
-async def watch_command(interaction: discord.Interaction, ca: str):
-    watchlist.add(ca)
-    await interaction.response.send_message(f"👁️ Now watching CA: `{ca}`")
-
-@bot.tree.command(name="help", description="List all available commands")
-async def help_command(interaction: discord.Interaction):
-    help_text = (
-        "📖 **Habibi Bot Commands:**\n"
-        "/wallet - Show Phantom wallet\n"
-        "/trade - Open trade menu\n"
-        "/alerts - Trigger all alerts manually\n"
-        "/watch <CA> - Watch a specific contract address\n"
-        "/help - Show this help message"
-    )
-    await interaction.response.send_message(help_text)
-
-# --- RUN BOT ---
 bot.run(DISCORD_TOKEN)
