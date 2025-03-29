@@ -17,7 +17,8 @@ import json
 from dotenv import load_dotenv
 from discord.ui import View, Button
 import asyncio
-from datetime import datetime
+from datetime import datetime, timedelta
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -30,6 +31,7 @@ PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = os.getenv("WALLET_ENABLED", "false").lower() == "true"
+ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 
 if not DISCORD_TOKEN:
     print("❌ DISCORD_TOKEN is missing. Check your .env file.")
@@ -69,21 +71,26 @@ sniped_contracts = []
 gain_tracking = {}
 posted_social_placeholders = False
 profit_log = {}
+latest_tweet_ids = set()
+last_dex_post_time = datetime.min
 
 trusted_accounts = {"elonmusk", "binance", "coinbase"}
 blacklisted_accounts = {"rugpull_alert", "fake_crypto_news"}
 
 # --- HELPER FUNCTIONS ---
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=4), retry=retry_if_exception_type(requests.exceptions.RequestException))
 def safe_json_request(url, headers=None):
     try:
         res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
         logging.info(f"✅ Fetched URL: {url}")
-        if 'application/json' not in res.headers.get('Content-Type', ''):
-            raise ValueError("Non-JSON response")
+        content_type = res.headers.get('Content-Type', '')
+        if 'application/json' not in content_type:
+            logging.warning(f"⚠️ Non-JSON response. Content-Type: {content_type}, Body: {res.text[:300]}")
+            return None
         return res.json()
-    except Exception as e:
+    except requests.exceptions.RequestException as e:
         logging.error(f"❌ Error fetching {url}: {e}")
-        return {}
+        raise
 
 def extract_contract_addresses(text):
     return re.findall(r"0x[a-fA-F0-9]{40}", text)
@@ -101,7 +108,7 @@ def fetch_headlines():
     url = f"https://newsapi.org/v2/top-headlines?q=crypto&apiKey={NEWSAPI_KEY}&language=en&pageSize=5"
     data = safe_json_request(url)
     logging.info(f"📰 NewsAPI response: {data}")
-    headlines = data.get("articles", [])
+    headlines = data.get("articles", []) if data else []
     if not headlines:
         fallback = [
             "📰 **Fallback Headline 1** - https://example.com/news1",
@@ -124,14 +131,20 @@ async def scan_x():
     url = "https://api.twitter.com/2/tweets/search/recent?query=crypto&tweet.fields=author_id,created_at,text"
     headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
     data = safe_json_request(url, headers=headers)
+    if not data:
+        return
     tweets = data.get("data", [])
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
     if channel:
         for tweet in tweets:
+            tweet_id = tweet.get("id")
+            if tweet_id in latest_tweet_ids:
+                continue
+            latest_tweet_ids.add(tweet_id)
+
             text = tweet.get("text", "")
             author_id = tweet.get("author_id")
             created_at = tweet.get("created_at")
-            tweet_id = tweet.get("id")
             timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
             formatted_time = timestamp.strftime("%b %d, %Y – %I:%M %p UTC")
             tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
@@ -143,7 +156,7 @@ async def scan_x():
                     f"🕒 {formatted_time}\n"
                     f"🔗 [View Tweet]({tweet_url})\n"
                 )
-                if DISCORD_ROLE_ID:
+                if ROLE_MENTION_ENABLED and DISCORD_ROLE_ID:
                     formatted += f"<@&{DISCORD_ROLE_ID}>"
                 await channel.send(formatted)
                 if cas:
@@ -153,9 +166,13 @@ async def scan_x():
 
 @tasks.loop(minutes=5)
 async def fetch_dexscreener_trending():
+    global last_dex_post_time
     logging.info("📊 Fetching trending tokens from Dexscreener...")
     url = "https://api.dexscreener.com/latest/dex/pairs/solana"
     data = safe_json_request(url)
+    if not data:
+        logging.warning("⚠️ Dexscreener returned no data. Skipping.")
+        return
     pairs = data.get("pairs", [])[:5]
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
     if channel:
@@ -164,10 +181,14 @@ async def fetch_dexscreener_trending():
             symbol = pair.get("baseToken", {}).get("symbol")
             price = pair.get("priceUsd")
             link = pair.get("url")
+            if not all([name, symbol, price, link]):
+                continue
             message = f"📈 **{name} ({symbol})** is trending at **${price}**\n🔗 {link}"
-            if DISCORD_ROLE_ID:
+            if ROLE_MENTION_ENABLED and DISCORD_ROLE_ID:
                 message += f"\n<@&{DISCORD_ROLE_ID}>"
-            await channel.send(message)
+            if datetime.utcnow() - last_dex_post_time > timedelta(minutes=4):
+                await channel.send(message)
+                last_dex_post_time = datetime.utcnow()
             contract_address = pair.get("pairAddress")
             if contract_address and contract_address not in watchlist:
                 watchlist.add(contract_address)
