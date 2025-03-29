@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from solana.rpc.api import Client
-from solana.transaction import Transaction
+from solana.transactions import Transaction
 from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
 import asyncio
@@ -164,3 +164,4 @@ async def on_connect():
     logging.info("🔌 Bot connecting to Discord...")
 
 bot.run(DISCORD_TOKEN)
+
