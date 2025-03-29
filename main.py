@@ -107,6 +107,38 @@ def fetch_headlines():
         return fallback
     return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
 
+@tasks.loop(hours=1)
+async def post_hourly_news():
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        headlines = fetch_headlines()
+        for headline in headlines:
+            await channel.send(headline)
+
+@tasks.loop(minutes=5)
+async def monitor_gains():
+    logging.info("📈 Monitoring gains... (placeholder)")
+
+@tasks.loop(minutes=2)
+async def scan_x():
+    logging.info("🔍 Scanning Twitter/X for updates...")
+    url = "https://api.twitter.com/2/tweets/search/recent?query=crypto&tweet.fields=author_id,created_at,text"
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    data = safe_json_request(url, headers=headers)
+    tweets = data.get("data", [])
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        for tweet in tweets:
+            text = tweet.get("text", "")
+            author_id = tweet.get("author_id")
+            if author_id not in blacklisted_accounts:
+                cas = extract_contract_addresses(text)
+                formatted = f"🐦 **Tweet by Author {author_id}**\n{text}"
+                await channel.send(formatted)
+                if cas:
+                    for ca in cas:
+                        await channel.send(f"🚀 Detected Contract Address: `{ca}`", view=create_trade_buttons(ca))
+
 @bot.event
 async def on_ready():
     await bot.wait_until_ready()
@@ -118,20 +150,9 @@ async def on_ready():
     logging.info(f"🤖 Logged in as {bot.user} and ready.")
     print(f"🤖 Habibi is online as {bot.user}")
 
-    try:
-        post_hourly_news.start()
-    except NameError:
-        logging.warning("⚠️ post_hourly_news task not defined")
-
-    try:
-        monitor_gains.start()
-    except NameError:
-        logging.warning("⚠️ monitor_gains task not defined")
-
-    try:
-        scan_x.start()
-    except NameError:
-        logging.warning("⚠️ scan_x task not defined")
+    post_hourly_news.start()
+    monitor_gains.start()
+    scan_x.start()
 
 @bot.event
 async def on_error(event, *args, **kwargs):
