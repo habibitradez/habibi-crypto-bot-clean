@@ -78,6 +78,8 @@ def safe_json_request(url, headers=None):
     try:
         res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
         logging.info(f"✅ Fetched URL: {url}")
+        if 'application/json' not in res.headers.get('Content-Type', ''):
+            raise ValueError("Non-JSON response")
         return res.json()
     except Exception as e:
         logging.error(f"❌ Error fetching {url}: {e}")
@@ -129,12 +131,17 @@ async def scan_x():
             text = tweet.get("text", "")
             author_id = tweet.get("author_id")
             created_at = tweet.get("created_at")
+            tweet_id = tweet.get("id")
+            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            formatted_time = timestamp.strftime("%b %d, %Y – %I:%M %p UTC")
+            tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
             if author_id not in blacklisted_accounts:
                 cas = extract_contract_addresses(text)
                 formatted = (
-                    f"🐦 **Tweet by Author {author_id}**\n"
-                    f"🕒 {created_at}\n"
-                    f"{text}\n"
+                    f"🐦 **@{author_id} tweeted:**\n"
+                    f"💬 {text}\n\n"
+                    f"🕒 {formatted_time}\n"
+                    f"🔗 [View Tweet]({tweet_url})\n"
                 )
                 if DISCORD_ROLE_ID:
                     formatted += f"<@&{DISCORD_ROLE_ID}>"
@@ -158,6 +165,8 @@ async def fetch_dexscreener_trending():
             price = pair.get("priceUsd")
             link = pair.get("url")
             message = f"📈 **{name} ({symbol})** is trending at **${price}**\n🔗 {link}"
+            if DISCORD_ROLE_ID:
+                message += f"\n<@&{DISCORD_ROLE_ID}>"
             await channel.send(message)
             contract_address = pair.get("pairAddress")
             if contract_address and contract_address not in watchlist:
