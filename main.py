@@ -21,7 +21,7 @@ from solana.rpc.api import Client
 import pkgutil
 print("💡 Checking if 'solana.transaction' is available:",
       pkgutil.find_loader("solana.transaction") is not None)
-from solana.transactions import Transaction
+from solana.transaction import Transaction
 from solana.system_program import TransferParams, transfer
 from discord.ui import View, Button
 import asyncio
