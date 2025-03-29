@@ -28,6 +28,7 @@ TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
 PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
+DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = os.getenv("WALLET_ENABLED", "false").lower() == "true"
 
 if not DISCORD_TOKEN:
@@ -115,10 +116,6 @@ async def post_hourly_news():
         for headline in headlines:
             await channel.send(headline)
 
-@tasks.loop(minutes=5)
-async def monitor_gains():
-    logging.info("📈 Monitoring gains... (placeholder)")
-
 @tasks.loop(minutes=2)
 async def scan_x():
     logging.info("🔍 Scanning Twitter/X for updates...")
@@ -131,13 +128,41 @@ async def scan_x():
         for tweet in tweets:
             text = tweet.get("text", "")
             author_id = tweet.get("author_id")
+            created_at = tweet.get("created_at")
             if author_id not in blacklisted_accounts:
                 cas = extract_contract_addresses(text)
-                formatted = f"🐦 **Tweet by Author {author_id}**\n{text}"
+                formatted = (
+                    f"🐦 **Tweet by Author {author_id}**\n"
+                    f"🕒 {created_at}\n"
+                    f"{text}\n"
+                )
+                if DISCORD_ROLE_ID:
+                    formatted += f"<@&{DISCORD_ROLE_ID}>"
                 await channel.send(formatted)
                 if cas:
                     for ca in cas:
                         await channel.send(f"🚀 Detected Contract Address: `{ca}`", view=create_trade_buttons(ca))
+                        watchlist.add(ca)
+
+@tasks.loop(minutes=5)
+async def fetch_dexscreener_trending():
+    logging.info("📊 Fetching trending tokens from Dexscreener...")
+    url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+    data = safe_json_request(url)
+    pairs = data.get("pairs", [])[:5]
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        for pair in pairs:
+            name = pair.get("baseToken", {}).get("name")
+            symbol = pair.get("baseToken", {}).get("symbol")
+            price = pair.get("priceUsd")
+            link = pair.get("url")
+            message = f"📈 **{name} ({symbol})** is trending at **${price}**\n🔗 {link}"
+            await channel.send(message)
+            contract_address = pair.get("pairAddress")
+            if contract_address and contract_address not in watchlist:
+                watchlist.add(contract_address)
+                await channel.send(f"🆕 Auto-watching new token: `{contract_address}`", view=create_trade_buttons(contract_address))
 
 @bot.event
 async def on_ready():
@@ -151,8 +176,8 @@ async def on_ready():
     print(f"🤖 Habibi is online as {bot.user}")
 
     post_hourly_news.start()
-    monitor_gains.start()
     scan_x.start()
+    fetch_dexscreener_trending.start()
 
 @bot.event
 async def on_error(event, *args, **kwargs):
