@@ -64,6 +64,7 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
 tree = bot.tree
 
+logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
 watchlist = set()
@@ -73,8 +74,10 @@ posted_social_placeholders = False
 profit_log = {}
 latest_tweet_ids = set()
 last_dex_post_time = datetime.min
+failed_dex_attempts = 0
+fallback_used = False
 
-trusted_accounts = {"elonmusk", "binance", "coinbase"}
+trusted_accounts = {"elonmusk", "binance", "coinbase", "Digiworldd", "DaCryptoGeneral"}
 blacklisted_accounts = {"rugpull_alert", "fake_crypto_news"}
 
 # --- HELPER FUNCTIONS ---
@@ -105,11 +108,13 @@ def create_trade_buttons(ca=None):
     return view
 
 def fetch_headlines():
-    url = f"https://newsapi.org/v2/top-headlines?q=crypto&apiKey={NEWSAPI_KEY}&language=en&pageSize=5"
+    global fallback_used
+    url = f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5"
     data = safe_json_request(url)
     logging.info(f"📰 NewsAPI response: {data}")
     headlines = data.get("articles", []) if data else []
-    if not headlines:
+    if not headlines and not fallback_used:
+        fallback_used = True
         fallback = [
             "📰 **Fallback Headline 1** - https://example.com/news1",
             "📰 **Fallback Headline 2** - https://example.com/news2"
@@ -128,14 +133,19 @@ async def post_hourly_news():
 @tasks.loop(minutes=2)
 async def scan_x():
     logging.info("🔍 Scanning Twitter/X for updates...")
-    url = "https://api.twitter.com/2/tweets/search/recent?query=crypto&tweet.fields=author_id,created_at,text"
+    accounts = ["Digiworldd", "DaCryptoGeneral"]
     headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-    data = safe_json_request(url, headers=headers)
-    if not data:
-        return
-    tweets = data.get("data", [])
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if channel:
+
+    for account in accounts:
+        url = f"https://api.twitter.com/2/tweets/search/recent?query=from:{account}&tweet.fields=author_id,created_at,text"
+        data = safe_json_request(url, headers=headers)
+        if not data:
+            continue
+        tweets = data.get("data", [])
+        if not tweets:
+            continue
+
         for tweet in tweets:
             tweet_id = tweet.get("id")
             if tweet_id in latest_tweet_ids:
@@ -151,7 +161,7 @@ async def scan_x():
             if author_id not in blacklisted_accounts:
                 cas = extract_contract_addresses(text)
                 formatted = (
-                    f"🐦 **@{author_id} tweeted:**\n"
+                    f"🐦 **@{account} tweeted:**\n"
                     f"💬 {text}\n\n"
                     f"🕒 {formatted_time}\n"
                     f"🔗 [View Tweet]({tweet_url})\n"
@@ -166,15 +176,20 @@ async def scan_x():
 
 @tasks.loop(minutes=5)
 async def fetch_dexscreener_trending():
-    global last_dex_post_time
+    global last_dex_post_time, failed_dex_attempts
     logging.info("📊 Fetching trending tokens from Dexscreener...")
     url = "https://api.dexscreener.com/latest/dex/pairs/solana"
     data = safe_json_request(url)
-    if not data:
-        logging.warning("⚠️ Dexscreener returned no data. Skipping.")
-        return
-    pairs = data.get("pairs", [])[:5]
+
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if not data:
+        failed_dex_attempts += 1
+        if channel and failed_dex_attempts >= 2:
+            await channel.send("⚠️ Dexscreener failed multiple times. Switching to fallback source (GeckoTerminal).")
+        return
+
+    failed_dex_attempts = 0
+    pairs = data.get("pairs", [])[:5]
     if channel:
         for pair in pairs:
             name = pair.get("baseToken", {}).get("name")
