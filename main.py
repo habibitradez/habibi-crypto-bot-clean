@@ -177,25 +177,26 @@ async def scan_x():
 @tasks.loop(minutes=5)
 async def fetch_dexscreener_trending():
     global last_dex_post_time, failed_dex_attempts
-    logging.info("📊 Fetching trending tokens from Dexscreener...")
-    url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+    logging.info("📊 Fetching trending tokens from GeckoTerminal...")
+    url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
     data = safe_json_request(url)
 
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
     if not data:
         failed_dex_attempts += 1
         if channel and failed_dex_attempts >= 2:
-            await channel.send("⚠️ Dexscreener failed multiple times. Switching to fallback source (GeckoTerminal).")
+            await channel.send("⚠️ Dexscreener fallback failed too.")
         return
 
     failed_dex_attempts = 0
-    pairs = data.get("pairs", [])[:5]
+    pools = data.get("data", [])[:5]
     if channel:
-        for pair in pairs:
-            name = pair.get("baseToken", {}).get("name")
-            symbol = pair.get("baseToken", {}).get("symbol")
-            price = pair.get("priceUsd")
-            link = pair.get("url")
+        for pool in pools:
+            attr = pool.get("attributes", {})
+            name = attr.get("base_token_name")
+            symbol = attr.get("base_token_symbol")
+            price = attr.get("price_usd")
+            link = f"https://www.geckoterminal.com/solana/pools/{pool.get('id')}"
             if not all([name, symbol, price, link]):
                 continue
             message = f"📈 **{name} ({symbol})** is trending at **${price}**\n🔗 {link}"
@@ -204,10 +205,6 @@ async def fetch_dexscreener_trending():
             if datetime.utcnow() - last_dex_post_time > timedelta(minutes=4):
                 await channel.send(message)
                 last_dex_post_time = datetime.utcnow()
-            contract_address = pair.get("pairAddress")
-            if contract_address and contract_address not in watchlist:
-                watchlist.add(contract_address)
-                await channel.send(f"🆕 Auto-watching new token: `{contract_address}`", view=create_trade_buttons(contract_address))
 
 @bot.event
 async def on_ready():
