@@ -77,7 +77,7 @@ last_dex_post_time = datetime.min
 failed_dex_attempts = 0
 fallback_used = False
 
-trusted_accounts = {"elonmusk", "binance", "coinbase", "Digiworldd", "DaCryptoGeneral"}
+trusted_accounts = {"elonmusk", "binance", "coinbase", "Digiworldd", "DaCryptoGeneral", "joerogan", "kanyewest"}
 blacklisted_accounts = {"rugpull_alert", "fake_crypto_news"}
 
 # --- HELPER FUNCTIONS ---
@@ -133,7 +133,7 @@ async def post_hourly_news():
 @tasks.loop(minutes=2)
 async def scan_x():
     logging.info("🔍 Scanning Twitter/X for updates...")
-    accounts = ["Digiworldd", "DaCryptoGeneral"]
+    accounts = ["Digiworldd", "DaCryptoGeneral", "elonmusk", "joerogan", "kanyewest"]
     headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
 
@@ -238,3 +238,4 @@ async def on_connect():
     logging.info("🔌 Bot connecting to Discord...")
 
 bot.run(DISCORD_TOKEN)
+
