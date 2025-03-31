@@ -169,10 +169,46 @@ async def on_ready():
 
 @tasks.loop(minutes=5)
 async def fetch_and_post_twitter():
-    # Placeholder logic for Twitter scraping
-    print("📡 Checking Twitter updates...")
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    accounts = ",".join(trusted_accounts)
+    url = f"https://api.twitter.com/2/users/by?usernames={accounts}"
+    users_data = safe_json_request(url, headers)
+    if not users_data or "data" not in users_data:
+        return
+
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    for user in users_data["data"]:
+        user_id = user["id"]
+        tweet_url = f"https://api.twitter.com/2/users/{user_id}/tweets?max_results=5&tweet.fields=created_at"
+        tweets = safe_json_request(tweet_url, headers)
+        if not tweets or "data" not in tweets:
+            continue
+        for tweet in tweets["data"]:
+            if tweet["id"] in latest_tweet_ids:
+                continue
+            latest_tweet_ids.add(tweet["id"])
+            text = tweet["text"]
+            if any(bl in text.lower() for bl in blacklisted_accounts):
+                continue
+            msg = f"🐦 **{user['username']}** tweeted:\n{text}\nhttps://x.com/{user['username']}/status/{tweet['id']}"
+            await channel.send(msg)
 
 @tasks.loop(minutes=10)
 async def fetch_and_post_coins():
-    # Placeholder logic for trending coin detection
-    print("💰 Scanning for trending coins...")
+    url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+    data = safe_json_request(url)
+    if not data or "pairs" not in data:
+        return
+
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    for pair in data["pairs"][:5]:
+        name = pair.get("baseToken", {}).get("name")
+        symbol = pair.get("baseToken", {}).get("symbol")
+        address = pair.get("pairAddress")
+        price_usd = pair.get("priceUsd")
+        if not all([name, symbol, address, price_usd]):
+            continue
+        msg = f"💰 Trending Coin: **{name} ({symbol})**\nPrice: ${price_usd}\nhttps://dexscreener.com/solana/{address}"
+        view = create_trade_buttons(address)
+        await channel.send(msg, view=view)
+
