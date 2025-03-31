@@ -212,3 +212,5 @@ async def fetch_and_post_coins():
         view = create_trade_buttons(address)
         await channel.send(msg, view=view)
 
+if __name__ == "__main__":
+    bot.run(DISCORD_TOKEN)
