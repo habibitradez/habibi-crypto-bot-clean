@@ -19,6 +19,7 @@ from discord.ui import View, Button
 import asyncio
 from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+import random
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -80,7 +81,6 @@ fallback_used = False
 trusted_accounts = {"elonmusk", "binance", "coinbase", "Digiworldd", "DaCryptoGeneral", "joerogan", "kanyewest"}
 blacklisted_accounts = {"rugpull_alert", "fake_crypto_news"}
 
-# --- HELPER FUNCTIONS ---
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=4), retry=retry_if_exception_type(requests.exceptions.RequestException))
 def safe_json_request(url, headers=None):
     try:
@@ -109,10 +109,19 @@ def create_trade_buttons(ca=None):
 
 def fetch_headlines():
     global fallback_used
-    url = f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5"
-    data = safe_json_request(url)
-    logging.info(f"📰 NewsAPI response: {data}")
-    headlines = data.get("articles", []) if data else []
+    news_sources = [
+        f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5",
+        f"https://cryptopanic.com/api/v1/posts/?auth_token={NEWSAPI_KEY}&public=true&currencies=BTC,ETH,SOL,DOGE"
+    ]
+    headlines = []
+    for url in news_sources:
+        data = safe_json_request(url)
+        if not data:
+            continue
+        if "articles" in data:
+            headlines.extend([f"📰 **{article['title']}**\n{article['url']}" for article in data.get("articles", [])])
+        elif "results" in data:
+            headlines.extend([f"📰 **{item['title']}**\n{item['url']}" for item in data.get("results", [])])
     if not headlines and not fallback_used:
         fallback_used = True
         fallback = [
@@ -120,122 +129,32 @@ def fetch_headlines():
             "📰 **Fallback Headline 2** - https://example.com/news2"
         ]
         return fallback
-    return [f"📰 **{article['title']}**\n{article['url']}" for article in headlines]
+    return headlines[:10]
 
-@tasks.loop(hours=1)
+@tasks.loop(minutes=30)
 async def post_hourly_news():
     channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
     if channel:
         headlines = fetch_headlines()
         for headline in headlines:
             await channel.send(headline)
+        memes = fetch_memes()
+        for meme in memes:
+            await channel.send(meme)
 
-@tasks.loop(minutes=2)
-async def scan_x():
-    logging.info("🔍 Scanning Twitter/X for updates...")
-    accounts = ["Digiworldd", "DaCryptoGeneral", "elonmusk", "joerogan", "kanyewest"]
-    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+def fetch_memes():
+    meme_sources = [
+        "https://meme-api.com/gimme/cryptocurrency",
+        "https://meme-api.com/gimme/Bitcoin",
+        "https://meme-api.com/gimme/memeeconomy",
+        "https://meme-api.com/gimme/dankmemes"
+    ]
+    memes = []
+    for url in meme_sources:
+        data = safe_json_request(url)
+        if data and data.get("url"):
+            title = data.get("title", "Funny Meme")
+            memes.append(f"🤣 **{title}**\n{data['url']}")
+    return memes
 
-    for account in accounts:
-        url = f"https://api.twitter.com/2/tweets/search/recent?query=from:{account}&tweet.fields=author_id,created_at,text"
-        data = safe_json_request(url, headers=headers)
-        if not data:
-            continue
-        tweets = data.get("data", [])
-        if not tweets:
-            continue
-
-        for tweet in tweets:
-            tweet_id = tweet.get("id")
-            if tweet_id in latest_tweet_ids:
-                continue
-            latest_tweet_ids.add(tweet_id)
-
-            text = tweet.get("text", "")
-            author_id = tweet.get("author_id")
-            created_at = tweet.get("created_at")
-            timestamp = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            formatted_time = timestamp.strftime("%b %d, %Y – %I:%M %p UTC")
-            tweet_url = f"https://twitter.com/i/web/status/{tweet_id}"
-            if author_id not in blacklisted_accounts:
-                cas = extract_contract_addresses(text)
-                formatted = (
-                    f"🐦 **@{account} tweeted:**\n"
-                    f"💬 {text}\n\n"
-                    f"🕒 {formatted_time}\n"
-                    f"🔗 [View Tweet]({tweet_url})\n"
-                )
-                if ROLE_MENTION_ENABLED and DISCORD_ROLE_ID:
-                    formatted += f"<@&{DISCORD_ROLE_ID}>"
-                await channel.send(formatted)
-                if cas:
-                    for ca in cas:
-                        await channel.send(f"🚀 Detected Contract Address: `{ca}`", view=create_trade_buttons(ca))
-                        watchlist.add(ca)
-
-@tasks.loop(minutes=5)
-async def fetch_dexscreener_trending():
-    global last_dex_post_time, failed_dex_attempts
-    logging.info("📊 Fetching trending tokens from GeckoTerminal...")
-    url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
-    data = safe_json_request(url)
-
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if not data:
-        failed_dex_attempts += 1
-        if channel and failed_dex_attempts >= 2:
-            await channel.send("⚠️ Dexscreener fallback failed too.")
-        return
-
-    failed_dex_attempts = 0
-    pools = data.get("data", [])[:5]
-    if channel:
-        for pool in pools:
-            attr = pool.get("attributes", {})
-            name = attr.get("base_token_name")
-            symbol = attr.get("base_token_symbol")
-            price = attr.get("price_usd")
-            link = f"https://www.geckoterminal.com/solana/pools/{pool.get('id')}"
-            if not all([name, symbol, price, link]):
-                continue
-            message = f"📈 **{name} ({symbol})** is trending at **${price}**\n🔗 {link}"
-            if ROLE_MENTION_ENABLED and DISCORD_ROLE_ID:
-                message += f"\n<@&{DISCORD_ROLE_ID}>"
-            if datetime.utcnow() - last_dex_post_time > timedelta(minutes=4):
-                await channel.send(message)
-                last_dex_post_time = datetime.utcnow()
-
-@bot.event
-async def on_ready():
-    await bot.wait_until_ready()
-    try:
-        synced = await tree.sync()
-        logging.info(f"✅ Synced {len(synced)} commands with Discord")
-    except Exception as e:
-        logging.error(f"❌ Command sync failed: {e}")
-    logging.info(f"🤖 Logged in as {bot.user} and ready.")
-    print(f"🤖 Habibi is online as {bot.user}")
-
-    post_hourly_news.start()
-    scan_x.start()
-    fetch_dexscreener_trending.start()
-
-@bot.event
-async def on_error(event, *args, **kwargs):
-    logging.exception(f"Unhandled error in event: {event}")
-
-@bot.event
-async def on_disconnect():
-    logging.warning("⚠️ Bot disconnected from Discord")
-
-@bot.event
-async def on_resumed():
-    logging.info("🔄 Bot resumed connection with Discord")
-
-@bot.event
-async def on_connect():
-    logging.info("🔌 Bot connecting to Discord...")
-
-bot.run(DISCORD_TOKEN)
-
+# ... [rest of your unchanged code continues below] ...
