@@ -160,4 +160,19 @@ def fetch_memes():
                     memes.append(f"🤣 **{title}**\n{meme['url']}")
     return memes
 
-# ... [rest of your unchanged code continues below] ...
+@bot.event
+async def on_ready():
+    print(f"🔥 Bot is online as {bot.user}")
+    post_hourly_news.start()
+    fetch_and_post_twitter.start()
+    fetch_and_post_coins.start()
+
+@tasks.loop(minutes=5)
+async def fetch_and_post_twitter():
+    # Placeholder logic for Twitter scraping
+    print("📡 Checking Twitter updates...")
+
+@tasks.loop(minutes=10)
+async def fetch_and_post_coins():
+    # Placeholder logic for trending coin detection
+    print("💰 Scanning for trending coins...")
