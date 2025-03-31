@@ -144,17 +144,20 @@ async def post_hourly_news():
 
 def fetch_memes():
     meme_sources = [
-        "https://meme-api.com/gimme/cryptocurrency",
-        "https://meme-api.com/gimme/Bitcoin",
-        "https://meme-api.com/gimme/memeeconomy",
-        "https://meme-api.com/gimme/dankmemes"
+        "https://meme-api.com/gimme/cryptocurrency/3",
+        "https://meme-api.com/gimme/Bitcoin/3",
+        "https://meme-api.com/gimme/memeeconomy/3",
+        "https://meme-api.com/gimme/dankmemes/3"
     ]
     memes = []
     for url in meme_sources:
         data = safe_json_request(url)
-        if data and data.get("url"):
-            title = data.get("title", "Funny Meme")
-            memes.append(f"🤣 **{title}**\n{data['url']}")
+        if data:
+            posts = data.get("memes") or ([data] if data.get("url") else [])
+            for meme in posts:
+                if meme.get("url"):
+                    title = meme.get("title", "Funny Meme")
+                    memes.append(f"🤣 **{title}**\n{meme['url']}")
     return memes
 
 # ... [rest of your unchanged code continues below] ...
