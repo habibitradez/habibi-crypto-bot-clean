@@ -141,6 +141,12 @@ async def post_hourly_news():
         memes = fetch_memes()
         for meme in memes:
             await channel.send(meme)
+        trending_memes = fetch_trending_memes()
+        for meme in trending_memes:
+            await channel.send(meme)
+        trending_tiktoks = fetch_trending_tiktoks()
+        for tiktok in trending_tiktoks:
+            await channel.send(tiktok)
 
 def fetch_memes():
     meme_sources = [
@@ -159,6 +165,31 @@ def fetch_memes():
                     title = meme.get("title", "Funny Meme")
                     memes.append(f"🤣 **{title}**\n{meme['url']}")
     return memes
+
+def fetch_trending_memes():
+    trending_keywords = ["ashton hall", "morning routine", "woke up to", "trillion dollar", "god soldier"]
+    headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+    meme_messages = []
+
+    for keyword in trending_keywords:
+        url = f"https://api.twitter.com/2/tweets/search/recent?query={keyword}&max_results=5&tweet.fields=created_at,text,author_id"
+        data = safe_json_request(url, headers)
+        if data and "data" in data:
+            for tweet in data["data"]:
+                author_id = tweet["author_id"]
+                tweet_url = f"https://x.com/{author_id}/status/{tweet['id']}"
+                meme_messages.append(f"🔥 Trending Meme:\n{tweet['text']}\n{tweet_url}")
+    return meme_messages
+
+def fetch_trending_tiktoks():
+    # Placeholder for TikTok scraping (replace with API/service or updated logic)
+    trending = [
+        "🎵 Trending TikTok:
+https://www.tiktok.com/@crypto_creator/video/7212345678901234567",
+        "🎵 Trending TikTok:
+https://www.tiktok.com/@memeking/video/7212345678907654321"
+    ]
+    return trending
 
 @bot.event
 async def on_ready():
