@@ -20,6 +20,7 @@ import asyncio
 from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import random
+from bs4 import BeautifulSoup
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -182,14 +183,21 @@ def fetch_trending_memes():
     return meme_messages
 
 def fetch_trending_tiktoks():
-    # Placeholder for TikTok scraping (replace with API/service or updated logic)
-    trending = [
-        "🎵 Trending TikTok:
-https://www.tiktok.com/@crypto_creator/video/7212345678901234567",
-        "🎵 Trending TikTok:
-https://www.tiktok.com/@memeking/video/7212345678907654321"
-    ]
-    return trending
+    trending_tiktoks = []
+    try:
+        res = requests.get("https://www.tiktok.com/tag/crypto", headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        soup = BeautifulSoup(res.text, "html.parser")
+        for link in soup.find_all("a", href=True):
+            href = link["href"]
+            if "/video/" in href:
+                full_url = f"https://www.tiktok.com{href}"
+                if full_url not in trending_tiktoks:
+                    trending_tiktoks.append(f"🎵 Trending TikTok:\n{full_url}")
+            if len(trending_tiktoks) >= 3:
+                break
+    except Exception as e:
+        logging.error(f"❌ Failed to fetch TikToks: {e}")
+    return trending_tiktoks
 
 @bot.event
 async def on_ready():
