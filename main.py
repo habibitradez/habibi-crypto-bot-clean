@@ -84,7 +84,7 @@ def fetch_trending_crypto():
     data = safe_json_request(url)
     trending = []
     if data and "data" in data:
-        for pool in data["data"][:5]:
+        for pool in sorted(data["data"], key=lambda x: float(x["attributes"].get("volume_usd", 0)), reverse=True)[:5]:
             token_name = pool["attributes"].get("name", "Unknown Token")
             price = pool["attributes"].get("price_usd", "N/A")
             link = f"https://www.geckoterminal.com/solana/pools/{pool['id']}"
@@ -92,6 +92,33 @@ def fetch_trending_crypto():
     else:
         logging.warning("⚠️ No trending crypto data fetched.")
     return trending
+
+def fetch_memes():
+    url = "https://meme-api.com/gimme/cryptocurrency/3"
+    memes = []
+    try:
+        data = safe_json_request(url)
+        if data and "memes" in data:
+            for meme in data["memes"]:
+                memes.append(f"🤣 **{meme['title']}**\n{meme['url']}")
+    except Exception as e:
+        logging.warning(f"⚠️ Meme fetch failed: {e}")
+    return memes
+
+def fetch_news():
+    url = f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5"
+    news = []
+    try:
+        data = safe_json_request(url)
+        if data and "articles" in data:
+            for article in data["articles"]:
+                news.append(f"📰 **{article['title']}**\n{article['url']}")
+    except Exception as e:
+        logging.warning(f"⚠️ News fetch failed: {e}")
+    return news
+
+def fetch_tiktoks():
+    return ["🎵 TikTok scraping not available. Upgrade with API."]
 
 @tasks.loop(minutes=30)
 async def post_trending_content():
@@ -102,16 +129,17 @@ async def post_trending_content():
 
     tweets = fetch_trending_tweets()
     crypto = fetch_trending_crypto()
+    memes = fetch_memes()
+    news = fetch_news()
+    tiktoks = fetch_tiktoks()
 
-    for content_list in [tweets, crypto]:
-        for item in content_list:
-            await channel.send(item)
+    all_content = tweets + crypto + memes + news + tiktoks
+    for item in all_content:
+        await channel.send(item)
 
-    if any(any(keyword in t.lower() for keyword in ["elon", "$", "crypto", "coin", "ca", "invest", "buy"]) for t in tweets):
-        logging.info("🔥 Urgent trending content detected, posting immediately.")
-        for item in tweets:
-            await channel.send(item)
-        for item in crypto:
+    if any(any(keyword in item.lower() for keyword in ["elon", "$", "crypto", "coin", "ca", "invest", "buy"]) for item in tweets):
+        logging.info("🔥 Urgent trending tweet detected, reposting tweets and crypto now.")
+        for item in tweets + crypto:
             await channel.send(item)
 
 @bot.event
@@ -120,4 +148,3 @@ async def on_ready():
     post_trending_content.start()
 
 bot.run(DISCORD_TOKEN)
-
