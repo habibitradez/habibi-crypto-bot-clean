@@ -74,7 +74,11 @@ def fetch_trending_tweets():
             for tweet in data["data"]:
                 text = tweet.get("text")
                 tweet_url = f"https://twitter.com/i/web/status/{tweet['id']}"
-                trending_tweets.append(f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}")
+                tweet_entry = f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}"
+                logging.info(f"📢 Tweet: {tweet_entry}")
+                trending_tweets.append(tweet_entry)
+        else:
+            logging.warning("⚠️ No tweet data returned from Twitter API.")
     except Exception as e:
         logging.error(f"❌ Failed to fetch tweets: {e}")
     return trending_tweets
@@ -141,6 +145,11 @@ async def post_trending_content():
     tiktoks = fetch_tiktoks()
 
     all_content = tweets + crypto + memes + news + tiktoks
+
+    if not all_content:
+        logging.warning("⚠️ No content fetched to post.")
+        return
+
     for item in all_content:
         await channel.send(item)
 
@@ -155,4 +164,3 @@ async def on_ready():
     post_trending_content.start()
 
 bot.run(DISCORD_TOKEN)
-
