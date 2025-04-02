@@ -84,7 +84,14 @@ def fetch_trending_crypto():
     data = safe_json_request(url)
     trending = []
     if data and "data" in data:
-        for pool in sorted(data["data"], key=lambda x: float(x["attributes"].get("volume_usd", 0)), reverse=True)[:5]:
+        def get_volume_usd(pool):
+            try:
+                volume = pool["attributes"].get("volume_usd", 0)
+                return float(volume) if isinstance(volume, (int, float, str)) else 0.0
+            except (ValueError, TypeError):
+                return 0.0
+
+        for pool in sorted(data["data"], key=get_volume_usd, reverse=True)[:5]:
             token_name = pool["attributes"].get("name", "Unknown Token")
             price = pool["attributes"].get("price_usd", "N/A")
             link = f"https://www.geckoterminal.com/solana/pools/{pool['id']}"
@@ -148,3 +155,4 @@ async def on_ready():
     post_trending_content.start()
 
 bot.run(DISCORD_TOKEN)
+
