@@ -63,6 +63,10 @@ def safe_json_request(url, headers=None):
         logging.error(f"❌ Error fetching {url}: {e}")
         raise
 
+posted_items = set()
+previous_volumes = {}
+
+
 def fetch_trending_tweets():
     trending_tweets = []
     try:
@@ -74,35 +78,59 @@ def fetch_trending_tweets():
             for tweet in data["data"]:
                 text = tweet.get("text")
                 tweet_url = f"https://twitter.com/i/web/status/{tweet['id']}"
-                tweet_entry = f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}"
-                logging.info(f"📢 Tweet: {tweet_entry}")
+                if tweet_url in posted_items:
+                    continue
+                ca_match = re.findall(r'\b0x[a-fA-F0-9]{40}\b', text)
+                ca_notice = f"\n🧾 Contract Address: {ca_match[0]}" if ca_match else ""
+                tweet_entry = f"🐦 **Trending Tweet**\n{text}{ca_notice}\n🔗 {tweet_url}"
                 trending_tweets.append(tweet_entry)
+                posted_items.add(tweet_url)
         else:
             logging.warning("⚠️ No tweet data returned from Twitter API.")
     except Exception as e:
         logging.error(f"❌ Failed to fetch tweets: {e}")
     return trending_tweets
 
+
 def fetch_trending_crypto():
     url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
     data = safe_json_request(url)
     trending = []
+    fallback_used = False
+    if not data or "data" not in data:
+        fallback_used = True
+        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+        data = safe_json_request(url)
+
     if data and "data" in data:
         def get_volume_usd(pool):
             try:
                 volume = pool["attributes"].get("volume_usd", 0)
                 return float(volume) if isinstance(volume, (int, float, str)) else 0.0
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, KeyError):
                 return 0.0
 
         for pool in sorted(data["data"], key=get_volume_usd, reverse=True)[:5]:
             token_name = pool["attributes"].get("name", "Unknown Token")
             price = pool["attributes"].get("price_usd", "N/A")
             link = f"https://www.geckoterminal.com/solana/pools/{pool['id']}"
-            trending.append(f"🚀 **{token_name}** - ${price}\n🔗 {link}")
+            volume = get_volume_usd(pool)
+
+            pool_id = pool.get("id")
+            change = 0
+            if pool_id in previous_volumes:
+                previous = previous_volumes[pool_id]
+                change = (volume - previous) / max(previous, 1)
+            previous_volumes[pool_id] = volume
+
+            if change > 1.0:
+                trending.append(f"🔥 **{token_name} Volume Surge!** Now at ${price}\n🔗 {link}")
+            else:
+                trending.append(f"🚀 **{token_name}** - ${price}\n🔗 {link}")
     else:
         logging.warning("⚠️ No trending crypto data fetched.")
     return trending
+
 
 def fetch_memes():
     url = "https://meme-api.com/gimme/cryptocurrency/3"
@@ -111,10 +139,14 @@ def fetch_memes():
         data = safe_json_request(url)
         if data and "memes" in data:
             for meme in data["memes"]:
+                if meme['url'] in posted_items:
+                    continue
                 memes.append(f"🤣 **{meme['title']}**\n{meme['url']}")
+                posted_items.add(meme['url'])
     except Exception as e:
         logging.warning(f"⚠️ Meme fetch failed: {e}")
     return memes
+
 
 def fetch_news():
     url = f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5"
@@ -123,13 +155,18 @@ def fetch_news():
         data = safe_json_request(url)
         if data and "articles" in data:
             for article in data["articles"]:
+                if article['url'] in posted_items:
+                    continue
                 news.append(f"📰 **{article['title']}**\n{article['url']}")
+                posted_items.add(article['url'])
     except Exception as e:
         logging.warning(f"⚠️ News fetch failed: {e}")
     return news
 
+
 def fetch_tiktoks():
     return ["🎵 TikTok scraping not available. Upgrade with API."]
+
 
 @tasks.loop(minutes=30)
 async def post_trending_content():
@@ -151,12 +188,15 @@ async def post_trending_content():
         return
 
     for item in all_content:
-        await channel.send(item)
+        msg = await channel.send(item)
+        await msg.add_reaction("🔥")
+        await msg.add_reaction("🧠")
 
     if any(any(keyword in item.lower() for keyword in ["elon", "$", "crypto", "coin", "ca", "invest", "buy"]) for item in tweets):
         logging.info("🔥 Urgent trending tweet detected, reposting tweets and crypto now.")
         for item in tweets + crypto:
             await channel.send(item)
+
 
 @bot.event
 async def on_ready():
