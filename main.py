@@ -118,3 +118,6 @@ async def on_ready():
     post_trending_content.start()
 
 bot.run(DISCORD_TOKEN)
+if "errors" in data:
+    logging.error(f"Twitter API Error: {data['errors']}")
+curl -H "Authorization: Bearer YOUR_TWITTER_BEARER_TOKEN" "https://api.twitter.com/2/tweets/search/recent?query=crypto"
