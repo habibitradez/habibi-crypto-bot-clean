@@ -34,7 +34,6 @@ DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = os.getenv("WALLET_ENABLED", "false").lower() == "true"
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
-TOKAPI_KEY = os.getenv("TOKAPI_KEY")
 
 if not DISCORD_TOKEN:
     print("❌ DISCORD_TOKEN is missing. Check your .env file.")
@@ -108,9 +107,6 @@ def fetch_memes():
 
 def fetch_news():
     ...
-
-def fetch_tiktoks():
-    return ["🎵 TikTok scraping not available. Upgrade with API."]
 
 @tasks.loop(minutes=30)
 async def post_trending_content():
