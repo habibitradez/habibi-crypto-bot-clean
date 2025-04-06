@@ -27,6 +27,9 @@ from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
 from solders.system_program import transfer, TransferParams
 import base58
+import matplotlib.pyplot as plt
+import io
+import base64
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -66,172 +69,47 @@ def get_phantom_keypair():
         return None
 
 # --- Notify to Discord ---
-def notify_discord(msg):
+def notify_discord(msg, file=None):
     try:
-        if DISCORD_NEWS_CHANNEL_ID:
-            requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", json={"content": msg})
+        payload = {"content": msg}
+        files = {"file": file} if file else None
+        requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", data=payload, files=files)
     except Exception as e:
         logging.warning(f"Failed to notify Discord: {e}")
 
-# --- Auto-Snipe with Jupiter Aggregator ---
-def auto_snipe_token(token_address, boosted=False):
-    if not WALLET_ENABLED:
-        logging.info("Wallet not enabled, skipping snipe.")
-        return
+# --- Generate and Send Chart Thumbnail ---
+def send_chart_thumbnail(token_name, prices):
+    try:
+        fig, ax = plt.subplots()
+        ax.plot(prices, marker='o')
+        ax.set_title(f"{token_name} Price Chart")
+        ax.set_ylabel("Price (USD)")
+        ax.set_xlabel("Time (index)")
 
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        file = ("chart.png", buf, "image/png")
+
+        notify_discord(f"🖼️ Chart for {token_name}", file=file)
+        plt.close(fig)
+    except Exception as e:
+        logging.error(f"Failed to generate chart thumbnail: {e}")
+
+# --- Portfolio Balance Tracking ---
+@bot.command()
+async def balance(ctx):
     keypair = get_phantom_keypair()
     if not keypair:
+        await ctx.send("❌ Wallet not loaded.")
         return
 
-    amount_sol = 0.15 if boosted else 0.015
-    amount_lamports = int(amount_sol * 1_000_000_000)
-
     try:
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount={amount_lamports}&slippageBps=500"
-        quote = requests.get(quote_url).json()
-
-        if not quote.get("data"):
-            logging.warning("⚠️ No quote returned from Jupiter.")
-            return
-
-        swap_url = "https://quote-api.jup.ag/v6/swap"
-        swap_payload = {
-            "userPublicKey": str(keypair.pubkey()),
-            "wrapUnwrapSOL": True,
-            "quoteResponse": quote["data"][0],
-            "computeUnitPriceMicroLamports": 5000
-        }
-        swap_res = requests.post(swap_url, json=swap_payload).json()
-        swap_tx = swap_res.get("swapTransaction")
-
-        if not swap_tx:
-            logging.warning("⚠️ Swap TX not generated.")
-            return
-
-        from base64 import b64decode
-        from solana.transaction import Transaction as SolTx
-
-        raw_tx = b64decode(swap_tx)
-        tx = SolTx.deserialize(raw_tx)
-        tx.sign(keypair)
-        tx_sig = solana_client.send_raw_transaction(tx.serialize())
-
-        logging.info(f"✅ Jupiter TX sent for {token_address}: {tx_sig}")
-        notify_discord(f"🚀 Jupiter snipe sent for `{token_address}` with {amount_sol} SOL")
-
-        bought_tokens[token_address] = {
-            "buy_price": float(quote["data"][0].get("outAmount", 0)) / 1e9,
-            "boosted": boosted,
-            "time": datetime.utcnow()
-        }
-
+        balance = solana_client.get_balance(keypair.pubkey())['result']['value'] / 1_000_000_000
+        await ctx.send(f"💰 Current SOL Balance: {balance:.4f} SOL")
     except Exception as e:
-        logging.error(f"❌ Jupiter snipe failed for {token_address}: {e}")
-
-# --- Auto Sell Monitor ---
-@tasks.loop(seconds=30)
-async def monitor_and_sell():
-    keypair = get_phantom_keypair()
-    if not keypair:
-        return
-
-    for token_address in list(bought_tokens.keys()):
-        try:
-            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
-            res = requests.get(url)
-            data = res.json()
-
-            if "pair" not in data:
-                continue
-
-            price_usd = float(data["pair"].get("priceUsd", 0))
-            buy_price = bought_tokens[token_address]["buy_price"]
-
-            if price_usd >= buy_price * 2:
-                notify_discord(f"💸 Selling `{token_address}` at 2x gain! Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
-                del bought_tokens[token_address]
-                continue
-
-            if price_usd < buy_price * 0.6:
-                notify_discord(f"🛑 Stop-loss triggered for `{token_address}`. Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
-                del bought_tokens[token_address]
-                continue
-
-            time_held = datetime.utcnow() - bought_tokens[token_address]["time"]
-            if time_held > timedelta(minutes=10):
-                notify_discord(f"⏳ Time-based exit for `{token_address}`. Held for {time_held}. Selling now.")
-                del bought_tokens[token_address]
-
-        except Exception as e:
-            logging.error(f"Price check/sell failed for {token_address}: {e}")
-
-# --- Birdeye Trending Tokens ---
-@tasks.loop(seconds=45)
-async def watch_birdeye_trends():
-    url = "https://public-api.birdeye.so/public/token/solana/trending"
-    try:
-        res = requests.get(url).json()
-        tokens = res.get("data", [])
-        for token in tokens[:3]:
-            ca = token.get("address")
-            name = token.get("name")
-            liquidity = token.get("liquidity", 0)
-            if liquidity < 5000:
-                continue
-
-            msg = f"🔥 **Birdeye Trending Token**: {name}\n💧 Liquidity: ${liquidity:,.0f} | 🧪 CA: `{ca}`\n🔗 https://birdeye.so/token/{ca}?chain=solana"
-            logging.info(msg)
-            notify_discord(msg)
-            auto_snipe_token(ca)
-    except Exception as e:
-        logging.error(f"Birdeye watch failed: {e}")
-
-# --- GeckoTerminal Trending Tokens ---
-@tasks.loop(seconds=60)
-async def watch_geckoterminal_trends():
-    url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
-    try:
-        res = requests.get(url).json()
-        pools = res.get("data", [])
-        for pool in pools[:3]:
-            attr = pool["attributes"]
-            token_name = attr.get("base_token_name")
-            ca = attr.get("base_token_address")
-            liquidity = float(attr.get("reserve_in_usd", 0))
-            if liquidity < 5000:
-                continue
-
-            msg = f"💥 **GeckoTerminal Trending**: {token_name}\n💧 Liquidity: ${liquidity:,.0f} | 🧪 CA: `{ca}`\n🔗 https://www.geckoterminal.com/solana/pools/{pool['id']}"
-            logging.info(msg)
-            notify_discord(msg)
-            auto_snipe_token(ca)
-    except Exception as e:
-        logging.error(f"GeckoTerminal watch failed: {e}")
-
-# --- Pump.fun Token Watcher ---
-@tasks.loop(seconds=15)
-async def watch_new_pumpfun_tokens():
-    url = "https://client-api.pump.fun/latest/tokens"
-    try:
-        data = requests.get(url).json()
-        if not data or "tokens" not in data:
-            return
-
-        for token in data["tokens"][:3]:
-            name = token.get("name")
-            ca = token.get("tokenId")
-            creator = token.get("twitterHandle")
-            price = token.get("price", "N/A")
-            liquidity = token.get("liquidity", "N/A")
-            message = f"🚨 **New Pump Token**: {name}\n💰 Price: {price} | 🧪 CA: `{ca}`\n🐦 Creator: @{creator}\n🔗 https://pump.fun/{ca}"
-            logging.info(message)
-            notify_discord(message)
-
-            boosted = creator is not None and creator != ""
-            auto_snipe_token(ca, boosted=boosted)
-
-    except Exception as e:
-        logging.error(f"❌ Error fetching pump.fun tokens: {e}")
+        await ctx.send("⚠️ Failed to fetch balance.")
+        logging.error(f"Balance check failed: {e}")
 
 # --- Bot Commands ---
 @bot.command()
@@ -251,6 +129,16 @@ async def toggle_sniping(ctx):
     WALLET_ENABLED = not WALLET_ENABLED
     state = "enabled" if WALLET_ENABLED else "disabled"
     await ctx.send(f"⚙️ Auto-sniping is now **{state}**.")
+
+# --- Auto-sniping Result Notification ---
+def record_snipe(ca, buy_price, boosted):
+    bought_tokens[ca] = {
+        "buy_price": buy_price,
+        "boosted": boosted,
+        "time": datetime.utcnow(),
+    }
+    notify_discord(f"🚀 Sniped token `{ca}` at ${buy_price:.4f}. Boosted: {boosted}")
+    send_chart_thumbnail(ca[:8], [buy_price * (1 + 0.01 * i) for i in range(10)])
 
 # --- Startup Events ---
 @bot.event
