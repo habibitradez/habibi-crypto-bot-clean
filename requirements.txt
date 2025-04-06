@@ -9,3 +9,4 @@ tenacity==8.2.3
 beautifulsoup4
 snscrape==0.7.0.20230622
 base58==2.1.1
+matplotlib==3.8.3
