@@ -23,8 +23,8 @@ import random
 from bs4 import BeautifulSoup
 import snscrape.modules.twitter as sntwitter
 from solana.rpc.api import Client
-from solana.publickey import PublicKey
-from solana.keypair import Keypair
+from solders.pubkey import Pubkey as PublicKey
+from solders.keypair import Keypair
 from solana.system_program import TransferParams, transfer
 import base58
 
@@ -63,7 +63,7 @@ bought_tokens = {}  # Format: {"CA": {"buy_price": float, "boosted": bool}}
 def get_phantom_keypair():
     try:
         secret = json.loads(PHANTOM_SECRET_KEY)
-        return Keypair.from_secret_key(bytes(secret))
+        return Keypair.from_bytes(bytes(secret))
     except Exception as e:
         logging.error(f"Error loading Phantom secret key: {e}")
         return None
@@ -99,7 +99,7 @@ def auto_snipe_token(token_address, boosted=False):
 
         swap_url = "https://quote-api.jup.ag/v6/swap"
         swap_payload = {
-            "userPublicKey": str(keypair.public_key),
+            "userPublicKey": str(keypair.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote["data"][0],
             "computeUnitPriceMicroLamports": 5000
