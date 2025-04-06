@@ -147,19 +147,16 @@ async def monitor_and_sell():
             price_usd = float(data["pair"].get("priceUsd", 0))
             buy_price = bought_tokens[token_address]["buy_price"]
 
-            # Sell on 2x
             if price_usd >= buy_price * 2:
                 notify_discord(f"💸 Selling `{token_address}` at 2x gain! Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
                 del bought_tokens[token_address]
                 continue
 
-            # Stop-loss at 40% drop
             if price_usd < buy_price * 0.6:
                 notify_discord(f"🛑 Stop-loss triggered for `{token_address}`. Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
                 del bought_tokens[token_address]
                 continue
 
-            # Sell after 10 minutes regardless
             time_held = datetime.utcnow() - bought_tokens[token_address]["time"]
             if time_held > timedelta(minutes=10):
                 notify_discord(f"⏳ Time-based exit for `{token_address}`. Held for {time_held}. Selling now.")
@@ -167,6 +164,49 @@ async def monitor_and_sell():
 
         except Exception as e:
             logging.error(f"Price check/sell failed for {token_address}: {e}")
+
+# --- Birdeye Trending Tokens ---
+@tasks.loop(seconds=45)
+async def watch_birdeye_trends():
+    url = "https://public-api.birdeye.so/public/token/solana/trending"
+    try:
+        res = requests.get(url).json()
+        tokens = res.get("data", [])
+        for token in tokens[:3]:
+            ca = token.get("address")
+            name = token.get("name")
+            liquidity = token.get("liquidity", 0)
+            if liquidity < 5000:
+                continue
+
+            msg = f"🔥 **Birdeye Trending Token**: {name}\n💧 Liquidity: ${liquidity:,.0f} | 🧪 CA: `{ca}`\n🔗 https://birdeye.so/token/{ca}?chain=solana"
+            logging.info(msg)
+            notify_discord(msg)
+            auto_snipe_token(ca)
+    except Exception as e:
+        logging.error(f"Birdeye watch failed: {e}")
+
+# --- GeckoTerminal Trending Tokens ---
+@tasks.loop(seconds=60)
+async def watch_geckoterminal_trends():
+    url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
+    try:
+        res = requests.get(url).json()
+        pools = res.get("data", [])
+        for pool in pools[:3]:
+            attr = pool["attributes"]
+            token_name = attr.get("base_token_name")
+            ca = attr.get("base_token_address")
+            liquidity = float(attr.get("reserve_in_usd", 0))
+            if liquidity < 5000:
+                continue
+
+            msg = f"💥 **GeckoTerminal Trending**: {token_name}\n💧 Liquidity: ${liquidity:,.0f} | 🧪 CA: `{ca}`\n🔗 https://www.geckoterminal.com/solana/pools/{pool['id']}"
+            logging.info(msg)
+            notify_discord(msg)
+            auto_snipe_token(ca)
+    except Exception as e:
+        logging.error(f"GeckoTerminal watch failed: {e}")
 
 # --- Pump.fun Token Watcher ---
 @tasks.loop(seconds=15)
@@ -217,6 +257,8 @@ async def toggle_sniping(ctx):
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user}")
     watch_new_pumpfun_tokens.start()
+    watch_birdeye_trends.start()
+    watch_geckoterminal_trends.start()
     monitor_and_sell.start()
 
 # --- Run the Bot ---
