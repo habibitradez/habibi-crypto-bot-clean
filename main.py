@@ -23,7 +23,6 @@ import random
 from bs4 import BeautifulSoup
 import snscrape.modules.twitter as sntwitter
 from solana.rpc.api import Client
-from solana.transaction import Transaction
 from solana.publickey import PublicKey
 from solana.keypair import Keypair
 from solana.system_program import TransferParams, transfer
@@ -57,6 +56,9 @@ discord.utils.setup_logging(level=logging.INFO)
 # --- Solana Client ---
 solana_client = Client("https://api.mainnet-beta.solana.com")
 
+# --- Price & Token Tracker ---
+bought_tokens = {}  # Format: {"CA": {"buy_price": float, "boosted": bool}}
+
 # --- Convert Phantom Secret Key to Keypair ---
 def get_phantom_keypair():
     try:
@@ -65,6 +67,14 @@ def get_phantom_keypair():
     except Exception as e:
         logging.error(f"Error loading Phantom secret key: {e}")
         return None
+
+# --- Notify to Discord ---
+def notify_discord(msg):
+    try:
+        if DISCORD_NEWS_CHANNEL_ID:
+            requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", json={"content": msg})
+    except Exception as e:
+        logging.warning(f"Failed to notify Discord: {e}")
 
 # --- Auto-Snipe with Jupiter Aggregator ---
 def auto_snipe_token(token_address, boosted=False):
@@ -112,15 +122,48 @@ def auto_snipe_token(token_address, boosted=False):
         logging.info(f"✅ Jupiter TX sent for {token_address}: {tx_sig}")
         notify_discord(f"🚀 Jupiter snipe sent for `{token_address}` with {amount_sol} SOL")
 
+        # Track purchase
+        bought_tokens[token_address] = {
+            "buy_price": float(quote["data"][0].get("outAmount", 0)) / 1e9,
+            "boosted": boosted
+        }
+
     except Exception as e:
         logging.error(f"❌ Jupiter snipe failed for {token_address}: {e}")
+
+# --- Auto Sell Monitor ---
+@tasks.loop(seconds=30)
+async def monitor_and_sell():
+    keypair = get_phantom_keypair()
+    if not keypair:
+        return
+
+    for token_address in list(bought_tokens.keys()):
+        try:
+            url = f"https://api.dexscreener.com/latest/dex/pairs/solana/{token_address}"
+            res = requests.get(url)
+            data = res.json()
+
+            if "pair" not in data:
+                continue
+
+            price_usd = float(data["pair"].get("priceUsd", 0))
+            buy_price = bought_tokens[token_address]["buy_price"]
+
+            if price_usd >= buy_price * 2:
+                notify_discord(f"💸 Selling `{token_address}` at 2x gain! Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
+                # Placeholder for sell logic
+                del bought_tokens[token_address]
+
+        except Exception as e:
+            logging.error(f"Price check/sell failed for {token_address}: {e}")
 
 # --- Pump.fun Token Watcher ---
 @tasks.loop(seconds=15)
 async def watch_new_pumpfun_tokens():
     url = "https://client-api.pump.fun/latest/tokens"
     try:
-        data = safe_json_request(url)
+        data = requests.get(url).json()
         if not data or "tokens" not in data:
             return
 
