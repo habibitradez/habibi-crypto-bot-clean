@@ -38,7 +38,7 @@ PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
-WALLET_ENABLED = True  # Explicitly enabling wallet use
+WALLET_ENABLED = True
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 TOKAPI_KEY = os.getenv("TOKAPI_KEY")
 
@@ -53,11 +53,8 @@ tree = bot.tree
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-# --- Solana Client ---
 solana_client = Client("https://api.mainnet-beta.solana.com")
-
-# --- Price & Token Tracker ---
-bought_tokens = {}  # Format: {"CA": {"buy_price": float, "boosted": bool}}
+bought_tokens = {}
 
 # --- Convert Phantom Secret Key to Keypair ---
 def get_phantom_keypair():
@@ -122,10 +119,10 @@ def auto_snipe_token(token_address, boosted=False):
         logging.info(f"✅ Jupiter TX sent for {token_address}: {tx_sig}")
         notify_discord(f"🚀 Jupiter snipe sent for `{token_address}` with {amount_sol} SOL")
 
-        # Track purchase
         bought_tokens[token_address] = {
             "buy_price": float(quote["data"][0].get("outAmount", 0)) / 1e9,
-            "boosted": boosted
+            "boosted": boosted,
+            "time": datetime.utcnow()
         }
 
     except Exception as e:
@@ -150,9 +147,22 @@ async def monitor_and_sell():
             price_usd = float(data["pair"].get("priceUsd", 0))
             buy_price = bought_tokens[token_address]["buy_price"]
 
+            # Sell on 2x
             if price_usd >= buy_price * 2:
                 notify_discord(f"💸 Selling `{token_address}` at 2x gain! Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
-                # Placeholder for sell logic
+                del bought_tokens[token_address]
+                continue
+
+            # Stop-loss at 40% drop
+            if price_usd < buy_price * 0.6:
+                notify_discord(f"🛑 Stop-loss triggered for `{token_address}`. Current: ${price_usd:.4f}, Buy: ${buy_price:.4f}")
+                del bought_tokens[token_address]
+                continue
+
+            # Sell after 10 minutes regardless
+            time_held = datetime.utcnow() - bought_tokens[token_address]["time"]
+            if time_held > timedelta(minutes=10):
+                notify_discord(f"⏳ Time-based exit for `{token_address}`. Held for {time_held}. Selling now.")
                 del bought_tokens[token_address]
 
         except Exception as e:
@@ -182,4 +192,32 @@ async def watch_new_pumpfun_tokens():
 
     except Exception as e:
         logging.error(f"❌ Error fetching pump.fun tokens: {e}")
+
+# --- Bot Commands ---
+@bot.command()
+async def holdings(ctx):
+    if not bought_tokens:
+        await ctx.send("📉 No active holdings.")
+        return
+
+    message = "📊 **Active Holdings**:\n"
+    for ca, info in bought_tokens.items():
+        message += f"- `{ca}`: Bought at ${info['buy_price']:.4f}, Boosted: {info['boosted']}, Time: {info['time'].strftime('%H:%M:%S')} UTC\n"
+    await ctx.send(message)
+
+@bot.command()
+async def toggle_sniping(ctx):
+    global WALLET_ENABLED
+    WALLET_ENABLED = not WALLET_ENABLED
+    state = "enabled" if WALLET_ENABLED else "disabled"
+    await ctx.send(f"⚙️ Auto-sniping is now **{state}**.")
+
+# --- Startup Events ---
+@bot.event
+async def on_ready():
+    logging.info(f"✅ Logged in as {bot.user}")
+    watch_new_pumpfun_tokens.start()
+    monitor_and_sell.start()
+
+# --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
