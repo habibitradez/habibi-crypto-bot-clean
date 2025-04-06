@@ -7,3 +7,4 @@ git+https://github.com/michaelhly/solana-py@v0.36.6
 google-api-python-client==2.120.0
 tenacity==8.2.3
 beautifulsoup4
+snscrape==0.7.0.20230110
