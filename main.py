@@ -25,7 +25,7 @@ import snscrape.modules.twitter as sntwitter
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
-from solana.system_program import TransferParams, transfer
+from solders.system_program import transfer, TransferParams
 import base58
 
 # --- LOAD .env CONFIG ---
@@ -182,3 +182,4 @@ async def watch_new_pumpfun_tokens():
 
     except Exception as e:
         logging.error(f"❌ Error fetching pump.fun tokens: {e}")
+bot.run(DISCORD_TOKEN)
