@@ -105,7 +105,7 @@ async def balance(ctx):
         return
 
     try:
-        balance = solana_client.get_balance(keypair.pubkey())['result']['value'] / 1_000_000_000
+        balance = solana_client.get_balance(keypair.pubkey())["result"]["value"] / 1_000_000_000
         await ctx.send(f"💰 Current SOL Balance: {balance:.4f} SOL")
     except Exception as e:
         await ctx.send("⚠️ Failed to fetch balance.")
@@ -140,14 +140,82 @@ def record_snipe(ca, buy_price, boosted):
     notify_discord(f"🚀 Sniped token `{ca}` at ${buy_price:.4f}. Boosted: {boosted}")
     send_chart_thumbnail(ca[:8], [buy_price * (1 + 0.01 * i) for i in range(10)])
 
+# --- Periodic Tasks for Token Watching ---
+@tasks.loop(minutes=1)
+async def watch_birdeye_trends():
+    try:
+        response = requests.get("https://api.birdeye.so/public/token/trending", headers={"x-api-key": TOKAPI_KEY})
+        data = response.json()
+        tokens = data.get("data", [])
+
+        for token in tokens[:3]:
+            ca = token.get("address")
+            price = float(token.get("price", 0.0))
+            record_snipe(ca, price, boosted=True)
+    except Exception as e:
+        logging.warning(f"Failed to fetch Birdeye trends: {e}")
+
+@tasks.loop(minutes=2)
+async def watch_geckoterminal_trends():
+    try:
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
+        data = requests.get(url).json()
+        pools = data.get("data", [])
+
+        for pool in pools[:3]:
+            ca = pool.get("attributes", {}).get("token_address")
+            price = float(pool.get("attributes", {}).get("base_token_price_usd", 0.0))
+            record_snipe(ca, price, boosted=False)
+    except Exception as e:
+        logging.warning(f"Failed to fetch GeckoTerminal pools: {e}")
+
+# --- Auto-sell Logic ---
+@tasks.loop(minutes=5)
+async def monitor_and_sell():
+    keypair = get_phantom_keypair()
+    if not keypair:
+        logging.warning("⛔ Wallet not loaded for selling.")
+        return
+
+    try:
+        to_remove = []
+        for ca, info in bought_tokens.items():
+            try:
+                response = requests.get(f"https://api.birdeye.so/public/token/price?address={ca}", headers={"x-api-key": TOKAPI_KEY})
+                price_data = response.json()
+                current_price = float(price_data.get("data", {}).get("value", 0.0))
+                buy_price = info['buy_price']
+
+                if current_price >= buy_price * 1.5:
+                    notify_discord(f"💸 Selling token `{ca}` at ${current_price:.4f} (bought at ${buy_price:.4f}) 💰")
+
+                    tx = solana_client.send_transaction(
+                        transfer(TransferParams(
+                            from_pubkey=keypair.pubkey(),
+                            to_pubkey=PublicKey(PHANTOM_PUBLIC_KEY),
+                            lamports=int(0.001 * 1e9)
+                        )),
+                        keypair
+                    )
+                    notify_discord(f"✅ Sold! Transaction signature: {tx['result']}")
+                    to_remove.append(ca)
+            except Exception as err:
+                logging.warning(f"Error checking price for {ca}: {err}")
+
+        for ca in to_remove:
+            bought_tokens.pop(ca, None)
+
+    except Exception as e:
+        logging.warning(f"Sell monitor failed: {e}")
+
 # --- Startup Events ---
 @bot.event
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user}")
-    watch_new_pumpfun_tokens.start()
     watch_birdeye_trends.start()
     watch_geckoterminal_trends.start()
     monitor_and_sell.start()
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
+
