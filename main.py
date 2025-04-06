@@ -22,6 +22,12 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import random
 from bs4 import BeautifulSoup
 import snscrape.modules.twitter as sntwitter
+from solana.rpc.api import Client
+from solana.transaction import Transaction
+from solana.publickey import PublicKey
+from solana.keypair import Keypair
+from solana.system_program import TransferParams, transfer
+import base58
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -33,7 +39,7 @@ PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
-WALLET_ENABLED = os.getenv("WALLET_ENABLED", "false").lower() == "true"
+WALLET_ENABLED = True  # Explicitly enabling wallet use
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 TOKAPI_KEY = os.getenv("TOKAPI_KEY")
 
@@ -42,170 +48,94 @@ if not DISCORD_TOKEN:
     exit(1)
 
 openai.api_key = OPENAI_API_KEY
-
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
 tree = bot.tree
-
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-# --- Twitter API + Scraping Fallback ---
-twitter_api_failures = 0
-use_scraping = False
+# --- Solana Client ---
+solana_client = Client("https://api.mainnet-beta.solana.com")
 
-def notify_discord(message):
-    payload = {
-        "username": "Habibi Bot ⚡",
-        "content": message
-    }
+# --- Convert Phantom Secret Key to Keypair ---
+def get_phantom_keypair():
     try:
-        requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", json=payload)
+        secret = json.loads(PHANTOM_SECRET_KEY)
+        return Keypair.from_secret_key(bytes(secret))
     except Exception as e:
-        logging.error(f"Discord notification failed: {e}")
+        logging.error(f"Error loading Phantom secret key: {e}")
+        return None
 
-def safe_json_request(url, headers=None):
-    try:
-        res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
-        logging.info(f"✅ Fetched URL: {url}")
-        content_type = res.headers.get('Content-Type', '')
-        if 'application/json' not in content_type:
-            logging.warning(f"⚠️ Non-JSON response. Content-Type: {content_type}, Body: {res.text[:300]}")
-            return None
-        return res.json()
-    except requests.exceptions.RequestException as e:
-        logging.error(f"❌ Error fetching {url}: {e}")
-        raise
-
-def scrape_tweets(query, limit=5):
-    logging.info("Attempting fallback Twitter scrape...")
-    tweets = []
-    try:
-        for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
-            if i >= limit:
-                break
-            tweet_entry = f"🐦 **{tweet.user.username}**\n{tweet.content}\n🔗 https://twitter.com/i/web/status/{tweet.id}"
-            tweets.append(tweet_entry)
-        return tweets
-    except Exception as e:
-        logging.error(f"Scraping failed: {e}")
-        return []
-
-def fetch_trending_tweets():
-    global twitter_api_failures, use_scraping
-    trending_tweets = []
-
-    if not use_scraping:
-        try:
-            headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-            keywords = "crypto OR solana OR eth OR $btc OR trending OR coin OR CA OR invest OR Buy"
-            url = f"https://api.twitter.com/2/tweets/search/recent?query={keywords}&max_results=10&tweet.fields=created_at,text,author_id"
-            data = safe_json_request(url, headers)
-            if data and "data" in data:
-                for tweet in data["data"]:
-                    text = tweet.get("text")
-                    tweet_url = f"https://twitter.com/i/web/status/{tweet['id']}"
-                    tweet_entry = f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}"
-                    logging.info(f"📢 Tweet: {tweet_entry}")
-                    trending_tweets.append(tweet_entry)
-                twitter_api_failures = 0
-            else:
-                twitter_api_failures += 1
-                logging.warning("⚠️ No tweet data returned from Twitter API.")
-        except Exception as e:
-            twitter_api_failures += 1
-            logging.error(f"❌ Failed to fetch tweets: {e}")
-
-    if twitter_api_failures >= 3 or use_scraping:
-        use_scraping = True
-        notify_discord("⚠️ Twitter API failed 3x. Switching to scraping.")
-        trending_tweets = scrape_tweets("crypto OR solana OR eth OR $btc", 5)
-        if trending_tweets:
-            twitter_api_failures = 0
-            use_scraping = False
-            notify_discord("✅ Twitter API recovered. Switching back to API.")
-
-    return trending_tweets
-
-# --- Remaining content fetchers remain unchanged ---
-def fetch_trending_crypto():
-    url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
-    data = safe_json_request(url)
-    trending = []
-    if data and "data" in data:
-        def get_volume_usd(pool):
-            try:
-                volume = pool["attributes"].get("volume_usd", 0)
-                return float(volume) if isinstance(volume, (int, float, str)) else 0.0
-            except (ValueError, TypeError):
-                return 0.0
-
-        for pool in sorted(data["data"], key=get_volume_usd, reverse=True)[:5]:
-            token_name = pool["attributes"].get("name", "Unknown Token")
-            price = pool["attributes"].get("price_usd", "N/A")
-            link = f"https://www.geckoterminal.com/solana/pools/{pool['id']}"
-            trending.append(f"🚀 **{token_name}** - ${price}\n🔗 {link}")
-    else:
-        logging.warning("⚠️ No trending crypto data fetched.")
-    return trending
-
-def fetch_memes():
-    url = "https://meme-api.com/gimme/cryptocurrency/3"
-    memes = []
-    try:
-        data = safe_json_request(url)
-        if data and "memes" in data:
-            for meme in data["memes"]:
-                memes.append(f"🤣 **{meme['title']}**\n{meme['url']}")
-    except Exception as e:
-        logging.warning(f"⚠️ Meme fetch failed: {e}")
-    return memes
-
-def fetch_news():
-    url = f"https://newsapi.org/v2/everything?q=crypto&apiKey={NEWSAPI_KEY}&language=en&sortBy=publishedAt&pageSize=5"
-    news = []
-    try:
-        data = safe_json_request(url)
-        if data and "articles" in data:
-            for article in data["articles"]:
-                news.append(f"📰 **{article['title']}**\n{article['url']}")
-    except Exception as e:
-        logging.warning(f"⚠️ News fetch failed: {e}")
-    return news
-
-def fetch_tiktoks():
-    return ["🎵 TikTok scraping not available. Upgrade with API."]
-
-@tasks.loop(minutes=30)
-async def post_trending_content():
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if not channel:
-        logging.warning("❌ Discord news channel not found.")
+# --- Auto-Snipe with Jupiter Aggregator ---
+def auto_snipe_token(token_address, boosted=False):
+    if not WALLET_ENABLED:
+        logging.info("Wallet not enabled, skipping snipe.")
         return
 
-    tweets = fetch_trending_tweets()
-    crypto = fetch_trending_crypto()
-    memes = fetch_memes()
-    news = fetch_news()
-    tiktoks = fetch_tiktoks()
-
-    all_content = tweets + crypto + memes + news + tiktoks
-
-    if not all_content:
-        logging.warning("⚠️ No content fetched to post.")
+    keypair = get_phantom_keypair()
+    if not keypair:
         return
 
-    for item in all_content:
-        await channel.send(item)
+    amount_sol = 0.15 if boosted else 0.015
+    amount_lamports = int(amount_sol * 1_000_000_000)
 
-    if any(any(keyword in item.lower() for keyword in ["elon", "$", "crypto", "coin", "ca", "invest", "buy"]) for item in tweets):
-        logging.info("🔥 Urgent trending tweet detected, reposting tweets and crypto now.")
-        for item in tweets + crypto:
-            await channel.send(item)
+    try:
+        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount={amount_lamports}&slippageBps=500"
+        quote = requests.get(quote_url).json()
 
-@bot.event
-async def on_ready():
-    logging.info(f"✅ Logged in as {bot.user}!")
-    post_trending_content.start()
+        if not quote.get("data"):
+            logging.warning("⚠️ No quote returned from Jupiter.")
+            return
 
-bot.run(DISCORD_TOKEN)
+        swap_url = "https://quote-api.jup.ag/v6/swap"
+        swap_payload = {
+            "userPublicKey": str(keypair.public_key),
+            "wrapUnwrapSOL": True,
+            "quoteResponse": quote["data"][0],
+            "computeUnitPriceMicroLamports": 5000
+        }
+        swap_res = requests.post(swap_url, json=swap_payload).json()
+        swap_tx = swap_res.get("swapTransaction")
+
+        if not swap_tx:
+            logging.warning("⚠️ Swap TX not generated.")
+            return
+
+        from base64 import b64decode
+        from solana.transaction import Transaction as SolTx
+
+        raw_tx = b64decode(swap_tx)
+        tx = SolTx.deserialize(raw_tx)
+        tx.sign(keypair)
+        tx_sig = solana_client.send_raw_transaction(tx.serialize())
+
+        logging.info(f"✅ Jupiter TX sent for {token_address}: {tx_sig}")
+        notify_discord(f"🚀 Jupiter snipe sent for `{token_address}` with {amount_sol} SOL")
+
+    except Exception as e:
+        logging.error(f"❌ Jupiter snipe failed for {token_address}: {e}")
+
+# --- Pump.fun Token Watcher ---
+@tasks.loop(seconds=15)
+async def watch_new_pumpfun_tokens():
+    url = "https://client-api.pump.fun/latest/tokens"
+    try:
+        data = safe_json_request(url)
+        if not data or "tokens" not in data:
+            return
+
+        for token in data["tokens"][:3]:
+            name = token.get("name")
+            ca = token.get("tokenId")
+            creator = token.get("twitterHandle")
+            price = token.get("price", "N/A")
+            liquidity = token.get("liquidity", "N/A")
+            message = f"🚨 **New Pump Token**: {name}\n💰 Price: {price} | 🧪 CA: `{ca}`\n🐦 Creator: @{creator}\n🔗 https://pump.fun/{ca}"
+            logging.info(message)
+            notify_discord(message)
+
+            boosted = creator is not None and creator != ""
+            auto_snipe_token(ca, boosted=boosted)
+
+    except Exception as e:
+        logging.error(f"❌ Error fetching pump.fun tokens: {e}")
