@@ -84,8 +84,8 @@ def scrape_tweets(query, limit=5):
         for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
             if i >= limit:
                 break
-            tweets.append(f"🐦 **{tweet.user.username}**
-{tweet.content}\n🔗 https://twitter.com/i/web/status/{tweet.id}")
+            tweet_entry = f"🐦 **{tweet.user.username}**\n{tweet.content}\n🔗 https://twitter.com/i/web/status/{tweet.id}"
+            tweets.append(tweet_entry)
         return tweets
     except Exception as e:
         logging.error(f"Scraping failed: {e}")
