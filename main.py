@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import random
 from bs4 import BeautifulSoup
+import snscrape.modules.twitter as sntwitter
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -49,7 +50,20 @@ tree = bot.tree
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=4), retry=retry_if_exception_type(requests.exceptions.RequestException))
+# --- Twitter API + Scraping Fallback ---
+twitter_api_failures = 0
+use_scraping = False
+
+def notify_discord(message):
+    payload = {
+        "username": "Habibi Bot ⚡",
+        "content": message
+    }
+    try:
+        requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", json=payload)
+    except Exception as e:
+        logging.error(f"Discord notification failed: {e}")
+
 def safe_json_request(url, headers=None):
     try:
         res = requests.get(url, headers=headers or {"User-Agent": "HabibiBot/1.0"}, timeout=10)
@@ -63,26 +77,57 @@ def safe_json_request(url, headers=None):
         logging.error(f"❌ Error fetching {url}: {e}")
         raise
 
-def fetch_trending_tweets():
-    trending_tweets = []
+def scrape_tweets(query, limit=5):
+    logging.info("Attempting fallback Twitter scrape...")
+    tweets = []
     try:
-        headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
-        keywords = "crypto OR solana OR eth OR $btc OR trending OR coin OR CA OR invest OR Buy"
-        url = f"https://api.twitter.com/2/tweets/search/recent?query={keywords}&max_results=10&tweet.fields=created_at,text,author_id"
-        data = safe_json_request(url, headers)
-        if data and "data" in data:
-            for tweet in data["data"]:
-                text = tweet.get("text")
-                tweet_url = f"https://twitter.com/i/web/status/{tweet['id']}"
-                tweet_entry = f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}"
-                logging.info(f"📢 Tweet: {tweet_entry}")
-                trending_tweets.append(tweet_entry)
-        else:
-            logging.warning("⚠️ No tweet data returned from Twitter API.")
+        for i, tweet in enumerate(sntwitter.TwitterSearchScraper(query).get_items()):
+            if i >= limit:
+                break
+            tweets.append(f"🐦 **{tweet.user.username}**
+{tweet.content}\n🔗 https://twitter.com/i/web/status/{tweet.id}")
+        return tweets
     except Exception as e:
-        logging.error(f"❌ Failed to fetch tweets: {e}")
+        logging.error(f"Scraping failed: {e}")
+        return []
+
+def fetch_trending_tweets():
+    global twitter_api_failures, use_scraping
+    trending_tweets = []
+
+    if not use_scraping:
+        try:
+            headers = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
+            keywords = "crypto OR solana OR eth OR $btc OR trending OR coin OR CA OR invest OR Buy"
+            url = f"https://api.twitter.com/2/tweets/search/recent?query={keywords}&max_results=10&tweet.fields=created_at,text,author_id"
+            data = safe_json_request(url, headers)
+            if data and "data" in data:
+                for tweet in data["data"]:
+                    text = tweet.get("text")
+                    tweet_url = f"https://twitter.com/i/web/status/{tweet['id']}"
+                    tweet_entry = f"🐦 **Trending Tweet**\n{text}\n🔗 {tweet_url}"
+                    logging.info(f"📢 Tweet: {tweet_entry}")
+                    trending_tweets.append(tweet_entry)
+                twitter_api_failures = 0
+            else:
+                twitter_api_failures += 1
+                logging.warning("⚠️ No tweet data returned from Twitter API.")
+        except Exception as e:
+            twitter_api_failures += 1
+            logging.error(f"❌ Failed to fetch tweets: {e}")
+
+    if twitter_api_failures >= 3 or use_scraping:
+        use_scraping = True
+        notify_discord("⚠️ Twitter API failed 3x. Switching to scraping.")
+        trending_tweets = scrape_tweets("crypto OR solana OR eth OR $btc", 5)
+        if trending_tweets:
+            twitter_api_failures = 0
+            use_scraping = False
+            notify_discord("✅ Twitter API recovered. Switching back to API.")
+
     return trending_tweets
 
+# --- Remaining content fetchers remain unchanged ---
 def fetch_trending_crypto():
     url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
     data = safe_json_request(url)
