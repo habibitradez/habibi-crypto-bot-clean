@@ -179,10 +179,19 @@ async def watch_geckoterminal_trends():
 
         for pool in pools[:10]:
             ca = pool.get("attributes", {}).get("token_address")
-            price = float(pool.get("attributes", {}).get("base_token_price_usd", 0.0))
-            if WALLET_ENABLED:
-                real_token_purchase(ca)
-            record_snipe(ca, price, boosted=False)
+            price_str = pool.get("attributes", {}).get("base_token_price_usd", "0.0")
+
+            if not ca or not price_str:
+                logging.warning(f"⚠️ Skipping pool due to missing data: {pool}")
+                continue
+
+            try:
+                price = float(price_str)
+                if WALLET_ENABLED:
+                    real_token_purchase(ca)
+                record_snipe(ca, price, boosted=False)
+            except Exception as e:
+                logging.warning(f"⚠️ Error processing pool {ca}: {e}")
     except Exception as e:
         logging.warning(f"Failed to fetch GeckoTerminal pools: {e}")
 
