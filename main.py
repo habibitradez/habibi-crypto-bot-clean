@@ -50,10 +50,12 @@ PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 PHANTOM_PUBLIC_KEY = os.getenv("PHANTOM_PUBLIC_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
+BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")
 WALLET_ENABLED = True
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 
 GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana"
+BITQUERY_URL = "https://graphql.bitquery.io"
 
 openai.api_key = OPENAI_API_KEY
 intents = discord.Intents.all()
@@ -83,6 +85,7 @@ def get_phantom_keypair():
         logging.error(f"Error decoding base58 Phantom key: {e}")
         return None
 
+
 def notify_discord(msg, file=None):
     try:
         payload = {"content": msg}
@@ -90,6 +93,7 @@ def notify_discord(msg, file=None):
         requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", data=payload, files=files)
     except Exception as e:
         logging.warning(f"Failed to notify Discord: {e}")
+
 
 def real_buy_token(recipient_pubkey_str, lamports=1000000):
     keypair = get_phantom_keypair()
@@ -115,6 +119,7 @@ def real_buy_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real buy failed: {e}")
         return None
 
+
 def real_sell_token(recipient_pubkey_str, lamports=1000000):
     keypair = get_phantom_keypair()
     if not keypair:
@@ -138,6 +143,38 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real sell failed: {e}")
         return None
 
+
+def fetch_bitquery_data(token_address):
+    headers = {"X-API-KEY": BITQUERY_API_KEY}
+    query = {
+        "query": """
+        query MyQuery {
+          solana(network: solana) {
+            dexTrades(
+              smartContractAddress: {is: \"%s\"}
+              options: {desc: [\"block.timestamp.time\"], limit: 5}
+            ) {
+              transaction {
+                hash
+              }
+              tradeAmount(in: USD)
+              buyer {
+                address
+              }
+              quotePrice
+            }
+          }
+        }
+        """ % token_address
+    }
+    response = requests.post(BITQUERY_URL, json=query, headers=headers)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        logging.warning(f"⚠️ Bitquery fetch error: {response.status_code}")
+        return None
+
+
 def generate_chart(token_id):
     try:
         chart_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
@@ -158,50 +195,5 @@ def generate_chart(token_id):
     except Exception as e:
         logging.warning(f"⚠️ Failed to generate chart: {e}")
         return None
-
-def auto_snipe_and_log(token_url):
-    global bought_tokens, total_profit_usd
-    token_id = token_url.split("/")[-1]
-    if token_id in bought_tokens:
-        return
-
-    try:
-        tx_signature = real_buy_token("FVK4iP6rBCqUWUke6PKmD2d7bRtFCu8MLXYumQ3cZN4T", lamports=1000000)
-        if not tx_signature:
-            return
-
-        buy_price = random.uniform(0.01, 1.0)
-        current_price = buy_price * random.uniform(1.2, 3.0)
-        buyers_detected = random.randint(1, 10)  # Replace with real detection later
-
-        profit = current_price - buy_price
-
-        should_sell = (current_price >= buy_price * SELL_PROFIT_TRIGGER) or (buyers_detected >= MIN_BUYERS_FOR_SELL)
-
-        sell_tx = None
-        if should_sell:
-            sell_tx = real_sell_token("FVK4iP6rBCqUWUke6PKmD2d7bRtFCu8MLXYumQ3cZN4T", lamports=1000000)
-            if sell_tx:
-                total_profit_usd += profit
-
-        bought_tokens[token_id] = {
-            "buy_price": buy_price,
-            "buy_time": datetime.utcnow().isoformat(),
-            "sell_price": current_price if should_sell else None,
-            "sell_time": datetime.utcnow().isoformat() if should_sell else None,
-            "profit": profit if should_sell else None,
-            "tx_signature": tx_signature,
-            "sell_tx": sell_tx
-        }
-
-        chart_image = generate_chart(token_id)
-        notify_discord(
-            f"💸 Sniped token: {token_url}\n"
-            f"Txn: [{tx_signature}](https://solscan.io/tx/{tx_signature})\n"
-            f"Buy: ${buy_price:.4f} → {'Sell: $' + str(round(current_price, 4)) if should_sell else 'Holding'}\n"
-            f"👥 Buyers detected: {buyers_detected}\n"
-            f"{'💰 Profit: $' + str(round(profit, 2)) + ' | 🧾 Total: $' + str(round(total_profit_usd, 2)) if should_sell else ''}",
-            file=chart_image
-        )
-    except Exception as e:
-        logging.warning(f"❌ Snipe transaction failed: {e}")
+# --- Run the Bot ---
+bot.run(DISCORD_TOKEN)
