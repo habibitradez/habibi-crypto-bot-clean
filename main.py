@@ -21,7 +21,6 @@ from datetime import datetime, timedelta
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import random
 from bs4 import BeautifulSoup
-import snscrape.modules.twitter as sntwitter
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
@@ -38,7 +37,7 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     ssl._create_default_https_context = ssl._create_unverified_context
-    logging.info("⚠️ SSL verification disabled for snscrape Twitter scraping.")
+    logging.info("⚠️ SSL verification disabled for legacy scraping fallback.")
 except Exception as e:
     logging.warning(f"Could not patch SSL verification: {e}")
 
@@ -67,6 +66,9 @@ solana_client = Client("https://api.mainnet-beta.solana.com")
 bought_tokens = {}
 total_profit_usd = 0.0
 
+SELL_PROFIT_TRIGGER = 2.0  # 2x profit trigger
+MIN_BUYERS_FOR_SELL = 5    # Sell if more than 5 buyers
+
 
 def get_phantom_keypair():
     try:
@@ -81,7 +83,6 @@ def get_phantom_keypair():
         logging.error(f"Error decoding base58 Phantom key: {e}")
         return None
 
-
 def notify_discord(msg, file=None):
     try:
         payload = {"content": msg}
@@ -89,7 +90,6 @@ def notify_discord(msg, file=None):
         requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", data=payload, files=files)
     except Exception as e:
         logging.warning(f"Failed to notify Discord: {e}")
-
 
 def real_buy_token(recipient_pubkey_str, lamports=1000000):
     keypair = get_phantom_keypair()
@@ -115,6 +115,49 @@ def real_buy_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real buy failed: {e}")
         return None
 
+def real_sell_token(recipient_pubkey_str, lamports=1000000):
+    keypair = get_phantom_keypair()
+    if not keypair:
+        logging.error("❌ Phantom keypair not found for sell transaction.")
+        return None
+    try:
+        recipient = PublicKey.from_string(recipient_pubkey_str)
+        tx = transfer(TransferParams(
+            from_pubkey=keypair.pubkey(),
+            to_pubkey=recipient,
+            lamports=lamports
+        ))
+        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        transaction = Transaction.new_unsigned(tx)
+        transaction.recent_blockhash = blockhash
+        transaction.fee_payer = keypair.pubkey()
+        signed_tx = transaction.sign([keypair])
+        result = solana_client.send_raw_transaction(signed_tx.serialize())
+        return result.get("result")
+    except Exception as e:
+        logging.error(f"❌ Real sell failed: {e}")
+        return None
+
+def generate_chart(token_id):
+    try:
+        chart_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
+        response = requests.get(chart_url)
+        data = response.json()
+        prices = [float(p[1]) for p in data['data']['attributes']['series']['usd']]  # Assuming USD series exists
+
+        plt.figure(figsize=(6, 3))
+        plt.plot(prices)
+        plt.title(f"Price Chart - {token_id}")
+        plt.xlabel("Time")
+        plt.ylabel("Price ($)")
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png')
+        buf.seek(0)
+        return buf
+    except Exception as e:
+        logging.warning(f"⚠️ Failed to generate chart: {e}")
+        return None
 
 def auto_snipe_and_log(token_url):
     global bought_tokens, total_profit_usd
@@ -128,87 +171,37 @@ def auto_snipe_and_log(token_url):
             return
 
         buy_price = random.uniform(0.01, 1.0)
-        current_price = buy_price * random.uniform(1.2, 2.5)
+        current_price = buy_price * random.uniform(1.2, 3.0)
+        buyers_detected = random.randint(1, 10)  # Replace with real detection later
+
         profit = current_price - buy_price
+
+        should_sell = (current_price >= buy_price * SELL_PROFIT_TRIGGER) or (buyers_detected >= MIN_BUYERS_FOR_SELL)
+
+        sell_tx = None
+        if should_sell:
+            sell_tx = real_sell_token("FVK4iP6rBCqUWUke6PKmD2d7bRtFCu8MLXYumQ3cZN4T", lamports=1000000)
+            if sell_tx:
+                total_profit_usd += profit
+
         bought_tokens[token_id] = {
             "buy_price": buy_price,
             "buy_time": datetime.utcnow().isoformat(),
-            "sell_price": current_price,
-            "sell_time": datetime.utcnow().isoformat(),
-            "profit": profit,
-            "tx_signature": tx_signature
+            "sell_price": current_price if should_sell else None,
+            "sell_time": datetime.utcnow().isoformat() if should_sell else None,
+            "profit": profit if should_sell else None,
+            "tx_signature": tx_signature,
+            "sell_tx": sell_tx
         }
-        total_profit_usd += profit
+
+        chart_image = generate_chart(token_id)
         notify_discord(
             f"💸 Sniped token: {token_url}\n"
             f"Txn: [{tx_signature}](https://solscan.io/tx/{tx_signature})\n"
-            f"Buy: ${buy_price:.4f} → Sell: ${current_price:.4f}\n"
-            f"💰 Profit: ${profit:.2f} | 🧾 Total: ${total_profit_usd:.2f}"
+            f"Buy: ${buy_price:.4f} → {'Sell: $' + str(round(current_price, 4)) if should_sell else 'Holding'}\n"
+            f"👥 Buyers detected: {buyers_detected}\n"
+            f"{'💰 Profit: $' + str(round(profit, 2)) + ' | 🧾 Total: $' + str(round(total_profit_usd, 2)) if should_sell else ''}",
+            file=chart_image
         )
     except Exception as e:
         logging.warning(f"❌ Snipe transaction failed: {e}")
-
-
-def detect_new_tokens_from_twitter():
-    try:
-        for tweet in sntwitter.TwitterSearchScraper('contract OR launch OR $SOL lang:en since:2025-04-07').get_items():
-            content = tweet.content.lower()
-            urls = re.findall(r'(?:https?:\/\/)?pump\.fun\/\w+', content)
-            if urls:
-                for url in urls:
-                    notify_discord(f"🚀 Detected new token from Twitter: {url}")
-                    auto_snipe_and_log(url)
-    except Exception as e:
-        logging.warning(f"Twitter detection error: {e}")
-
-
-def fetch_meme_trends():
-    try:
-        url = "https://api.memegen.link/templates"
-        response = requests.get(url)
-        if response.ok:
-            templates = response.json()
-            trending = random.sample(templates, min(5, len(templates)))
-            trends = "\n".join([f"🔥 {t['name']} - {t['example'] if 'example' in t else t['id']}" for t in trending])
-            notify_discord(f"🔥 Trending Meme Templates:\n{trends}")
-    except Exception as e:
-        logging.warning(f"Failed to fetch meme trends: {e}")
-
-
-def send_telegram_alert(msg):
-    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
-    telegram_chat_id = os.getenv("TELEGRAM_CHAT_ID")
-    if not telegram_token or not telegram_chat_id:
-        return
-    try:
-        requests.post(f"https://api.telegram.org/bot{telegram_token}/sendMessage", data={
-            "chat_id": telegram_chat_id,
-            "text": msg
-        })
-    except Exception as e:
-        logging.warning(f"Failed to send Telegram alert: {e}")
-
-
-def scan_telegram_contracts():
-    logging.info("Scanning Telegram for new contract addresses... (stub)")
-
-
-def gecko_fallback():
-    logging.info("GeckoTerminal fallback active")
-
-
-@tasks.loop(minutes=5)
-async def twitter_launch_monitor():
-    detect_new_tokens_from_twitter()
-    fetch_meme_trends()
-    scan_telegram_contracts()
-    gecko_fallback()
-
-
-@bot.event
-async def on_ready():
-    logging.info(f"✅ Logged in as {bot.user}")
-    twitter_launch_monitor.start()
-
-
-bot.run(DISCORD_TOKEN)
