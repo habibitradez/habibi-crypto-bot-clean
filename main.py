@@ -59,9 +59,15 @@ bought_tokens = {}
 # --- Convert Phantom Secret Key to Keypair (Base58 ONLY) ---
 def get_phantom_keypair():
     try:
-        return Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+        secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
+        if len(secret_bytes) == 64:
+            return Keypair.from_bytes(secret_bytes)
+        elif len(secret_bytes) == 32:
+            return Keypair.from_seed(secret_bytes)
+        else:
+            raise ValueError("Secret key must be 32 or 64 bytes.")
     except Exception as e:
-        logging.error(f"Error loading Phantom secret key (expected base58 format): {e}")
+        logging.error(f"Error decoding base58 Phantom key: {e}")
         return None
 
 # --- Notify to Discord ---
