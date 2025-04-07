@@ -43,11 +43,6 @@ DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = True
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
-TOKAPI_KEY = os.getenv("TOKAPI_KEY")
-
-if not DISCORD_TOKEN:
-    print("❌ DISCORD_TOKEN is missing. Check your .env file.")
-    exit(1)
 
 openai.api_key = OPENAI_API_KEY
 intents = discord.Intents.all()
@@ -141,20 +136,6 @@ def record_snipe(ca, buy_price, boosted):
     send_chart_thumbnail(ca[:8], [buy_price * (1 + 0.01 * i) for i in range(10)])
 
 # --- Periodic Tasks for Token Watching ---
-@tasks.loop(minutes=1)
-async def watch_birdeye_trends():
-    try:
-        response = requests.get("https://api.birdeye.so/public/token/trending", headers={"x-api-key": TOKAPI_KEY})
-        data = response.json()
-        tokens = data.get("data", [])
-
-        for token in tokens[:3]:
-            ca = token.get("address")
-            price = float(token.get("price", 0.0))
-            record_snipe(ca, price, boosted=True)
-    except Exception as e:
-        logging.warning(f"Failed to fetch Birdeye trends: {e}")
-
 @tasks.loop(minutes=2)
 async def watch_geckoterminal_trends():
     try:
@@ -181,9 +162,10 @@ async def monitor_and_sell():
         to_remove = []
         for ca, info in bought_tokens.items():
             try:
-                response = requests.get(f"https://api.birdeye.so/public/token/price?address={ca}", headers={"x-api-key": TOKAPI_KEY})
-                price_data = response.json()
-                current_price = float(price_data.get("data", {}).get("value", 0.0))
+                url = f"https://api.geckoterminal.com/api/v2/networks/solana/tokens/{ca}"
+                response = requests.get(url)
+                token_data = response.json()
+                current_price = float(token_data.get("data", {}).get("attributes", {}).get("price_usd", 0.0))
                 buy_price = info['buy_price']
 
                 if current_price >= buy_price * 1.5:
@@ -212,10 +194,8 @@ async def monitor_and_sell():
 @bot.event
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user}")
-    watch_birdeye_trends.start()
     watch_geckoterminal_trends.start()
     monitor_and_sell.start()
 
 # --- Run the Bot ---
 bot.run(DISCORD_TOKEN)
-
