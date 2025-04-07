@@ -25,6 +25,7 @@ import snscrape.modules.twitter as sntwitter
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
+from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
 import base58
 import matplotlib.pyplot as plt
@@ -44,6 +45,7 @@ DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = True
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 
+total_profit_usd = 0.0
 openai.api_key = OPENAI_API_KEY
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -110,7 +112,10 @@ async def balance(ctx):
         await ctx.send("⚠️ Failed to fetch balance.")
         logging.error(f"Balance check failed: {e}")
 
-# --- Bot Commands ---
+@bot.command()
+async def profit(ctx):
+    await ctx.send(f"📈 Today's estimated profit: ${total_profit_usd:.2f}")
+
 @bot.command()
 async def holdings(ctx):
     if not bought_tokens:
@@ -139,17 +144,43 @@ def record_snipe(ca, buy_price, boosted):
     notify_discord(f"🚀 Sniped token `{ca}` at ${buy_price:.4f}. Boosted: {boosted}")
     send_chart_thumbnail(ca[:8], [buy_price * (1 + 0.01 * i) for i in range(10)])
 
+# --- Real Token Purchase (Snipe) ---
+def real_token_purchase(ca):
+    keypair = get_phantom_keypair()
+    if not keypair:
+        logging.warning("⛔ Wallet not loaded for purchase.")
+        return
+
+    try:
+        tx = solana_client.send_transaction(
+            transfer(TransferParams(
+                from_pubkey=keypair.pubkey(),
+                to_pubkey=PublicKey(ca),
+                lamports=int(0.001 * 1e9)
+            )),
+            keypair
+        )
+        logging.info(f"✅ Real snipe transaction sent to {ca}: {tx['result']}")
+    except Exception as e:
+        logging.warning(f"❌ Failed to send snipe tx: {e}")
+
 # --- Periodic Tasks for Token Watching ---
 @tasks.loop(minutes=2)
 async def watch_geckoterminal_trends():
     try:
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
         data = requests.get(url).json()
-        pools = data.get("data", [])
+        pools = data.get("data")
 
-        for pool in pools[:3]:
+        if not pools:
+            logging.warning("GeckoTerminal returned no data.")
+            return
+
+        for pool in pools[:10]:
             ca = pool.get("attributes", {}).get("token_address")
             price = float(pool.get("attributes", {}).get("base_token_price_usd", 0.0))
+            if WALLET_ENABLED:
+                real_token_purchase(ca)
             record_snipe(ca, price, boosted=False)
     except Exception as e:
         logging.warning(f"Failed to fetch GeckoTerminal pools: {e}")
@@ -157,6 +188,7 @@ async def watch_geckoterminal_trends():
 # --- Auto-sell Logic ---
 @tasks.loop(minutes=5)
 async def monitor_and_sell():
+    global total_profit_usd
     keypair = get_phantom_keypair()
     if not keypair:
         logging.warning("⛔ Wallet not loaded for selling.")
@@ -184,6 +216,10 @@ async def monitor_and_sell():
                         keypair
                     )
                     notify_discord(f"✅ Sold! Transaction signature: {tx['result']}")
+
+                    profit = current_price - buy_price
+                    total_profit_usd += profit
+
                     to_remove.append(ca)
             except Exception as err:
                 logging.warning(f"Error checking price for {ca}: {err}")
