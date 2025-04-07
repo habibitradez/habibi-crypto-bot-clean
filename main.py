@@ -216,6 +216,18 @@ def get_recent_contract_mentions():
         return []
 
 
+def get_trending_gecko_tokens():
+    try:
+        url = f"{GECKO_BASE_URL}/trending_pools"
+        resp = requests.get(url)
+        data = resp.json()
+        token_ids = [item["id"] for item in data["data"]]
+        return token_ids
+    except Exception as e:
+        logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
+        return []
+
+
 @tasks.loop(minutes=10)
 async def post_meme_and_news():
     try:
@@ -243,8 +255,11 @@ async def on_ready():
 
 @tasks.loop(seconds=30)
 async def monitor_tokens():
-    cas = get_recent_contract_mentions()
-    for token_address in cas:
+    cas = set(get_recent_contract_mentions())
+    trending = set(get_trending_gecko_tokens())
+    combined = list(cas.union(trending))
+
+    for token_address in combined:
         chart = generate_chart(token_address)
 
         if token_address not in bought_tokens:
