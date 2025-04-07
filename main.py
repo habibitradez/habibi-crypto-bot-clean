@@ -57,8 +57,12 @@ bought_tokens = {}
 # --- Convert Phantom Secret Key to Keypair ---
 def get_phantom_keypair():
     try:
-        secret = json.loads(PHANTOM_SECRET_KEY)
-        return Keypair.from_bytes(bytes(secret))
+        if PHANTOM_SECRET_KEY.strip().startswith("["):
+            secret = json.loads(PHANTOM_SECRET_KEY)
+            return Keypair.from_bytes(bytes(secret))
+        else:
+            secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY)
+            return Keypair.from_bytes(secret_bytes)
     except Exception as e:
         logging.error(f"Error loading Phantom secret key: {e}")
         return None
