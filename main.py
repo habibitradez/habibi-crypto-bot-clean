@@ -92,16 +92,15 @@ def send_sol(destination_wallet: str, amount_sol: float):
     try:
         kp = get_phantom_keypair()
         recent_blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
-        tx = Transaction(recent_blockhash=recent_blockhash)
         lamports = int(amount_sol * 1_000_000_000)
         ix = transfer(TransferParams(
             from_pubkey=kp.pubkey(),
             to_pubkey=PublicKey.from_string(destination_wallet),
             lamports=lamports
         ))
-        tx.add(ix)
-        signed_tx = tx.sign([kp])
-        resp = solana_client.send_transaction(signed_tx)
+        tx = Transaction.new_unsigned([ix])
+        tx.sign([kp])
+        resp = solana_client.send_transaction(tx)
         logging.info(f"✅ Sent {amount_sol} SOL to {destination_wallet}, TX: {resp}")
         return resp
     except Exception as e:
@@ -111,6 +110,8 @@ def send_sol(destination_wallet: str, amount_sol: float):
 def receive_sol():
     kp = get_phantom_keypair()
     logging.info(f"💼 Phantom wallet ready to receive: {kp.pubkey()}")
+    return str(kp.pubkey())
+
     return str(kp.pubkey())
 
         transaction = Transaction.new_unsigned(tx)
