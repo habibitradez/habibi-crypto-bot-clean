@@ -63,8 +63,7 @@ def get_phantom_keypair():
             secret = json.loads(PHANTOM_SECRET_KEY)
             return Keypair.from_bytes(bytes(secret))
         else:
-            secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY)
-            return Keypair.from_bytes(secret_bytes)
+            return Keypair.from_base58_string(PHANTOM_SECRET_KEY)
     except Exception as e:
         logging.error(f"Error loading Phantom secret key: {e}")
         return None
@@ -219,6 +218,18 @@ async def monitor_and_sell():
 
                     profit = current_price - buy_price
                     total_profit_usd += profit
+
+                    if total_profit_usd >= 1000:
+                        notify_discord(f"💰 Profit target hit! Transferring $1000 back to wallet.")
+                        payout_tx = solana_client.send_transaction(
+                            transfer(TransferParams(
+                                from_pubkey=keypair.pubkey(),
+                                to_pubkey=PublicKey(PHANTOM_PUBLIC_KEY),
+                                lamports=int(1000 / current_price * 1e9)
+                            )),
+                            keypair
+                        )
+                        notify_discord(f"✅ $1000 transferred to wallet. Tx: {payout_tx['result']}")
 
                     to_remove.append(ca)
             except Exception as err:
