@@ -56,16 +56,12 @@ discord.utils.setup_logging(level=logging.INFO)
 solana_client = Client("https://api.mainnet-beta.solana.com")
 bought_tokens = {}
 
-# --- Convert Phantom Secret Key to Keypair ---
+# --- Convert Phantom Secret Key to Keypair (Base58 ONLY) ---
 def get_phantom_keypair():
     try:
-        if PHANTOM_SECRET_KEY.strip().startswith("["):
-            secret = json.loads(PHANTOM_SECRET_KEY)
-            return Keypair.from_bytes(bytes(secret))
-        else:
-            return Keypair.from_base58_string(PHANTOM_SECRET_KEY)
+        return Keypair.from_base58_string(PHANTOM_SECRET_KEY)
     except Exception as e:
-        logging.error(f"Error loading Phantom secret key: {e}")
+        logging.error(f"Error loading Phantom secret key (expected base58 format): {e}")
         return None
 
 # --- Notify to Discord ---
