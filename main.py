@@ -73,10 +73,10 @@ total_profit_usd = 0.0
 SELL_PROFIT_TRIGGER = 2.0  # 2x profit trigger
 MIN_BUYERS_FOR_SELL = 5    # Sell if more than 5 buyers
 
-
 def get_phantom_keypair():
     try:
         secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
+
         if len(secret_bytes) == 64:
             return Keypair.from_bytes(secret_bytes)
         elif len(secret_bytes) == 32:
@@ -84,7 +84,7 @@ def get_phantom_keypair():
         else:
             raise ValueError("Secret key must be 32 or 64 bytes.")
     except Exception as e:
-        logging.error(f"Error decoding base58 Phantom key: {e}")
+        logging.error(f"Error decoding Phantom key: {e}")
         return None
 
 
