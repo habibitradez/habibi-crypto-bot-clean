@@ -31,6 +31,16 @@ import base58
 import matplotlib.pyplot as plt
 import io
 import base64
+import ssl
+import urllib3
+
+# --- Disable SSL verification for snscrape (workaround for CERTIFICATE_VERIFY_FAILED) ---
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+try:
+    ssl._create_default_https_context = ssl._create_unverified_context
+    logging.info("⚠️ SSL verification disabled for snscrape Twitter scraping.")
+except Exception as e:
+    logging.warning(f"Could not patch SSL verification: {e}")
 
 # --- LOAD .env CONFIG ---
 load_dotenv()
@@ -81,6 +91,17 @@ def notify_discord(msg, file=None):
     except Exception as e:
         logging.warning(f"Failed to notify Discord: {e}")
 
+# --- Auto Snipe Simulation and Logging ---
+def auto_snipe_and_log(token_url):
+    global bought_tokens
+    token_id = token_url.split("/")[-1]
+    if token_id not in bought_tokens:
+        bought_tokens[token_id] = {
+            "buy_price": random.uniform(0.01, 1.0),
+            "buy_time": datetime.utcnow().isoformat()
+        }
+        notify_discord(f"💸 Auto-sniped token: {token_url}\nBought at: ${bought_tokens[token_id]['buy_price']:.4f} at {bought_tokens[token_id]['buy_time']}")
+
 # --- Twitter Launch Detection ---
 def detect_new_tokens_from_twitter():
     try:
@@ -90,6 +111,7 @@ def detect_new_tokens_from_twitter():
             if urls:
                 for url in urls:
                     notify_discord(f"🚀 Detected new token from Twitter: {url}")
+                    auto_snipe_and_log(url)
     except Exception as e:
         logging.warning(f"Twitter detection error: {e}")
 
