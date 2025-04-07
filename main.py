@@ -56,6 +56,8 @@ ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "tru
 
 GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana"
 BITQUERY_URL = "https://graphql.bitquery.io"
+TWITTER_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
+TWITTER_HEADERS = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
 
 openai.api_key = OPENAI_API_KEY
 intents = discord.Intents.all()
@@ -180,7 +182,7 @@ def generate_chart(token_id):
         chart_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
         response = requests.get(chart_url)
         data = response.json()
-        prices = [float(p[1]) for p in data['data']['attributes']['series']['usd']]  # Assuming USD series exists
+        prices = [float(p[1]) for p in data['data']['attributes']['series']['usd']]
 
         plt.figure(figsize=(6, 3))
         plt.plot(prices)
@@ -195,5 +197,75 @@ def generate_chart(token_id):
     except Exception as e:
         logging.warning(f"⚠️ Failed to generate chart: {e}")
         return None
-# --- Run the Bot ---
+
+
+def get_recent_contract_mentions():
+    try:
+        query = {
+            "query": "contract OR launch OR $SOL",
+            "max_results": 10,
+            "tweet.fields": "created_at"
+        }
+        response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
+        data = response.json()
+        texts = [tweet["text"] for tweet in data.get("data", [])]
+        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
+        return list(cas)
+    except Exception as e:
+        logging.warning(f"Twitter fetch error: {e}")
+        return []
+
+
+@tasks.loop(minutes=10)
+async def post_meme_and_news():
+    try:
+        meme_sources = ["https://www.reddit.com/r/cryptomemes/new/.json", "https://www.reddit.com/r/wallstreetbets/new/.json"]
+        for source in meme_sources:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(source, headers=headers)
+            posts = resp.json().get("data", {}).get("children", [])
+            for post in posts[:3]:
+                title = post["data"].get("title")
+                image_url = post["data"].get("url_overridden_by_dest")
+                if image_url and image_url.endswith(('.jpg', '.png')):
+                    content = f"📰 **{title}**\n{image_url}"
+                    notify_discord(content)
+    except Exception as e:
+        logging.warning(f"⚠️ Meme/news posting failed: {e}")
+
+
+@bot.event
+async def on_ready():
+    logging.info(f"✅ Logged in as {bot.user.name}")
+    await monitor_tokens.start()
+    await post_meme_and_news.start()
+
+
+@tasks.loop(seconds=30)
+async def monitor_tokens():
+    cas = get_recent_contract_mentions()
+    for token_address in cas:
+        chart = generate_chart(token_address)
+
+        if token_address not in bought_tokens:
+            logging.info(f"💰 Sniping token: {token_address}")
+            real_buy_token(token_address)
+            bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
+            notify_discord(f"✅ Sniped new token: `{token_address}`", chart)
+        else:
+            result = fetch_bitquery_data(token_address)
+            if result:
+                trades = result.get("data", {}).get("solana", {}).get("dexTrades", [])
+                buyers = list({trade["buyer"]["address"] for trade in trades if trade.get("buyer")})
+                buyer_count = len(buyers)
+                current_price = float(trades[0]["quotePrice"]) if trades else 0
+                initial_price = bought_tokens[token_address]["bought_price"]
+
+                if buyer_count >= MIN_BUYERS_FOR_SELL or (current_price >= initial_price * SELL_PROFIT_TRIGGER):
+                    logging.info(f"🚀 Sell condition met for {token_address}")
+                    real_sell_token(token_address)
+                    notify_discord(f"💸 Sold `{token_address}` after {buyer_count} buyers / profit target met.")
+                    del bought_tokens[token_address]
+
+
 bot.run(DISCORD_TOKEN)
