@@ -45,7 +45,8 @@ DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 WALLET_ENABLED = True
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 
-total_profit_usd = 0.0
+GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana"
+
 openai.api_key = OPENAI_API_KEY
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -55,6 +56,7 @@ discord.utils.setup_logging(level=logging.INFO)
 
 solana_client = Client("https://api.mainnet-beta.solana.com")
 bought_tokens = {}
+total_profit_usd = 0.0
 
 # --- Convert Phantom Secret Key to Keypair (Base58 ONLY) ---
 def get_phantom_keypair():
@@ -165,11 +167,24 @@ def real_token_purchase(ca):
     except Exception as e:
         logging.warning(f"❌ Failed to send snipe tx: {e}")
 
+# --- OpenAI Meme Potential Scoring ---
+def score_token_name(name):
+    try:
+        prompt = f"Score the meme potential of this token name from 0 to 10 (10 = best): {name}"
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        score = int(re.search(r"\d+", response.choices[0].message.content).group())
+        return score
+    except:
+        return 0
+
 # --- Periodic Tasks for Token Watching ---
 @tasks.loop(minutes=2)
 async def watch_geckoterminal_trends():
     try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
+        url = f"{GECKO_BASE_URL}/pools"
         data = requests.get(url).json()
         pools = data.get("data")
 
@@ -178,18 +193,27 @@ async def watch_geckoterminal_trends():
             return
 
         for pool in pools[:10]:
-            ca = pool.get("attributes", {}).get("token_address")
-            price_str = pool.get("attributes", {}).get("base_token_price_usd", "0.0")
+            attributes = pool.get("attributes", {})
+            ca = attributes.get("token_address")
+            price_str = attributes.get("base_token_price_usd", "0.0")
+            buys = attributes.get("transactions", {}).get("m5", {}).get("buys", 0)
+            fdv = float(attributes.get("fdv_usd", 0) or 0)
+            volume = float(attributes.get("volume_usd", {}).get("h1", 0) or 0)
+            name = attributes.get("name", "")
+            age_minutes = (datetime.utcnow() - datetime.strptime(attributes.get("pool_created_at"), "%Y-%m-%dT%H:%M:%SZ")).total_seconds() / 60
 
-            if not ca or not price_str:
-                logging.warning(f"⚠️ Skipping pool due to missing data: {pool}")
+            if not ca or buys < 3 or volume < 100 or fdv > 1_000_000 or age_minutes > 720:
+                continue
+
+            meme_score = score_token_name(name)
+            if meme_score < 6:
                 continue
 
             try:
                 price = float(price_str)
                 if WALLET_ENABLED:
                     real_token_purchase(ca)
-                record_snipe(ca, price, boosted=False)
+                record_snipe(ca, price, boosted=True)
             except Exception as e:
                 logging.warning(f"⚠️ Error processing pool {ca}: {e}")
     except Exception as e:
@@ -208,7 +232,7 @@ async def monitor_and_sell():
         to_remove = []
         for ca, info in bought_tokens.items():
             try:
-                url = f"https://api.geckoterminal.com/api/v2/networks/solana/tokens/{ca}"
+                url = f"{GECKO_BASE_URL}/tokens/{ca}"
                 response = requests.get(url)
                 token_data = response.json()
                 current_price = float(token_data.get("data", {}).get("attributes", {}).get("price_usd", 0.0))
