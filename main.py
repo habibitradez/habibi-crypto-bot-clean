@@ -94,7 +94,11 @@ def send_sol(destination_wallet: str, amount_sol: float):
         recent_blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
         tx = Transaction(recent_blockhash=recent_blockhash)
         lamports = int(amount_sol * 1_000_000_000)
-        ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=PublicKey.from_string(destination_wallet), lamports=lamports))
+        ix = transfer(TransferParams(
+            from_pubkey=kp.pubkey(),
+            to_pubkey=PublicKey.from_string(destination_wallet),
+            lamports=lamports
+        ))
         tx.add(ix)
         signed_tx = tx.sign([kp])
         resp = solana_client.send_transaction(signed_tx)
@@ -109,9 +113,6 @@ def receive_sol():
     logging.info(f"💼 Phantom wallet ready to receive: {kp.pubkey()}")
     return str(kp.pubkey())
 
-            lamports=lamports
-        ))
-        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
         transaction = Transaction.new_unsigned(tx)
         transaction.recent_blockhash = blockhash
         transaction.fee_payer = keypair.pubkey()
