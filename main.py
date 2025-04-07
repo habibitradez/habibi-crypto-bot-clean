@@ -73,6 +73,7 @@ total_profit_usd = 0.0
 SELL_PROFIT_TRIGGER = 2.0  # 2x profit trigger
 MIN_BUYERS_FOR_SELL = 5    # Sell if more than 5 buyers
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
     try:
         secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
@@ -85,29 +86,29 @@ def get_phantom_keypair():
             raise ValueError("Secret key must be 32 or 64 bytes.")
     except Exception as e:
         logging.error(f"Error decoding Phantom key: {e}")
-        return None
+        raise
 
-
-def notify_discord(msg, file=None):
+def send_sol(destination_wallet: str, amount_sol: float):
     try:
-        payload = {"content": msg}
-        files = {"file": file} if file else None
-        requests.post(f"https://discord.com/api/webhooks/{DISCORD_NEWS_CHANNEL_ID}", data=payload, files=files)
+        kp = get_phantom_keypair()
+        recent_blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        tx = Transaction(recent_blockhash=recent_blockhash)
+        lamports = int(amount_sol * 1_000_000_000)
+        ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=PublicKey.from_string(destination_wallet), lamports=lamports))
+        tx.add(ix)
+        signed_tx = tx.sign([kp])
+        resp = solana_client.send_transaction(signed_tx)
+        logging.info(f"✅ Sent {amount_sol} SOL to {destination_wallet}, TX: {resp}")
+        return resp
     except Exception as e:
-        logging.warning(f"Failed to notify Discord: {e}")
-
-
-def real_buy_token(recipient_pubkey_str, lamports=1000000):
-    keypair = get_phantom_keypair()
-    if not keypair:
-        logging.error("❌ Phantom keypair not found for buy transaction.")
+        logging.error(f"❌ Failed to send SOL: {e}")
         return None
 
-    try:
-        recipient = PublicKey.from_string(recipient_pubkey_str)
-        tx = transfer(TransferParams(
-            from_pubkey=keypair.pubkey(),
-            to_pubkey=recipient,
+def receive_sol():
+    kp = get_phantom_keypair()
+    logging.info(f"💼 Phantom wallet ready to receive: {kp.pubkey()}")
+    return str(kp.pubkey())
+
             lamports=lamports
         ))
         blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
