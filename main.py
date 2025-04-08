@@ -185,3 +185,22 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real sell failed: {e}")
         fallback_rpc()
         return None
+
+@bot.command()
+async def buy(ctx, token_address: str, sol_amount: float = 0.01):
+    lamports = int(sol_amount * 1_000_000_000)
+    tx = real_buy_token(token_address, lamports)
+    if tx:
+        await ctx.send(f"✅ Buy triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
+    else:
+        await ctx.send("❌ Buy failed.")
+
+@bot.command()
+async def sell(ctx, token_address: str, sol_amount: float = 0.01):
+    lamports = int(sol_amount * 1_000_000_000)
+    tx = real_sell_token(token_address, lamports)
+    if tx:
+        await ctx.send(f"✅ Sell triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
+    else:
+        await ctx.send("❌ Sell failed.")
+bot.run(DISCORD_TOKEN)
