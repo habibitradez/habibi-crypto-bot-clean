@@ -26,7 +26,6 @@ from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
 from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
-from solders.instruction import Instruction
 import base58
 import matplotlib.pyplot as plt
 import io
@@ -91,17 +90,40 @@ def send_sol(destination_wallet: str, amount_sol: float):
         lamports = int(amount_sol * 1_000_000_000)
         ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=PublicKey.from_string(destination_wallet), lamports=lamports))
         tx = Transaction.new_unsigned([ix])
-        tx.recent_blockhash = recent_blockhash
-        tx.fee_payer = kp.pubkey()
         tx.sign([kp])
-        return solana_client.send_raw_transaction(tx.serialize()).get("result")
+        resp = solana_client.send_transaction(tx)
+        logging.info(f"✅ Sent {amount_sol} SOL to {destination_wallet}, TX: {resp}")
+        return resp
     except Exception as e:
         logging.error(f"❌ Failed to send SOL: {e}")
         return None
 
-def real_sell_token(recipient_pubkey_str, lamports=1000000):
+def receive_sol():
+    kp = get_phantom_keypair()
+    logging.info(f"💼 Phantom wallet ready to receive: {kp.pubkey()}")
+    return str(kp.pubkey())
+
+def real_buy_token(token_address, lamports=1000000):
     try:
         keypair = get_phantom_keypair()
+        recipient = PublicKey.from_string(token_address)
+        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
+        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        transaction = Transaction.new_unsigned([ix])
+        transaction.recent_blockhash = blockhash
+        transaction.fee_payer = keypair.pubkey()
+        transaction.sign([keypair])
+        return solana_client.send_raw_transaction(transaction.serialize()).get("result")
+    except Exception as e:
+        logging.error(f"❌ Real buy failed: {e}")
+        return None
+
+def real_sell_token(recipient_pubkey_str, lamports=1000000):
+    keypair = get_phantom_keypair()
+    if not keypair:
+        logging.error("❌ Phantom keypair not found for sell transaction.")
+        return None
+    try:
         recipient = PublicKey.from_string(recipient_pubkey_str)
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
@@ -116,25 +138,34 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
 
 def fetch_bitquery_data(token_address):
     headers = {"X-API-KEY": BITQUERY_API_KEY}
-    query = {"query": f"""
-    query MyQuery {{
-      solana(network: solana) {{
-        dexTrades(smartContractAddress: {{is: \"{token_address}\"}}, options: {{desc: [\"block.timestamp.time\"], limit: 5}}) {{
-          transaction {{ hash }}
-          tradeAmount(in: USD)
-          buyer {{ address }}
-          quotePrice
+    query = {
+        "query": f"""
+        query MyQuery {{
+          solana(network: solana) {{
+            dexTrades(
+              smartContractAddress: {{is: \"{token_address}\"}}
+              options: {{desc: [\"block.timestamp.time\"], limit: 5}}
+            ) {{
+              transaction {{ hash }}
+              tradeAmount(in: USD)
+              buyer {{ address }}
+              quotePrice
+            }}
+          }}
         }}
-      }}
-    }}
-    """}
+        """
+    }
     response = requests.post(BITQUERY_URL, json=query, headers=headers)
-    return response.json() if response.status_code == 200 else None
+    if response.status_code == 200:
+        return response.json()
+    else:
+        logging.warning(f"⚠️ Bitquery fetch error: {response.status_code}")
+        return None
 
 def generate_chart(token_id):
     try:
-        url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
-        response = requests.get(url)
+        chart_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
+        response = requests.get(chart_url)
         data = response.json()
         prices = [float(p[1]) for p in data['data']['attributes']['series']['usd']]
         plt.figure(figsize=(6, 3))
@@ -156,7 +187,8 @@ def get_recent_contract_mentions():
         response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
         data = response.json()
         texts = [tweet["text"] for tweet in data.get("data", [])]
-        return list(set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts))))
+        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
+        return list(cas)
     except Exception as e:
         logging.warning(f"Twitter fetch error: {e}")
         return []
@@ -165,23 +197,43 @@ def get_trending_gecko_tokens():
     try:
         url = f"{GECKO_BASE_URL}/trending_pools"
         resp = requests.get(url)
-        return [item["id"] for item in resp.json()["data"]]
+        data = resp.json()
+        token_ids = [item["id"] for item in data["data"]]
+        return token_ids
     except Exception as e:
         logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
         return []
 
+def notify_discord(content, chart_img=None):
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if not channel:
+        logging.warning("⚠️ Could not find target Discord channel to post news/meme.")
+        return
+    if ROLE_MENTION_ENABLED:
+        content = f"<@&{DISCORD_ROLE_ID}>\n" + content
+    if chart_img:
+        chart_img.seek(0)
+        asyncio.create_task(channel.send(content, file=discord.File(chart_img, filename="chart.png")))
+    else:
+        asyncio.create_task(channel.send(content))
+
 @tasks.loop(minutes=10)
 async def post_meme_and_news():
     try:
-        sources = ["https://www.reddit.com/r/cryptomemes/new/.json", "https://www.reddit.com/r/wallstreetbets/new/.json"]
-        for src in sources:
-            resp = requests.get(src, headers={"User-Agent": "Mozilla/5.0"})
-            for post in resp.json().get("data", {}).get("children", [])[:3]:
+        meme_sources = [
+            "https://www.reddit.com/r/cryptomemes/new/.json",
+            "https://www.reddit.com/r/wallstreetbets/new/.json"
+        ]
+        for source in meme_sources:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(source, headers=headers)
+            posts = resp.json().get("data", {}).get("children", [])
+            for post in posts[:3]:
                 title = post["data"].get("title")
-                url = post["data"].get("url_overridden_by_dest")
-                if url and url.endswith(('.jpg', '.png')):
-                    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                    await channel.send(f"📰 **{title}**\n{url}")
+                image_url = post["data"].get("url_overridden_by_dest")
+                if image_url and image_url.endswith((".jpg", ".png")):
+                    content = f"📰 **{title}**\n{image_url}"
+                    notify_discord(content)
     except Exception as e:
         logging.warning(f"⚠️ Meme/news posting failed: {e}")
 
@@ -196,30 +248,20 @@ async def monitor_tokens():
             logging.info(f"💰 Sniping token: {token_address}")
             real_buy_token(token_address)
             bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
-            await notify_discord(f"✅ Sniped new token: `{token_address}`", chart)
+            notify_discord(f"✅ Sniped new token: `{token_address}`", chart)
         else:
             result = fetch_bitquery_data(token_address)
             if result:
                 trades = result.get("data", {}).get("solana", {}).get("dexTrades", [])
-                buyers = list({t["buyer"]["address"] for t in trades if t.get("buyer")})
+                buyers = list({trade["buyer"]["address"] for trade in trades if trade.get("buyer")})
                 buyer_count = len(buyers)
                 current_price = float(trades[0]["quotePrice"]) if trades else 0
                 initial_price = bought_tokens[token_address]["bought_price"]
                 if buyer_count >= MIN_BUYERS_FOR_SELL or (current_price >= initial_price * SELL_PROFIT_TRIGGER):
+                    logging.info(f"🚀 Sell condition met for {token_address}")
                     real_sell_token(token_address)
-                    await notify_discord(f"💸 Sold `{token_address}` after {buyer_count} buyers / profit target met.")
+                    notify_discord(f"💸 Sold `{token_address}` after {buyer_count} buyers / profit target met.")
                     del bought_tokens[token_address]
-
-async def notify_discord(message, image_buf=None):
-    try:
-        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-        if image_buf:
-            file = discord.File(image_buf, filename="chart.png")
-            await channel.send(content=message, file=file)
-        else:
-            await channel.send(message)
-    except Exception as e:
-        logging.error(f"Failed to notify Discord: {e}")
 
 @bot.event
 async def on_ready():
