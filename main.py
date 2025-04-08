@@ -90,7 +90,7 @@ def log_wallet_balance():
         kp = get_phantom_keypair()
         balance_lamports = solana_client.get_balance(kp.pubkey()).value
         balance_sol = balance_lamports / 1_000_000_000
-        logging.info(f"\U0001f4b0 Phantom Wallet Balance: {balance_sol:.4f} SOL")
+        logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
     except Exception as e:
         logging.error(f"❌ Failed to get wallet balance: {e}")
 
@@ -121,7 +121,12 @@ def real_buy_token(token_address, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
-        tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
+        tx_sig = None
+        if hasattr(tx_response, 'value'):
+            if isinstance(tx_response.value, list):
+                tx_sig = tx_response.value[0]
+            else:
+                tx_sig = tx_response.value
         if not isinstance(tx_sig, str):
             raise ValueError("Invalid tx signature returned")
         logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
@@ -144,7 +149,12 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
-        tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
+        tx_sig = None
+        if hasattr(tx_response, 'value'):
+            if isinstance(tx_response.value, list):
+                tx_sig = tx_response.value[0]
+            else:
+                tx_sig = tx_response.value
         if not isinstance(tx_sig, str):
             raise ValueError("Invalid tx signature returned")
         logging.info(f"📉 Real sell executed: TX Signature = {tx_sig}")
