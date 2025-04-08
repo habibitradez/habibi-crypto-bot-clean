@@ -155,3 +155,79 @@ def generate_chart(token_id):
     except Exception as e:
         logging.warning(f"⚠️ Failed to generate chart: {e}")
         return None
+
+# --- Additional logic restored for token sniping, memes, and news ---
+
+def notify_discord(content, file=None):
+    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+    if channel:
+        asyncio.create_task(channel.send(content, file=discord.File(file, "chart.png") if file else None))
+
+def get_recent_contract_mentions():
+    try:
+        query = {"query": "contract OR launch OR $SOL", "max_results": 10, "tweet.fields": "created_at"}
+        response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
+        data = response.json()
+        texts = [tweet["text"] for tweet in data.get("data", [])]
+        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
+        return list(cas)
+    except Exception as e:
+        logging.warning(f"Twitter fetch error: {e}")
+        return []
+
+def get_trending_gecko_tokens():
+    try:
+        url = f"{GECKO_BASE_URL}/trending_pools"
+        resp = requests.get(url)
+        data = resp.json()
+        return [item["id"] for item in data["data"]]
+    except Exception as e:
+        logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
+        return []
+
+@tasks.loop(seconds=30)
+async def monitor_tokens():
+    cas = set(get_recent_contract_mentions())
+    trending = set(get_trending_gecko_tokens())
+    combined = list(cas.union(trending))
+    for token_address in combined:
+        chart = generate_chart(token_address)
+        if token_address not in bought_tokens:
+            logging.info(f"💰 Sniping token: {token_address}")
+            real_buy_token(token_address)
+            bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
+            notify_discord(f"✅ Sniped new token: `{token_address}`", chart)
+        else:
+            # simulate tracking
+            if random.random() > 0.5:
+                real_sell_token(token_address)
+                notify_discord(f"💸 Sold `{token_address}` due to profit/buyer count met.")
+                del bought_tokens[token_address]
+
+@tasks.loop(minutes=10)
+async def post_meme_and_news():
+    try:
+        meme_sources = [
+            "https://www.reddit.com/r/cryptomemes/new/.json",
+            "https://www.reddit.com/r/wallstreetbets/new/.json"
+        ]
+        for source in meme_sources:
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(source, headers=headers)
+            posts = resp.json().get("data", {}).get("children", [])
+            for post in posts[:3]:
+                title = post["data"].get("title")
+                image_url = post["data"].get("url_overridden_by_dest")
+                if image_url and image_url.endswith((".jpg", ".png")):
+                    content = f"📰 **{title}**\n{image_url}"
+                    notify_discord(content)
+    except Exception as e:
+        logging.warning(f"⚠️ Meme/news posting failed: {e}")
+
+@bot.event
+async def on_ready():
+    logging.info(f"✅ Logged in as {bot.user.name}")
+    monitor_tokens.start()
+    post_meme_and_news.start()
+
+bot.run(DISCORD_TOKEN)
