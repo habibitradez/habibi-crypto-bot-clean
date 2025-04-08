@@ -64,7 +64,12 @@ tree = bot.tree
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-solana_client = Client(f"https://rpc.shyft.to?api_key={SHYFT_RPC_KEY}")
+rpc_endpoints = [
+    f"https://rpc.shyft.to?api_key={SHYFT_RPC_KEY}",
+    "https://api.mainnet-beta.solana.com",
+    "https://solana-mainnet.g.alchemy.com/v2/demo"  # example fallback
+]
+solana_client = Client(rpc_endpoints[0])
 
 bought_tokens = {}
 total_profit_usd = 0.0
@@ -91,6 +96,8 @@ def log_wallet_balance():
         balance_lamports = solana_client.get_balance(kp.pubkey()).value
         balance_sol = balance_lamports / 1_000_000_000
         logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
+        if balance_sol < 0.05:
+            notify_discord(f"⚠️ Low wallet balance: {balance_sol:.4f} SOL")
     except Exception as e:
         logging.error(f"❌ Failed to get wallet balance: {e}")
 
@@ -108,6 +115,17 @@ def notify_discord(content=None, tx_sig=None):
             logging.error(f"❌ Failed to send Discord notification: {e}")
     asyncio.create_task(_send())
 
+def fallback_rpc():
+    global solana_client
+    for endpoint in rpc_endpoints[1:]:
+        try:
+            solana_client = Client(endpoint)
+            solana_client.get_health()
+            logging.info(f"✅ Switched to fallback RPC: {endpoint}")
+            break
+        except Exception as e:
+            logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
+
 def real_buy_token(token_address, lamports=1000000):
     try:
         token_address = token_address.replace("solana_", "")
@@ -121,19 +139,21 @@ def real_buy_token(token_address, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
+        logging.info(f"🧾 RPC Response: {tx_response}")
         tx_sig = None
         if hasattr(tx_response, 'value'):
             if isinstance(tx_response.value, list):
                 tx_sig = tx_response.value[0]
             else:
                 tx_sig = tx_response.value
-        if not isinstance(tx_sig, str):
-            raise ValueError("Invalid tx signature returned")
+        if not tx_sig or not isinstance(tx_sig, str):
+            raise ValueError(f"Invalid tx signature returned: {tx_sig}")
         logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
         notify_discord(f"✅ Bought token: solana_{token_address}", tx_sig)
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real buy failed: {e}")
+        fallback_rpc()
         return None
 
 def real_sell_token(recipient_pubkey_str, lamports=1000000):
@@ -149,74 +169,19 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
+        logging.info(f"🧾 RPC Response: {tx_response}")
         tx_sig = None
         if hasattr(tx_response, 'value'):
             if isinstance(tx_response.value, list):
                 tx_sig = tx_response.value[0]
             else:
                 tx_sig = tx_response.value
-        if not isinstance(tx_sig, str):
-            raise ValueError("Invalid tx signature returned")
+        if not tx_sig or not isinstance(tx_sig, str):
+            raise ValueError(f"Invalid tx signature returned: {tx_sig}")
         logging.info(f"📉 Real sell executed: TX Signature = {tx_sig}")
         notify_discord(f"💸 Sold token: solana_{recipient_pubkey_str}", tx_sig)
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real sell failed: {e}")
+        fallback_rpc()
         return None
-
-def get_recent_contract_mentions():
-    try:
-        query = {"query": "contract OR launch OR $SOL", "max_results": 10, "tweet.fields": "created_at"}
-        response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
-        data = response.json()
-        texts = [tweet["text"] for tweet in data.get("data", [])]
-        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
-        return list(cas)
-    except Exception as e:
-        logging.warning(f"Twitter fetch error: {e}")
-        return []
-
-def get_trending_gecko_tokens():
-    try:
-        url = f"{GECKO_BASE_URL}/trending_pools"
-        resp = requests.get(url)
-        data = resp.json()
-        return [item["id"] for item in data["data"]]
-    except Exception as e:
-        logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
-        return []
-
-@tasks.loop(seconds=30)
-async def monitor_tokens():
-    cas = set(get_recent_contract_mentions())
-    trending = set(get_trending_gecko_tokens())
-    combined = list(cas.union(trending))
-    for token_address in combined:
-        if token_address not in bought_tokens:
-            logging.info(f"💰 Sniping token: {token_address}")
-            real_buy_token(token_address)
-            bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
-        else:
-            if random.random() > 0.5:
-                real_sell_token(token_address)
-                notify_discord(f"💸 Sold `{token_address}` due to simulation trigger.")
-                del bought_tokens[token_address]
-
-@bot.command()
-async def wallet(ctx):
-    try:
-        kp = get_phantom_keypair()
-        balance_lamports = solana_client.get_balance(kp.pubkey()).value
-        balance_sol = balance_lamports / 1_000_000_000
-        await ctx.send(f"💼 Phantom Wallet: `{kp.pubkey()}`\n💰 Balance: `{balance_sol:.4f}` SOL")
-    except Exception as e:
-        await ctx.send("❌ Failed to fetch wallet balance.")
-        logging.error(f"Wallet command error: {e}")
-
-@bot.event
-async def on_ready():
-    logging.info(f"✅ Logged in as {bot.user.name}")
-    log_wallet_balance()
-    monitor_tokens.start()
-
-bot.run(DISCORD_TOKEN)
