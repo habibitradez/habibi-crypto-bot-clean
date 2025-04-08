@@ -67,7 +67,7 @@ discord.utils.setup_logging(level=logging.INFO)
 rpc_endpoints = [
     f"https://rpc.shyft.to?api_key={SHYFT_RPC_KEY}",
     "https://api.mainnet-beta.solana.com",
-    "https://solana-mainnet.g.alchemy.com/v2/demo"  # example fallback
+    "https://solana-mainnet.g.alchemy.com/v2/demo"
 ]
 solana_client = Client(rpc_endpoints[0])
 
@@ -90,29 +90,16 @@ def get_phantom_keypair():
         logging.error(f"Error decoding Phantom key: {e}")
         raise
 
-def log_wallet_balance():
+async def notify_discord(content=None, tx_sig=None):
     try:
-        kp = get_phantom_keypair()
-        balance_lamports = solana_client.get_balance(kp.pubkey()).value
-        balance_sol = balance_lamports / 1_000_000_000
-        logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
-        if balance_sol < 0.05:
-            notify_discord(f"⚠️ Low wallet balance: {balance_sol:.4f} SOL")
+        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+        if channel and content:
+            content_msg = f"{content}"
+            if tx_sig:
+                content_msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
+            await channel.send(content_msg)
     except Exception as e:
-        logging.error(f"❌ Failed to get wallet balance: {e}")
-
-def notify_discord(content=None, tx_sig=None):
-    async def _send():
-        try:
-            channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-            if channel and content:
-                content_msg = f"{content}"
-                if tx_sig:
-                    content_msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
-                await channel.send(content_msg)
-        except Exception as e:
-            logging.error(f"❌ Failed to send Discord notification: {e}")
-    asyncio.create_task(_send())
+        logging.error(f"❌ Failed to send Discord notification: {e}")
 
 def fallback_rpc():
     global solana_client
@@ -124,6 +111,17 @@ def fallback_rpc():
             break
         except Exception as e:
             logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
+
+def log_wallet_balance():
+    try:
+        kp = get_phantom_keypair()
+        balance_lamports = solana_client.get_balance(kp.pubkey()).value
+        balance_sol = balance_lamports / 1_000_000_000
+        logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
+        if balance_sol < 0.05:
+            asyncio.create_task(notify_discord(f"⚠️ Low wallet balance: {balance_sol:.4f} SOL"))
+    except Exception as e:
+        logging.error(f"❌ Failed to get wallet balance: {e}")
 
 def real_buy_token(token_address, lamports=1000000):
     try:
@@ -138,17 +136,13 @@ def real_buy_token(token_address, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
-        logging.info(f"🧾 RPC Response: {tx_response}")
-        tx_sig = None
-        if hasattr(tx_response, 'value'):
-            if isinstance(tx_response.value, list):
-                tx_sig = tx_response.value[0]
-            else:
-                tx_sig = tx_response.value
+        tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
+        if isinstance(tx_sig, list):
+            tx_sig = tx_sig[0]
         if not tx_sig or not isinstance(tx_sig, str):
             raise ValueError(f"Invalid tx signature returned: {tx_sig}")
         logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
-        notify_discord(f"✅ Bought token: solana_{token_address}", tx_sig)
+        asyncio.create_task(notify_discord(f"✅ Bought token: solana_{token_address}", tx_sig))
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real buy failed: {e}")
@@ -168,37 +162,64 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         transaction.sign([keypair])
         time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
-        logging.info(f"🧾 RPC Response: {tx_response}")
-        tx_sig = None
-        if hasattr(tx_response, 'value'):
-            if isinstance(tx_response.value, list):
-                tx_sig = tx_response.value[0]
-            else:
-                tx_sig = tx_response.value
+        tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
+        if isinstance(tx_sig, list):
+            tx_sig = tx_sig[0]
         if not tx_sig or not isinstance(tx_sig, str):
             raise ValueError(f"Invalid tx signature returned: {tx_sig}")
         logging.info(f"📉 Real sell executed: TX Signature = {tx_sig}")
-        notify_discord(f"💸 Sold token: solana_{recipient_pubkey_str}", tx_sig)
+        asyncio.create_task(notify_discord(f"💸 Sold token: solana_{recipient_pubkey_str}", tx_sig))
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real sell failed: {e}")
         fallback_rpc()
         return None
 
-@bot.command()
-async def buy(ctx, token_address: str, sol_amount: float = 0.01):
+@tree.command(name="wallet", description="Show Phantom wallet balance")
+async def wallet_command(interaction: discord.Interaction):
+    try:
+        kp = get_phantom_keypair()
+        balance_lamports = solana_client.get_balance(kp.pubkey()).value
+        balance_sol = balance_lamports / 1_000_000_000
+        await interaction.response.send_message(f"💼 Phantom Wallet Balance: {balance_sol:.4f} SOL")
+    except Exception as e:
+        await interaction.response.send_message("❌ Failed to fetch wallet balance.")
+
+@tree.command(name="buy", description="Buy a token by address")
+async def buy_command(interaction: discord.Interaction, token_address: str, sol_amount: float = 0.01):
     lamports = int(sol_amount * 1_000_000_000)
     tx = real_buy_token(token_address, lamports)
     if tx:
-        await ctx.send(f"✅ Buy triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
+        await interaction.response.send_message(f"✅ Buy triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
     else:
-        await ctx.send("❌ Buy failed.")
+        await interaction.response.send_message("❌ Buy failed.")
 
-@bot.command()
-async def sell(ctx, token_address: str, sol_amount: float = 0.01):
+@tree.command(name="sell", description="Sell to a wallet by address")
+async def sell_command(interaction: discord.Interaction, token_address: str, sol_amount: float = 0.01):
     lamports = int(sol_amount * 1_000_000_000)
     tx = real_sell_token(token_address, lamports)
     if tx:
-        await ctx.send(f"✅ Sell triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
+        await interaction.response.send_message(f"✅ Sell triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
     else:
-        await ctx.send("❌ Sell failed.")
+        await interaction.response.send_message("❌ Sell failed.")
+
+@bot.event
+async def on_ready():
+    try:
+        await tree.sync()
+        logging.info(f"✅ Logged in as {bot.user}")
+        log_wallet_balance()
+    except Exception as e:
+        logging.error(f"❌ Failed during on_ready: {e}")
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send("❌ Command not recognized.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send("❌ Missing required arguments for this command.")
+    else:
+        await ctx.send("❌ An unexpected error occurred.")
+        logging.error(f"Command error: {error}")
+
+bot.run(DISCORD_TOKEN)
