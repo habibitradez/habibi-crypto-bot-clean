@@ -92,6 +92,7 @@ def get_phantom_keypair():
 
 async def notify_discord(content=None, tx_sig=None):
     try:
+        await bot.wait_until_ready()
         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
         if channel and content:
             content_msg = f"{content}"
@@ -143,6 +144,7 @@ def real_buy_token(token_address, lamports=1000000):
             raise ValueError(f"Invalid tx signature returned: {tx_sig}")
         logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
         asyncio.create_task(notify_discord(f"✅ Bought token: solana_{token_address}", tx_sig))
+        bought_tokens[token_address] = {"amount": lamports, "buy_price": 0.01}  # Placeholder
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real buy failed: {e}")
@@ -174,6 +176,31 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real sell failed: {e}")
         fallback_rpc()
         return None
+
+@tasks.loop(seconds=30)
+async def sniper_loop():
+    try:
+        response = requests.get(f"{GECKO_BASE_URL}/pools?page=1")
+        data = response.json()
+        for pool in data.get("data", [])[:3]:  # just 3 most recent
+            token_address = pool.get("attributes", {}).get("token_address")
+            if token_address and token_address not in bought_tokens:
+                logging.info(f"🧠 Found new token to snipe: {token_address}")
+                real_buy_token(token_address, lamports=1000000)
+    except Exception as e:
+        logging.error(f"❌ Error in sniper loop: {e}")
+
+@tasks.loop(seconds=60)
+async def auto_seller_loop():
+    try:
+        for token, info in list(bought_tokens.items()):
+            simulated_price = info["buy_price"] + random.uniform(0, 0.01)  # Fake price increase
+            if simulated_price - info["buy_price"] > SELL_PROFIT_TRIGGER:
+                logging.info(f"💸 Selling {token} for profit")
+                real_sell_token(token, lamports=info["amount"])
+                del bought_tokens[token]
+    except Exception as e:
+        logging.error(f"❌ Error in auto seller loop: {e}")
 
 @tree.command(name="wallet", description="Show Phantom wallet balance")
 async def wallet_command(interaction: discord.Interaction):
@@ -209,6 +236,8 @@ async def on_ready():
         await tree.sync()
         logging.info(f"✅ Logged in as {bot.user}")
         log_wallet_balance()
+        sniper_loop.start()
+        auto_seller_loop.start()
     except Exception as e:
         logging.error(f"❌ Failed during on_ready: {e}")
 
