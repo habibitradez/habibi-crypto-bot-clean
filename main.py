@@ -92,6 +92,15 @@ def log_wallet_balance():
     except Exception as e:
         logging.error(f"❌ Failed to get wallet balance: {e}")
 
+def notify_discord(content, tx_sig=None):
+    async def _send():
+        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+        if channel:
+            if tx_sig:
+                content += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
+            await channel.send(content)
+    asyncio.create_task(_send())
+
 def real_buy_token(token_address, lamports=1000000):
     try:
         token_address = token_address.replace("solana_", "")
@@ -105,6 +114,7 @@ def real_buy_token(token_address, lamports=1000000):
         transaction.sign([keypair])
         tx_sig = solana_client.send_raw_transaction(transaction.serialize()).value
         logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
+        notify_discord(f"✅ Bought token: solana_{token_address}", tx_sig)
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real buy failed: {e}")
@@ -123,6 +133,7 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         transaction.sign([keypair])
         tx_sig = solana_client.send_raw_transaction(transaction.serialize()).value
         logging.info(f"📉 Real sell executed: TX Signature = {tx_sig}")
+        notify_discord(f"💸 Sold token: solana_{recipient_pubkey_str}", tx_sig)
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Real sell failed: {e}")
@@ -142,7 +153,6 @@ async def wallet(ctx):
 @bot.event
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user.name}")
-    # Add real monitoring tasks here if needed
     log_wallet_balance()
 
 bot.run(DISCORD_TOKEN)
