@@ -106,10 +106,9 @@ def notify_discord(content=None, tx_sig=None):
         try:
             channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
             if channel and content:
+                content_msg = f"{content}"
                 if tx_sig:
-                    content_msg = f"{content}\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
-                else:
-                    content_msg = content
+                    content_msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
                 await channel.send(content_msg)
         except Exception as e:
             logging.error(f"❌ Failed to send Discord notification: {e}")
@@ -203,4 +202,3 @@ async def sell(ctx, token_address: str, sol_amount: float = 0.01):
         await ctx.send(f"✅ Sell triggered for `{token_address}` with `{sol_amount}` SOL\n🔗 https://solscan.io/tx/{tx}")
     else:
         await ctx.send("❌ Sell failed.")
-bot.run(DISCORD_TOKEN)
