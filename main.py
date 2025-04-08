@@ -51,6 +51,7 @@ DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 DISCORD_ROLE_ID = os.getenv("DISCORD_ROLE_ID")
 BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
+SHYFT_RPC_KEY = os.getenv("SHYFT_RPC_KEY")
 
 GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana"
 TWITTER_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
@@ -63,8 +64,7 @@ tree = bot.tree
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-# Replace with faster endpoint as needed:
-solana_client = Client("https://rpc.shyft.to")
+solana_client = Client(f"https://rpc.shyft.to?api_key={SHYFT_RPC_KEY}")
 
 bought_tokens = {}
 total_profit_usd = 0.0
@@ -90,7 +90,7 @@ def log_wallet_balance():
         kp = get_phantom_keypair()
         balance_lamports = solana_client.get_balance(kp.pubkey()).value
         balance_sol = balance_lamports / 1_000_000_000
-        logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
+        logging.info(f"\U0001f4b0 Phantom Wallet Balance: {balance_sol:.4f} SOL")
     except Exception as e:
         logging.error(f"❌ Failed to get wallet balance: {e}")
 
