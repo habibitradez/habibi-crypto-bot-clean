@@ -63,7 +63,9 @@ tree = bot.tree
 logging.basicConfig(level=logging.INFO)
 discord.utils.setup_logging(level=logging.INFO)
 
-solana_client = Client("https://api.mainnet-beta.solana.com")
+# Replace with faster endpoint as needed:
+solana_client = Client("https://rpc.shyft.to")
+
 bought_tokens = {}
 total_profit_usd = 0.0
 SELL_PROFIT_TRIGGER = 2.0
@@ -117,7 +119,7 @@ def real_buy_token(token_address, lamports=1000000):
         transaction.recent_blockhash = blockhash
         transaction.fee_payer = keypair.pubkey()
         transaction.sign([keypair])
-        time.sleep(0.3)  # Throttle to avoid 429
+        time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
         tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
         if not isinstance(tx_sig, str):
@@ -140,7 +142,7 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         transaction.recent_blockhash = blockhash
         transaction.fee_payer = keypair.pubkey()
         transaction.sign([keypair])
-        time.sleep(0.3)  # Throttle
+        time.sleep(0.3)
         tx_response = solana_client.send_raw_transaction(transaction.serialize())
         tx_sig = tx_response.value if hasattr(tx_response, 'value') else None
         if not isinstance(tx_sig, str):
@@ -208,4 +210,3 @@ async def on_ready():
     monitor_tokens.start()
 
 bot.run(DISCORD_TOKEN)
-
