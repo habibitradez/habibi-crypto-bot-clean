@@ -52,7 +52,6 @@ BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")
 ROLE_MENTION_ENABLED = os.getenv("ROLE_MENTION_ENABLED", "true").lower() == "true"
 
 GECKO_BASE_URL = "https://api.geckoterminal.com/api/v2/networks/solana"
-BITQUERY_URL = "https://graphql.bitquery.io"
 TWITTER_SEARCH_URL = "https://api.twitter.com/2/tweets/search/recent"
 TWITTER_HEADERS = {"Authorization": f"Bearer {TWITTER_BEARER_TOKEN}"}
 
@@ -139,6 +138,44 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         logging.error(f"❌ Real sell failed: {e}")
         return None
 
+def get_recent_contract_mentions():
+    try:
+        query = {"query": "contract OR launch OR $SOL", "max_results": 10, "tweet.fields": "created_at"}
+        response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
+        data = response.json()
+        texts = [tweet["text"] for tweet in data.get("data", [])]
+        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
+        return list(cas)
+    except Exception as e:
+        logging.warning(f"Twitter fetch error: {e}")
+        return []
+
+def get_trending_gecko_tokens():
+    try:
+        url = f"{GECKO_BASE_URL}/trending_pools"
+        resp = requests.get(url)
+        data = resp.json()
+        return [item["id"] for item in data["data"]]
+    except Exception as e:
+        logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
+        return []
+
+@tasks.loop(seconds=30)
+async def monitor_tokens():
+    cas = set(get_recent_contract_mentions())
+    trending = set(get_trending_gecko_tokens())
+    combined = list(cas.union(trending))
+    for token_address in combined:
+        if token_address not in bought_tokens:
+            logging.info(f"💰 Sniping token: {token_address}")
+            real_buy_token(token_address)
+            bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
+        else:
+            if random.random() > 0.5:
+                real_sell_token(token_address)
+                notify_discord(f"💸 Sold `{token_address}` due to simulation trigger.")
+                del bought_tokens[token_address]
+
 @bot.command()
 async def wallet(ctx):
     try:
@@ -154,5 +191,6 @@ async def wallet(ctx):
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user.name}")
     log_wallet_balance()
+    monitor_tokens.start()
 
 bot.run(DISCORD_TOKEN)
