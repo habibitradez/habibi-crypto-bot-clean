@@ -83,25 +83,14 @@ def get_phantom_keypair():
         logging.error(f"Error decoding Phantom key: {e}")
         raise
 
-def send_sol(destination_wallet: str, amount_sol: float):
+def log_wallet_balance():
     try:
         kp = get_phantom_keypair()
-        recent_blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
-        lamports = int(amount_sol * 1_000_000_000)
-        ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=PublicKey.from_string(destination_wallet), lamports=lamports))
-        tx = Transaction.new_unsigned([ix])
-        tx.sign([kp])
-        resp = solana_client.send_transaction(tx)
-        logging.info(f"✅ Sent {amount_sol} SOL to {destination_wallet}, TX: {resp}")
-        return resp
+        balance_lamports = solana_client.get_balance(kp.pubkey()).value
+        balance_sol = balance_lamports / 1_000_000_000
+        logging.info(f"💰 Phantom Wallet Balance: {balance_sol:.4f} SOL")
     except Exception as e:
-        logging.error(f"❌ Failed to send SOL: {e}")
-        return None
-
-def receive_sol():
-    kp = get_phantom_keypair()
-    logging.info(f"💼 Phantom wallet ready to receive: {kp.pubkey()}")
-    return str(kp.pubkey())
+        logging.error(f"❌ Failed to get wallet balance: {e}")
 
 def real_buy_token(token_address, lamports=1000000):
     try:
@@ -109,12 +98,14 @@ def real_buy_token(token_address, lamports=1000000):
         keypair = get_phantom_keypair()
         recipient = PublicKey.from_string(token_address)
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
         transaction = Transaction.new_unsigned([ix])
         transaction.recent_blockhash = blockhash
         transaction.fee_payer = keypair.pubkey()
         transaction.sign([keypair])
-        return solana_client.send_raw_transaction(transaction.serialize()).get("result")
+        tx_sig = solana_client.send_raw_transaction(transaction.serialize()).value
+        logging.info(f"📈 Real buy executed: TX Signature = {tx_sig}")
+        return tx_sig
     except Exception as e:
         logging.error(f"❌ Real buy failed: {e}")
         return None
@@ -125,109 +116,33 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
         keypair = get_phantom_keypair()
         recipient = PublicKey.from_string(recipient_pubkey_str)
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
         transaction = Transaction.new_unsigned([ix])
         transaction.recent_blockhash = blockhash
         transaction.fee_payer = keypair.pubkey()
         transaction.sign([keypair])
-        return solana_client.send_raw_transaction(transaction.serialize()).get("result")
+        tx_sig = solana_client.send_raw_transaction(transaction.serialize()).value
+        logging.info(f"📉 Real sell executed: TX Signature = {tx_sig}")
+        return tx_sig
     except Exception as e:
         logging.error(f"❌ Real sell failed: {e}")
         return None
 
-def generate_chart(token_id):
+@bot.command()
+async def wallet(ctx):
     try:
-        chart_url = f"https://api.geckoterminal.com/api/v2/networks/solana/pools/{token_id}/chart"
-        response = requests.get(chart_url)
-        if not response.ok or "application/json" not in response.headers.get("Content-Type", ""):
-            raise ValueError("Invalid chart response")
-        data = response.json()
-        prices = [float(p[1]) for p in data['data']['attributes']['series']['usd']]
-        plt.figure(figsize=(6, 3))
-        plt.plot(prices)
-        plt.title(f"Price Chart - {token_id}")
-        plt.xlabel("Time")
-        plt.ylabel("Price ($)")
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        return buf
+        kp = get_phantom_keypair()
+        balance_lamports = solana_client.get_balance(kp.pubkey()).value
+        balance_sol = balance_lamports / 1_000_000_000
+        await ctx.send(f"💼 Phantom Wallet: `{kp.pubkey()}`\n💰 Balance: `{balance_sol:.4f}` SOL")
     except Exception as e:
-        logging.warning(f"⚠️ Failed to generate chart: {e}")
-        return None
-
-# --- Additional logic restored for token sniping, memes, and news ---
-
-def notify_discord(content, file=None):
-    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-    if channel:
-        asyncio.create_task(channel.send(content, file=discord.File(file, "chart.png") if file else None))
-
-def get_recent_contract_mentions():
-    try:
-        query = {"query": "contract OR launch OR $SOL", "max_results": 10, "tweet.fields": "created_at"}
-        response = requests.get(TWITTER_SEARCH_URL, headers=TWITTER_HEADERS, params=query)
-        data = response.json()
-        texts = [tweet["text"] for tweet in data.get("data", [])]
-        cas = set(re.findall(r'\b[1-9A-HJ-NP-Za-km-z]{32,44}\b', " ".join(texts)))
-        return list(cas)
-    except Exception as e:
-        logging.warning(f"Twitter fetch error: {e}")
-        return []
-
-def get_trending_gecko_tokens():
-    try:
-        url = f"{GECKO_BASE_URL}/trending_pools"
-        resp = requests.get(url)
-        data = resp.json()
-        return [item["id"] for item in data["data"]]
-    except Exception as e:
-        logging.warning(f"⚠️ GeckoTerminal trending token fetch failed: {e}")
-        return []
-
-@tasks.loop(seconds=30)
-async def monitor_tokens():
-    cas = set(get_recent_contract_mentions())
-    trending = set(get_trending_gecko_tokens())
-    combined = list(cas.union(trending))
-    for token_address in combined:
-        chart = generate_chart(token_address)
-        if token_address not in bought_tokens:
-            logging.info(f"💰 Sniping token: {token_address}")
-            real_buy_token(token_address)
-            bought_tokens[token_address] = {"bought_price": 1.0, "buyer_count": 1}
-            notify_discord(f"✅ Sniped new token: `{token_address}`", chart)
-        else:
-            # simulate tracking
-            if random.random() > 0.5:
-                real_sell_token(token_address)
-                notify_discord(f"💸 Sold `{token_address}` due to profit/buyer count met.")
-                del bought_tokens[token_address]
-
-@tasks.loop(minutes=10)
-async def post_meme_and_news():
-    try:
-        meme_sources = [
-            "https://www.reddit.com/r/cryptomemes/new/.json",
-            "https://www.reddit.com/r/wallstreetbets/new/.json"
-        ]
-        for source in meme_sources:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(source, headers=headers)
-            posts = resp.json().get("data", {}).get("children", [])
-            for post in posts[:3]:
-                title = post["data"].get("title")
-                image_url = post["data"].get("url_overridden_by_dest")
-                if image_url and image_url.endswith((".jpg", ".png")):
-                    content = f"📰 **{title}**\n{image_url}"
-                    notify_discord(content)
-    except Exception as e:
-        logging.warning(f"⚠️ Meme/news posting failed: {e}")
+        await ctx.send("❌ Failed to fetch wallet balance.")
+        logging.error(f"Wallet command error: {e}")
 
 @bot.event
 async def on_ready():
     logging.info(f"✅ Logged in as {bot.user.name}")
-    monitor_tokens.start()
-    post_meme_and_news.start()
+    # Add real monitoring tasks here if needed
+    log_wallet_balance()
 
 bot.run(DISCORD_TOKEN)
