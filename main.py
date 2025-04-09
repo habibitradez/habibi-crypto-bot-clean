@@ -224,3 +224,4 @@ async def on_ready():
     auto_seller.start()
 
 bot.run(DISCORD_TOKEN)
+
