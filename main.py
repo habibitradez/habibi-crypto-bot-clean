@@ -181,6 +181,7 @@ def real_sell_token(recipient_pubkey_str, lamports=1000000):
 async def sniper_loop():
     try:
         response = requests.get(f"{GECKO_BASE_URL}/pools?page=1")
+        logging.info(f"🔍 Gecko response: {response.text}")
         data = response.json()
         for pool in data.get("data", [])[:3]:  # just 3 most recent
             token_address = pool.get("attributes", {}).get("token_address")
@@ -234,10 +235,15 @@ async def sell_command(interaction: discord.Interaction, token_address: str, sol
 async def on_ready():
     try:
         await tree.sync()
+        logging.info(f"✅ Synced commands.")
+    except Exception as e:
+        logging.warning(f"❌ Command sync failed: {e}")
+    try:
         logging.info(f"✅ Logged in as {bot.user}")
         log_wallet_balance()
         sniper_loop.start()
         auto_seller_loop.start()
+        logging.info("✅ Loops started.")
     except Exception as e:
         logging.error(f"❌ Failed during on_ready: {e}")
 
