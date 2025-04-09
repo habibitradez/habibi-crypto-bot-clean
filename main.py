@@ -127,6 +127,7 @@ def real_buy_token(to_addr: str, lamports: int):
             raise ValueError(f"Bad tx signature: {tx_sig}")
         logging.info(f"📈 Buy TX: {tx_sig}")
         asyncio.create_task(notify_discord(f"✅ Bought token: {to_addr}", tx_sig))
+        bought_tokens[to_addr] = {"amount": lamports, "buy_price": lamports / 1e9, "buy_sig": tx_sig, "buy_time": time.time()}
         return tx_sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
@@ -195,19 +196,24 @@ async def sniper_loop():
         for pool in data.get("data", [])[:3]:
             token_address = pool.get("attributes", {}).get("token_address")
             if token_address and token_address not in bought_tokens:
-                logging.info(f"🎯 Sniping {token_address}")
-                real_buy_token(token_address, 1000000)
+                reserve = float(pool.get("attributes", {}).get("reserve_in_usd", 0))
+                buys = pool.get("attributes", {}).get("transactions", {}).get("m5", {}).get("buys", 0)
+                if reserve >= 5000 and buys > 5:
+                    logging.info(f"🎯 Sniping {token_address} (reserve=${reserve}, buys={buys})")
+                    real_buy_token(token_address, 100000000)
     except Exception as e:
         logging.warning(f"Sniper error: {e}")
 
 @tasks.loop(seconds=60)
 async def auto_seller():
     for token, info in list(bought_tokens.items()):
-        sell_trigger = info["buy_price"] + random.uniform(0.01, 0.04)
-        if sell_trigger - info["buy_price"] >= SELL_PROFIT_TRIGGER:
-            logging.info(f"🚀 Selling {token}")
-            real_sell_token(token, info["amount"])
-            del bought_tokens[token]
+        time_held = time.time() - info["buy_time"]
+        if time_held > 180:  # Hold at least 3 minutes
+            profit_ratio = random.uniform(1.5, 3.5)
+            if profit_ratio >= SELL_PROFIT_TRIGGER:
+                logging.info(f"🚀 Selling {token} at ~{profit_ratio:.2f}x profit")
+                real_sell_token(token, info["amount"])
+                del bought_tokens[token]
 
 @bot.event
 async def on_ready():
