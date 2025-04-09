@@ -120,11 +120,14 @@ def real_buy_token(to_addr: str, lamports: int):
         tx.sign([keypair])
         time.sleep(0.3)
         resp = solana_client.send_raw_transaction(tx.serialize())
-        tx_sig = resp.value if hasattr(resp, 'value') else None
-        if isinstance(tx_sig, list):
-            tx_sig = tx_sig[0]
-        if not isinstance(tx_sig, str):
-            raise ValueError(f"Bad tx signature: {tx_sig}")
+        tx_sig = None
+        if hasattr(resp, "value"):
+            if isinstance(resp.value, str):
+                tx_sig = resp.value
+            elif isinstance(resp.value, list) and len(resp.value) > 0:
+                tx_sig = resp.value[0]
+        if not tx_sig or not isinstance(tx_sig, str):
+            raise ValueError(f"Invalid tx signature: {resp.value}")
         logging.info(f"📈 Buy TX: {tx_sig}")
         asyncio.create_task(notify_discord(f"✅ Bought token: {to_addr}", tx_sig))
         bought_tokens[to_addr] = {"amount": lamports, "buy_price": lamports / 1e9, "buy_sig": tx_sig, "buy_time": time.time()}
