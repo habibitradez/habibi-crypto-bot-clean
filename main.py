@@ -115,6 +115,9 @@ async def detect_meme_trend():
             """
         }
         response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
+        if response.status_code == 401:
+            logging.warning("🔁 Bitquery unauthorized, skipping...")
+            return []
         response.raise_for_status()
         data = response.json()
         token_list = [d['market']['baseCurrency']['address'] for d in data['data']['solana']['dexTrades']]
@@ -153,8 +156,7 @@ def real_buy_token(to_addr: str, lamports: int):
         keypair = get_phantom_keypair()
         recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash_resp = solana_client.get_latest_blockhash()
-        blockhash = blockhash_resp.value.blockhash
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
         tx = Transaction.new_unsigned([ix])
         tx.recent_blockhash = blockhash
         tx.fee_payer = keypair.pubkey()
