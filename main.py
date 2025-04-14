@@ -119,34 +119,35 @@ async def detect_meme_trend():
             token_list = []
             for pool in gecko_data.get("data", []):
                 try:
-                    token_addr = pool["attributes"]["token_address"]
-                    token_list.append(token_addr)
+                    token_addr = pool["attributes"].get("token_address")
+                    if token_addr:
+                        token_list.append(token_addr)
                 except Exception as inner:
                     logging.warning(f"⚠️ Error parsing GeckoTerminal pool: {inner}")
                     continue
             if token_list:
                 return token_list[:5]
         except Exception as ge:
-            logging.error(f"❌ GeckoTerminal fallback failed: {ge}. Trying CoinBrain fallback...")
+            logging.error(f"❌ GeckoTerminal fallback failed: {ge}. Trying CoinMarketCap fallback...")
             try:
-                cb_url = "https://api.coinbrain.com/public/coins?chain=solana&sort=trending"
-                cb_res = requests.get(cb_url)
-                cb_res.raise_for_status()
-                cb_data = cb_res.json()
+                cmc_url = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing?limit=10&sort=market_cap&cryptocurrency_type=tokens"
+                cmc_res = requests.get(cmc_url)
+                cmc_res.raise_for_status()
+                cmc_data = cmc_res.json()
                 token_list = []
-                for coin in cb_data.get("data", [])[:10]:
+                for coin in cmc_data.get("data", {}).get("cryptoCurrencyList", []):
                     try:
-                        token_list.append(coin.get("address"))
+                        platform = coin.get("platform")
+                        if platform and platform.get("name", "").lower() == "solana":
+                            token_list.append(platform.get("token_address"))
                     except Exception as inner:
-                        logging.warning(f"⚠️ Error parsing CoinBrain token: {inner}")
+                        logging.warning(f"⚠️ Error parsing CoinMarketCap token: {inner}")
                         continue
                 return token_list[:5]
             except Exception as ce:
-                logging.error(f"❌ CoinBrain fallback failed: {ce}")
+                logging.error(f"❌ CoinMarketCap fallback failed: {ce}")
                 return []
-        await bot.wait_until_ready()
-        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-        if channel and content:
+
             msg = content
             if tx_sig:
                 msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
