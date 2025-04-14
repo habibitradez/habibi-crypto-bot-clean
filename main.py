@@ -91,16 +91,34 @@ async def simulate_token_buy(address):
 def should_prioritize_pool(pool_data):
     return True
 
-async def detect_meme_trend():
+def fetch_pumpfun_recent():
     try:
-        response = requests.get("https://pump.fun/api/mints/recent")  # Fixed endpoint path
+        url = "https://pump.fun/api/projects?sort=new"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        token_list = [item["mint"] for item in data if "mint" in item]
-        return token_list[:5]
+        return [item["mint"] for item in data[:5] if "mint" in item]
     except Exception as e:
-        logging.error(f"❌ Pump.fun API fallback failed: {e}")
+        logging.error(f"❌ Failed to fetch pump.fun recent mints: {e}")
         return []
+
+def fetch_gecko_trending():
+    try:
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        return [pool["id"] for pool in data.get("data", [])]
+    except Exception as e:
+        logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
+        return []
+
+async def detect_meme_trend():
+    pump_tokens = fetch_pumpfun_recent()
+    gecko_tokens = fetch_gecko_trending()
+    combined = list(dict.fromkeys(pump_tokens + gecko_tokens))  # remove duplicates while preserving order
+    return combined[:5]
 
 async def notify_discord(content=None, tx_sig=None):
     try:
