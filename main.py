@@ -94,7 +94,7 @@ def should_prioritize_pool(pool_data):
 async def detect_meme_trend():
     global bitquery_unauthorized
     if bitquery_unauthorized:
-        logging.warning("⏩ Skipping Bitquery: Unauthorized previously detected.")
+        logging.warning("🔁 Bitquery unauthorized, skipping all further attempts until restart.")
         return []
     try:
         headers = {
