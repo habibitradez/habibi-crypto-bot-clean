@@ -128,50 +128,50 @@ async def detect_meme_trend():
             if token_list:
                 return token_list[:5]
         except Exception as ge:
-            logging.error(f"❌ GeckoTerminal fallback failed: {ge}. Trying CoinMarketCap fallback...")
+            logging.error(f"❌ GeckoTerminal fallback failed: {ge}. Trying CoinBrain fallback...")
             try:
-                cmc_url = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing?limit=10&sort=market_cap&cryptocurrency_type=tokens"
-                cmc_res = requests.get(cmc_url)
-                cmc_res.raise_for_status()
-                cmc_data = cmc_res.json()
+                cb_url = "https://public-api.coinbrain.com/coins/solana/trending"
+                cb_res = requests.get(cb_url)
+                cb_res.raise_for_status()
+                cb_data = cb_res.json()
                 token_list = []
-                for coin in cmc_data.get("data", {}).get("cryptoCurrencyList", []):
-                    try:
+                for coin in cb_data.get("data", []):
+                    token_addr = coin.get("tokenAddress")
+                    if token_addr:
+                        token_list.append(token_addr)
+                if token_list:
+                    return token_list[:5]
+            except Exception as ce:
+                logging.error(f"❌ CoinBrain fallback failed: {ce}. Trying CoinMarketCap fallback...")
+                try:
+                    cmc_url = "https://api.coinmarketcap.com/data-api/v3/cryptocurrency/listing?limit=10&sort=market_cap&cryptocurrency_type=tokens"
+                    cmc_res = requests.get(cmc_url)
+                    cmc_res.raise_for_status()
+                    cmc_data = cmc_res.json()
+                    token_list = []
+                    for coin in cmc_data.get("data", {}).get("cryptoCurrencyList", []):
                         platform = coin.get("platform")
                         if platform and platform.get("name", "").lower() == "solana":
                             token_list.append(platform.get("token_address"))
-                    except Exception as inner:
-                        logging.warning(f"⚠️ Error parsing CoinMarketCap token: {inner}")
-                        continue
-                return token_list[:5]
-            except Exception as ce:
-                logging.error(f"❌ CoinMarketCap fallback failed: {ce}")
-                return []
-
-            msg = content
-            if tx_sig:
-                msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
-            await channel.send(msg)
-    except Exception as e:
-        logging.error(f"❌ Failed to send Discord notification: {e}")
-
-def get_phantom_keypair():
-    secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
-    if len(secret_bytes) == 64:
-        return Keypair.from_bytes(secret_bytes)
-    elif len(secret_bytes) == 32:
-        return Keypair.from_seed(secret_bytes)
-    else:
-        raise ValueError("Secret key must be 32 or 64 bytes.")
-
-def real_buy_token(to_addr: str, lamports: int):
-    try:
-        keypair = get_phantom_keypair()
-        recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
-        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction.new_unsigned([ix])
-        tx.recent_blockhash = blockhash
+                    if token_list:
+                        return token_list[:5]
+                except Exception as ce:
+                    logging.error(f"❌ CoinMarketCap fallback failed: {ce}. Trying Dexscreener fallback...")
+                    try:
+                        dex_url = "https://api.dexscreener.com/latest/dex/pairs/solana"
+                        dex_res = requests.get(dex_url)
+                        dex_res.raise_for_status()
+                        dex_data = dex_res.json()
+                        token_list = []
+                        for pair in dex_data.get("pairs", []):
+                            base_token = pair.get("baseToken", {})
+                            token_addr = base_token.get("address")
+                            if token_addr:
+                                token_list.append(token_addr)
+                        return token_list[:5]
+                    except Exception as dex:
+                        logging.error(f"❌ Dexscreener fallback failed: {dex}")
+                        return []
         tx.fee_payer = keypair.pubkey()
         tx.sign([keypair])
         time.sleep(0.3)
