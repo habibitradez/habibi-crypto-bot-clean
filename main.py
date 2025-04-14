@@ -113,6 +113,39 @@ def fallback_rpc():
             return
         except Exception as e:
             logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
+
+async def detect_meme_trend():
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-KEY": BITQUERY_API_KEY
+        }
+        query = {
+            "query": """
+            query MyQuery {
+              solana {
+                dexTrades(
+                  options: {desc: [\"block.timestamp.time\"], limit: 5}
+                  exchangeName: {is: \"Pump Fun\"}
+                ) {
+                  market {
+                    baseCurrency {
+                      address
+                    }
+                  }
+                }
+              }
+            }
+            """
+        }
+        response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        token_list = [d['market']['baseCurrency']['address'] for d in data['data']['solana']['dexTrades']]
+        return token_list[:5]
+    except Exception as e:
+        logging.error(f"❌ Bitquery failed: {e}. Trying GeckoTerminal fallback...")
+        try:
             url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
             res = requests.get(url)
             res.raise_for_status()
@@ -173,87 +206,3 @@ def fallback_rpc():
                     except Exception as dex:
                         logging.error(f"❌ Dexscreener fallback failed: {dex}")
                         return []
-        tx.fee_payer = keypair.pubkey()
-        tx.sign([keypair])
-        time.sleep(0.3)
-        resp = solana_client.send_raw_transaction(tx.serialize())
-        tx_sig = resp.value if hasattr(resp, 'value') else None
-        if isinstance(tx_sig, list):
-            tx_sig = tx_sig[0]
-        if not isinstance(tx_sig, str):
-            raise ValueError(f"Invalid tx signature: {tx_sig}")
-        logging.info(f"📈 Buy TX: {tx_sig}")
-        asyncio.create_task(notify_discord(f"✅ Bought token: {to_addr}", tx_sig))
-        bought_tokens[to_addr] = {
-            "amount": lamports,
-            "buy_price": lamports / 1e9,
-            "buy_sig": tx_sig,
-            "buy_time": time.time()
-        }
-        return tx_sig
-    except Exception as e:
-        logging.error(f"❌ Buy failed: {e}")
-        fallback_rpc()
-        return None
-
-def real_sell_token(to_addr: str, lamports: int):
-    try:
-        keypair = get_phantom_keypair()
-        recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
-        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction.new_unsigned([ix])
-        tx.recent_blockhash = blockhash
-        tx.fee_payer = keypair.pubkey()
-        tx.sign([keypair])
-        time.sleep(0.3)
-        resp = solana_client.send_raw_transaction(tx.serialize())
-        tx_sig = resp.value if hasattr(resp, 'value') else None
-        if isinstance(tx_sig, list):
-            tx_sig = tx_sig[0]
-        if not isinstance(tx_sig, str):
-            raise ValueError(f"Bad tx signature: {tx_sig}")
-        logging.info(f"📉 Sell TX: {tx_sig}")
-        asyncio.create_task(notify_discord(f"💸 Sold token: {to_addr}", tx_sig))
-        return tx_sig
-    except Exception as e:
-        logging.error(f"❌ Sell failed: {e}")
-        fallback_rpc()
-        return None
-
-@tasks.loop(seconds=60)
-async def auto_seller():
-    try:
-        for token, info in list(bought_tokens.items()):
-            held_duration = time.time() - info["buy_time"]
-            simulated_price = info["buy_price"] + random.uniform(0, 0.04)
-            percent_gain = (simulated_price - info["buy_price"]) / info["buy_price"]
-            if percent_gain >= SELL_PROFIT_TRIGGER or percent_gain <= -LOSS_CUT_PERCENT or held_duration > 180:
-                logging.info(f"💸 Selling {token}, profit: {percent_gain*100:.2f}%")
-                real_sell_token(token, lamports=info["amount"])
-                del bought_tokens[token]
-    except Exception as e:
-        logging.error(f"❌ Auto-sell error: {e}")
-
-@tasks.loop(seconds=60)
-async def sniper_loop():
-    try:
-        trending_tokens = await detect_meme_trend()
-        for token_address in trending_tokens:
-            if token_address not in bought_tokens:
-                if await simulate_token_buy(token_address):
-                    logging.info(f"🚀 Sniping {token_address}")
-                    real_buy_token(token_address, lamports=1000000)  # 0.001 SOL
-    except Exception as e:
-        logging.error(f"❌ Sniper loop error: {e}")
-
-@bot.event
-async def on_ready():
-    await tree.sync()
-    logging.info(f"✅ Logged in as {bot.user}")
-    log_wallet_balance()
-    auto_seller.start()
-    sniper_loop.start()
-    logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
-
-bot.run(DISCORD_TOKEN)
