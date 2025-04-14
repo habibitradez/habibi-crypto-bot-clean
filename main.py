@@ -65,6 +65,7 @@ SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 SIMULATED_GAIN_CAP = 2.0
 
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
     secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
     if len(secret_bytes) == 64:
