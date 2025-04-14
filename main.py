@@ -206,3 +206,13 @@ async def detect_meme_trend():
                     except Exception as dex:
                         logging.error(f"❌ Dexscreener fallback failed: {dex}")
                         return []
+
+@bot.event
+async def on_ready():
+    await tree.sync()
+    logging.info(f"✅ Logged in as {bot.user}")
+    log_wallet_balance()
+    logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
+
+bot.run(DISCORD_TOKEN)
+
