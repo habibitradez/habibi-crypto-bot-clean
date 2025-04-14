@@ -106,8 +106,8 @@ async def detect_meme_trend():
             query MyQuery {
               solana {
                 dexTrades(
-                  options: {desc: [\"block.timestamp.time\"], limit: 5}
-                  exchangeName: {is: \"Pump Fun\"}
+                  options: {desc: ["block.timestamp.time"], limit: 5}
+                  exchangeName: {is: "Pump Fun"}
                 ) {
                   market {
                     baseCurrency {
