@@ -30,7 +30,6 @@ import base58
 import ssl
 import urllib3
 import time
-import telegram
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -46,8 +45,6 @@ DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 SHYFT_RPC_KEY = os.getenv("SHYFT_RPC_KEY")
 BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY", "H1FlmA.MxT2zi3Zm~~eohOFKv8")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 openai.api_key = OPENAI_API_KEY
 
 intents = discord.Intents.all()
@@ -62,7 +59,6 @@ rpc_endpoints = [
     "https://solana-mainnet.g.alchemy.com/v2/demo"
 ]
 solana_client = Client(rpc_endpoints[0])
-telegram_bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
 bought_tokens = {}
 SELL_PROFIT_TRIGGER = 2.0
@@ -141,8 +137,6 @@ async def notify_discord(content=None, tx_sig=None):
             if tx_sig:
                 msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
             await channel.send(msg)
-        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-            telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=content)
     except Exception as e:
         logging.error(f"❌ Failed to send notification: {e}")
 
