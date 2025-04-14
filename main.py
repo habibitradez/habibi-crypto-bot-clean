@@ -65,6 +65,15 @@ SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 SIMULATED_GAIN_CAP = 2.0
 
+def get_phantom_keypair():
+    secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
+    if len(secret_bytes) == 64:
+        return Keypair.from_bytes(secret_bytes)
+    elif len(secret_bytes) == 32:
+        return Keypair.from_seed(secret_bytes)
+    else:
+        raise ValueError("Secret key must be 32 or 64 bytes.")
+
 def log_wallet_balance():
     try:
         kp = get_phantom_keypair()
@@ -80,38 +89,30 @@ async def simulate_token_buy(address):
 def should_prioritize_pool(pool_data):
     return True
 
-async def detect_meme_trend():
+async def notify_discord(content=None, tx_sig=None):
     try:
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-KEY": BITQUERY_API_KEY
-        }
-        query = {
-            "query": """
-            query MyQuery {
-              solana {
-                dexTrades(
-                  options: {desc: [\"block.timestamp.time\"], limit: 5}
-                  exchangeName: {is: \"Pump Fun\"}
-                ) {
-                  market {
-                    baseCurrency {
-                      address
-                    }
-                  }
-                }
-              }
-            }
-            """
-        }
-        response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        token_list = [d['market']['baseCurrency']['address'] for d in data['data']['solana']['dexTrades']]
-        return token_list[:5]
+        await bot.wait_until_ready()
+        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+        if channel and content:
+            msg = content
+            if tx_sig:
+                msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
+            await channel.send(msg)
     except Exception as e:
-        logging.error(f"❌ Bitquery failed: {e}. Trying GeckoTerminal fallback...")
+        logging.error(f"❌ Failed to send Discord notification: {e}")
+
+def fallback_rpc():
+    global solana_client
+    for endpoint in rpc_endpoints[1:]:
         try:
+            test_client = Client(endpoint)
+            test_key = get_phantom_keypair().pubkey()
+            test_client.get_balance(test_key)
+            solana_client = test_client
+            logging.info(f"✅ Switched to fallback RPC: {endpoint}")
+            return
+        except Exception as e:
+            logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
             url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
             res = requests.get(url)
             res.raise_for_status()
