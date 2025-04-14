@@ -92,44 +92,14 @@ def should_prioritize_pool(pool_data):
     return True
 
 async def detect_meme_trend():
-    global bitquery_unauthorized
-    if bitquery_unauthorized:
-        logging.warning("🔁 Bitquery unauthorized, skipping all further attempts until restart.")
-        return []
     try:
-        headers = {
-            "Content-Type": "application/json",
-            "X-API-KEY": BITQUERY_API_KEY
-        }
-        query = {
-            "query": """
-            query MyQuery {
-              solana {
-                dexTrades(
-                  options: {desc: ["block.timestamp.time"], limit: 5}
-                  exchangeName: {is: "Pump Fun"}
-                ) {
-                  market {
-                    baseCurrency {
-                      address
-                    }
-                  }
-                }
-              }
-            }
-            """
-        }
-        response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
-        if response.status_code == 401:
-            logging.warning("🔁 Bitquery unauthorized, skipping all further attempts until restart.")
-            bitquery_unauthorized = True
-            return []
+        response = requests.get("https://pump.fun/api/recent")
         response.raise_for_status()
         data = response.json()
-        token_list = [d['market']['baseCurrency']['address'] for d in data['data']['solana']['dexTrades']]
+        token_list = [item["mint"] for item in data if "mint" in item]
         return token_list[:5]
     except Exception as e:
-        logging.error(f"❌ Bitquery failed: {e}. Trying fallback...")
+        logging.error(f"❌ Pump.fun API fallback failed: {e}")
         return []
 
 async def notify_discord(content=None, tx_sig=None):
