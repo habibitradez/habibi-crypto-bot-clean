@@ -64,6 +64,7 @@ bought_tokens = {}
 SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 SIMULATED_GAIN_CAP = 2.0
+bitquery_unauthorized = False
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -91,6 +92,10 @@ def should_prioritize_pool(pool_data):
     return True
 
 async def detect_meme_trend():
+    global bitquery_unauthorized
+    if bitquery_unauthorized:
+        logging.warning("⏩ Skipping Bitquery: Unauthorized previously detected.")
+        return []
     try:
         headers = {
             "Content-Type": "application/json",
@@ -116,7 +121,8 @@ async def detect_meme_trend():
         }
         response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
         if response.status_code == 401:
-            logging.warning("🔁 Bitquery unauthorized, skipping...")
+            logging.warning("🔁 Bitquery unauthorized, skipping all further attempts until restart.")
+            bitquery_unauthorized = True
             return []
         response.raise_for_status()
         data = response.json()
