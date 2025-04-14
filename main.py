@@ -93,7 +93,7 @@ def should_prioritize_pool(pool_data):
 
 async def detect_meme_trend():
     try:
-        response = requests.get("https://pump.fun/api/recent")
+        response = requests.get("https://pump.fun/api/v1/recent")
         response.raise_for_status()
         data = response.json()
         token_list = [item["mint"] for item in data if "mint" in item]
