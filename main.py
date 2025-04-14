@@ -64,15 +64,14 @@ SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 SIMULATED_GAIN_CAP = 2.0
 
-# ✅ Added TODO implementations (minimal logic; stubs for now)
 async def simulate_token_buy(address):
-    return True  # Placeholder: simulate check from GeckoTerminal or Dexscreener
+    return True
 
 def should_prioritize_pool(pool_data):
-    return True  # Placeholder: check if pool is viral
+    return True
 
 async def detect_meme_trend():
-    return []  # Placeholder: trending meme coin token addresses
+    return []
 
 def log_wallet_balance():
     try:
@@ -188,12 +187,26 @@ async def auto_seller():
     except Exception as e:
         logging.error(f"❌ Auto-sell error: {e}")
 
+@tasks.loop(seconds=60)
+async def sniper_loop():
+    try:
+        # TODO: Replace with real pump.fun or GeckoTerminal fetch
+        trending_tokens = await detect_meme_trend()
+        for token_address in trending_tokens:
+            if token_address not in bought_tokens:
+                if await simulate_token_buy(token_address):
+                    logging.info(f"🚀 Sniping {token_address}")
+                    real_buy_token(token_address, lamports=1000000)  # 0.001 SOL
+    except Exception as e:
+        logging.error(f"❌ Sniper loop error: {e}")
+
 @bot.event
 async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
     auto_seller.start()
+    sniper_loop.start()
     logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
 
 bot.run(DISCORD_TOKEN)
