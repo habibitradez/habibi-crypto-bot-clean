@@ -65,6 +65,15 @@ SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 SIMULATED_GAIN_CAP = 2.0
 
+def log_wallet_balance():
+    try:
+        kp = get_phantom_keypair()
+        lamports = solana_client.get_balance(kp.pubkey()).value
+        balance = lamports / 1_000_000_000
+        logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
+    except Exception as e:
+        logging.error(f"❌ Wallet balance check failed: {e}")
+
 async def simulate_token_buy(address):
     return True
 
@@ -82,8 +91,8 @@ async def detect_meme_trend():
             query MyQuery {
               solana {
                 dexTrades(
-                  options: {desc: ["block.timestamp.time"], limit: 5}
-                  exchangeName: {is: "Pump Fun"}
+                  options: {desc: [\"block.timestamp.time\"], limit: 5}
+                  exchangeName: {is: \"Pump Fun\"}
                 ) {
                   market {
                     baseCurrency {
@@ -128,6 +137,15 @@ async def notify_discord(content=None, tx_sig=None):
             await channel.send(msg)
     except Exception as e:
         logging.error(f"❌ Failed to send Discord notification: {e}")
+
+def get_phantom_keypair():
+    secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
+    if len(secret_bytes) == 64:
+        return Keypair.from_bytes(secret_bytes)
+    elif len(secret_bytes) == 32:
+        return Keypair.from_seed(secret_bytes)
+    else:
+        raise ValueError("Secret key must be 32 or 64 bytes.")
 
 def real_buy_token(to_addr: str, lamports: int):
     try:
