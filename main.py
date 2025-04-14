@@ -112,7 +112,7 @@ async def detect_meme_trend():
     except Exception as e:
         logging.error(f"❌ Bitquery failed: {e}. Trying GeckoTerminal fallback...")
         try:
-            url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
+            url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/new"
             params = {"page": 1, "per_page": 10}
             res = requests.get(url, params=params)
             res.raise_for_status()
