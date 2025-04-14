@@ -30,6 +30,7 @@ import base58
 import ssl
 import urllib3
 import time
+import telegram
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -45,6 +46,8 @@ DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 SHYFT_RPC_KEY = os.getenv("SHYFT_RPC_KEY")
 BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY", "H1FlmA.MxT2zi3Zm~~eohOFKv8")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 openai.api_key = OPENAI_API_KEY
 
 intents = discord.Intents.all()
@@ -59,6 +62,7 @@ rpc_endpoints = [
     "https://solana-mainnet.g.alchemy.com/v2/demo"
 ]
 solana_client = Client(rpc_endpoints[0])
+telegram_bot = telegram.Bot(token=TELEGRAM_TOKEN)
 
 bought_tokens = {}
 SELL_PROFIT_TRIGGER = 2.0
@@ -93,7 +97,7 @@ def should_prioritize_pool(pool_data):
 
 def fetch_pumpfun_recent():
     try:
-        url = "https://pump.fun/"
+        url = "https://pump.fun/mints"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
@@ -111,14 +115,14 @@ def fetch_pumpfun_recent():
 
 def fetch_gecko_trending():
     try:
-        url = "https://www.geckoterminal.com/solana"
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        pool_ids = set(re.findall(r"/solana/pools/([\w\-]+)", response.text))
-        return list(pool_ids)[:5]
+        data = response.json()
+        return [item["id"] for item in data.get("data", [])][:5]
     except Exception as e:
-        logging.error(f"❌ Failed to scrape GeckoTerminal trending pools: {e}")
+        logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
         return []
 
 async def detect_meme_trend():
@@ -137,8 +141,10 @@ async def notify_discord(content=None, tx_sig=None):
             if tx_sig:
                 msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
             await channel.send(msg)
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            telegram_bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=content)
     except Exception as e:
-        logging.error(f"❌ Failed to send Discord notification: {e}")
+        logging.error(f"❌ Failed to send notification: {e}")
 
 def fallback_rpc():
     global solana_client
