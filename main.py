@@ -112,12 +112,21 @@ async def detect_meme_trend():
     except Exception as e:
         logging.error(f"❌ Bitquery failed: {e}. Trying GeckoTerminal fallback...")
         try:
-            res = requests.get("https://api.geckoterminal.com/api/v2/networks/solana/pools/trending")
+            url = "https://api.geckoterminal.com/api/v2/networks/solana/pools"
+            params = {"page": 1, "per_page": 10}
+            res = requests.get(url, params=params)
             res.raise_for_status()
             gecko_data = res.json()
-            return [pool['attributes']['token_address'] for pool in gecko_data['data'][:5]]
+            token_list = []
+            for pool in gecko_data["data"]:
+                try:
+                    token_addr = pool["attributes"]["token_address"]
+                    token_list.append(token_addr)
+                except:
+                    continue
+            return token_list[:5]
         except Exception as ge:
-            logging.error(f"❌ GeckoTerminal fallback failed: {ge}")
+            logging.error(f"❌ Final GeckoTerminal fallback failed: {ge}")
             return []
 
 def fallback_rpc():
