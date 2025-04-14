@@ -93,31 +93,39 @@ def should_prioritize_pool(pool_data):
 
 def fetch_pumpfun_recent():
     try:
-        url = "https://pump.fun/api/projects?sort=new"
+        url = "https://pump.fun/"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        return [item["mint"] for item in data[:5] if "mint" in item]
+        soup = BeautifulSoup(response.text, "html.parser")
+        mints = []
+        for tag in soup.find_all("a", href=True):
+            if "/token/" in tag["href"]:
+                mint = tag["href"].split("/token/")[-1].split("?")[0]
+                if len(mint) >= 32:
+                    mints.append(mint)
+        return list(dict.fromkeys(mints))[:5]
     except Exception as e:
-        logging.error(f"❌ Failed to fetch pump.fun recent mints: {e}")
+        logging.error(f"❌ HTML scrape from Pump.fun failed: {e}")
         return []
 
 def fetch_gecko_trending():
     try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
-        response = requests.get(url, timeout=10)
+        url = "https://www.geckoterminal.com/solana"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        return [pool["id"] for pool in data.get("data", [])]
+        pool_ids = set(re.findall(r"/solana/pools/([\w\-]+)", response.text))
+        return list(pool_ids)[:5]
     except Exception as e:
-        logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
+        logging.error(f"❌ Failed to scrape GeckoTerminal trending pools: {e}")
         return []
 
 async def detect_meme_trend():
     pump_tokens = fetch_pumpfun_recent()
     gecko_tokens = fetch_gecko_trending()
-    combined = list(dict.fromkeys(pump_tokens + gecko_tokens))  # remove duplicates while preserving order
+    combined = list(dict.fromkeys(pump_tokens + gecko_tokens))
+    logging.info(f"🔥 Trending Tokens: {combined}")
     return combined[:5]
 
 async def notify_discord(content=None, tx_sig=None):
