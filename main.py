@@ -43,6 +43,7 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 SHYFT_RPC_KEY = os.getenv("SHYFT_RPC_KEY")
+BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
@@ -73,39 +74,35 @@ def should_prioritize_pool(pool_data):
 async def detect_meme_trend():
     try:
         headers = {
-            "accept": "application/json",
-            "User-Agent": "HabibiBot"
+            "Content-Type": "application/json",
+            "X-API-KEY": BITQUERY_API_KEY
         }
-        response = requests.get("https://pump.fun/api/pools", headers=headers)
+        query = {
+            "query": """
+            query MyQuery {
+              solana {
+                dexTrades(
+                  options: {desc: ["block.timestamp.time"], limit: 5}
+                  exchangeName: {is: "Pump Fun"}
+                ) {
+                  market {
+                    baseCurrency {
+                      address
+                    }
+                  }
+                }
+              }
+            }
+            """
+        }
+        response = requests.post("https://graphql.bitquery.io", json=query, headers=headers)
         response.raise_for_status()
         data = response.json()
-        token_list = []
-        for item in data:
-            if "token" in item:
-                token_list.append(item["token"])
-        return token_list[:5]  # Limit to latest 5 to avoid over-buying
+        token_list = [d['market']['baseCurrency']['address'] for d in data['data']['solana']['dexTrades']]
+        return token_list[:5]
     except Exception as e:
-        logging.error(f"❌ Failed to fetch from pump.fun: {e}")
+        logging.error(f"❌ Failed to fetch from Bitquery: {e}")
         return []
-
-def log_wallet_balance():
-    try:
-        kp = get_phantom_keypair()
-        lamports = solana_client.get_balance(kp.pubkey()).value
-        balance = lamports / 1_000_000_000
-        logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
-    except Exception as e:
-        logging.error(f"❌ Wallet balance check failed: {e}")
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
-def get_phantom_keypair():
-    secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
-    if len(secret_bytes) == 64:
-        return Keypair.from_bytes(secret_bytes)
-    elif len(secret_bytes) == 32:
-        return Keypair.from_seed(secret_bytes)
-    else:
-        raise ValueError("Secret key must be 32 or 64 bytes.")
 
 def fallback_rpc():
     global solana_client
