@@ -71,7 +71,22 @@ def should_prioritize_pool(pool_data):
     return True
 
 async def detect_meme_trend():
-    return []
+    try:
+        headers = {
+            "accept": "application/json",
+            "User-Agent": "HabibiBot"
+        }
+        response = requests.get("https://pump.fun/api/pools", headers=headers)
+        response.raise_for_status()
+        data = response.json()
+        token_list = []
+        for item in data:
+            if "token" in item:
+                token_list.append(item["token"])
+        return token_list[:5]  # Limit to latest 5 to avoid over-buying
+    except Exception as e:
+        logging.error(f"❌ Failed to fetch from pump.fun: {e}")
+        return []
 
 def log_wallet_balance():
     try:
@@ -190,7 +205,6 @@ async def auto_seller():
 @tasks.loop(seconds=60)
 async def sniper_loop():
     try:
-        # TODO: Replace with real pump.fun or GeckoTerminal fetch
         trending_tokens = await detect_meme_trend()
         for token_address in trending_tokens:
             if token_address not in bought_tokens:
