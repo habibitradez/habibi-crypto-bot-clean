@@ -194,4 +194,3 @@ async def on_ready():
     logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
 
 bot.run(DISCORD_TOKEN)
-
