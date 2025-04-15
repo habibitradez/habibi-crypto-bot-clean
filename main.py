@@ -93,8 +93,12 @@ def should_prioritize_pool(pool_data):
 
 def fetch_dexscreener_new():
     try:
-        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
-        headers = {"User-Agent": "Mozilla/5.0"}
+        url = "https://api.dexscreener.io/latest/dex/pairs/solana"
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+            "Referer": "https://dexscreener.com"
+        }
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json().get("pairs", [])
