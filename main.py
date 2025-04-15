@@ -24,9 +24,9 @@ from bs4 import BeautifulSoup
 from solana.rpc.api import Client
 from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction
 from solders.system_program import transfer, TransferParams
-from solders.message import Message
+from solders.message import MessageV0, v0
 import base58
 import ssl
 import urllib3
@@ -151,9 +151,9 @@ def real_buy_token(to_addr: str, lamports: int):
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash_resp = solana_client.get_latest_blockhash()
         blockhash = blockhash_resp.value.blockhash
-        msg = Message(instructions=[ix])
-        tx = Transaction(from_keypairs=[keypair], message=msg, recent_blockhash=blockhash)
-        resp = solana_client.send_transaction(tx, keypair)
+        msg = MessageV0(v0([ix]), [], blockhash)
+        tx = VersionedTransaction([keypair], msg)
+        resp = solana_client.send_transaction(tx)
         tx_sig = getattr(resp, "value", None)
         if isinstance(tx_sig, list):
             tx_sig = tx_sig[0]
