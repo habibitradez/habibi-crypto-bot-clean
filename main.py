@@ -27,7 +27,6 @@ from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solders.system_program import transfer, TransferParams
 from solders.message import MessageV0
-from solders.address_lookup_table_account import AddressLookupTableAccounts
 import base58
 import ssl
 import urllib3
@@ -153,10 +152,10 @@ def real_buy_token(to_addr: str, lamports: int):
         blockhash_resp = solana_client.get_latest_blockhash()
         blockhash = blockhash_resp.value.blockhash
         msg = MessageV0.from_parts(
-            payer=keypair.pubkey(),
-            instructions=[ix],
-            recent_blockhash=blockhash,
-            address_lookup_tables=AddressLookupTableAccounts([])
+            keypair.pubkey(),
+            [ix],
+            blockhash,
+            []
         )
         tx = VersionedTransaction(message=msg, signers=[keypair])
         resp = solana_client.send_transaction(tx)
