@@ -91,38 +91,22 @@ async def simulate_token_buy(address):
 def should_prioritize_pool(pool_data):
     return True
 
-def fetch_pumpfun_recent():
+def fetch_dexscreener_new():
     try:
-        url = "https://pump.fun/api/projects?sort=new"
+        url = "https://api.dexscreener.com/latest/dex/pairs/solana"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        mints = [item.get("mint", item.get("address")) for item in data if "mint" in item or "address" in item]
-        return list(dict.fromkeys(mints))[:5]
+        data = response.json().get("pairs", [])
+        return [p["pairAddress"] for p in data if "pairAddress" in p][:5]
     except Exception as e:
-        logging.error(f"❌ Pump.fun API fetch failed: {e}")
-        return []
-
-def fetch_gecko_trending():
-    try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        pools = data.get("data", [])
-        return [p.get("id") for p in pools if "id" in p][:5]
-    except Exception as e:
-        logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
+        logging.error(f"❌ DexScreener fetch failed: {e}")
         return []
 
 async def detect_meme_trend():
-    pump_tokens = fetch_pumpfun_recent()
-    gecko_tokens = fetch_gecko_trending()
-    combined = list(dict.fromkeys(pump_tokens + gecko_tokens))
-    logging.info(f"🔥 Trending Tokens: {combined}")
-    return combined[:5]
+    dexscreener_tokens = fetch_dexscreener_new()
+    logging.info(f"🔥 Trending Tokens: {dexscreener_tokens}")
+    return dexscreener_tokens
 
 async def notify_discord(content=None, tx_sig=None):
     try:
