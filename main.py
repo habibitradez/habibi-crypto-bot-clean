@@ -149,11 +149,7 @@ def real_buy_token(to_addr: str, lamports: int):
         recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction(
-            fee_payer=keypair.pubkey(),
-            instructions=[ix],
-            recent_blockhash=blockhash
-        )
+        tx = Transaction(blockhash, [ix])
         tx = tx.sign([keypair])
         time.sleep(0.3)
         serialized_tx = tx.serialize()
@@ -198,3 +194,4 @@ async def on_ready():
     logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
 
 bot.run(DISCORD_TOKEN)
+
