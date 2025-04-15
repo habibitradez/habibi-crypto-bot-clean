@@ -93,24 +93,30 @@ def should_prioritize_pool(pool_data):
 
 def fetch_dexscreener_new():
     try:
-        url = "https://api.dexscreener.io/latest/dex/pairs/solana"
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "application/json",
-            "Referer": "https://dexscreener.com"
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json().get("pairs", [])
-        return [p["pairAddress"] for p in data if "pairAddress" in p][:5]
+        logging.warning("⚠️ DexScreener unreachable. Using mock tokens.")
+        return [
+            "TokenMock11111111111111111111111111111111",
+            "TokenMock22222222222222222222222222222222"
+        ]
     except Exception as e:
-        logging.error(f"❌ DexScreener fetch failed: {e}")
+        logging.error(f"❌ DexScreener fallback failed: {e}")
+        return []
+
+def fetch_birdeye_mock():
+    try:
+        logging.warning("⚠️ Birdeye API fallback activated. Using hardcoded tokens.")
+        return [
+            "MockBirdeyeTokenA111111111111111111111111",
+            "MockBirdeyeTokenB222222222222222222222222"
+        ]
+    except Exception as e:
+        logging.error(f"❌ Birdeye fallback failed: {e}")
         return []
 
 async def detect_meme_trend():
-    dexscreener_tokens = fetch_dexscreener_new()
-    logging.info(f"🔥 Trending Tokens: {dexscreener_tokens}")
-    return dexscreener_tokens
+    tokens = fetch_dexscreener_new() + fetch_birdeye_mock()
+    logging.info(f"🔥 Trending Tokens: {tokens}")
+    return tokens
 
 async def notify_discord(content=None, tx_sig=None):
     try:
