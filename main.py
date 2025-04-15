@@ -95,8 +95,8 @@ def fetch_dexscreener_new():
     try:
         logging.warning("⚠️ DexScreener unreachable. Using mock tokens.")
         return [
-            "TokenMock11111111111111111111111111111111",
-            "TokenMock22222222222222222222222222222222"
+            "6kShJbJRMKiGVGJ5qXfzQFQZmLqs7mVZywhMmhQXH6Ft",
+            "7AG7EXcFfRC6swfEGUJcFq3dThA8vjvduYjzvzRfqRFS"
         ]
     except Exception as e:
         logging.error(f"❌ DexScreener fallback failed: {e}")
@@ -106,8 +106,8 @@ def fetch_birdeye_mock():
     try:
         logging.warning("⚠️ Birdeye API fallback activated. Using hardcoded tokens.")
         return [
-            "MockBirdeyeTokenA111111111111111111111111",
-            "MockBirdeyeTokenB222222222222222222222222"
+            "5B8uKhNYa8B4uj8MUpu9mEtRcuPjhkN3EBgAj9cdCJWd",
+            "A1yP3uDgETo1kAfnjK92PmtFah4EFLkVW2KhtwGLUm8x"
         ]
     except Exception as e:
         logging.error(f"❌ Birdeye fallback failed: {e}")
