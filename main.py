@@ -93,12 +93,12 @@ def should_prioritize_pool(pool_data):
 
 def fetch_pumpfun_recent():
     try:
-        url = "https://pump.fun/api/v1/mints/recent"
+        url = "https://pump.fun/api/projects?sort=new"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        mints = [item["mint"] for item in data if "mint" in item]
+        mints = [item.get("mint", item.get("address")) for item in data if "mint" in item or "address" in item]
         return list(dict.fromkeys(mints))[:5]
     except Exception as e:
         logging.error(f"❌ Pump.fun API fetch failed: {e}")
@@ -106,13 +106,13 @@ def fetch_pumpfun_recent():
 
 def fetch_gecko_trending():
     try:
-        url = "https://api.geckoterminal.com/api/v2/search/trending"
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        pools = data.get("data", {}).get("attributes", {}).get("trending_pools", [])
-        return [p["id"] for p in pools if "id" in p][:5]
+        pools = data.get("data", [])
+        return [p.get("id") for p in pools if "id" in p][:5]
     except Exception as e:
         logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
         return []
