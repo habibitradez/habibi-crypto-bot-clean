@@ -149,7 +149,7 @@ def real_buy_token(to_addr: str, lamports: int):
         recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction(blockhash, [ix])
+        tx = Transaction(recent_blockhash=blockhash, instructions=[ix])
         tx = tx.sign([keypair])
         time.sleep(0.3)
         serialized_tx = tx.serialize()
