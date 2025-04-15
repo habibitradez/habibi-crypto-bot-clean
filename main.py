@@ -26,7 +26,7 @@ from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solders.system_program import transfer, TransferParams
-from solders.message import MessageV0, v0
+from solders.message import MessageV0
 from solders.hash import Hash
 import base58
 import ssl
