@@ -93,30 +93,26 @@ def should_prioritize_pool(pool_data):
 
 def fetch_pumpfun_recent():
     try:
-        url = "https://pump.fun/mints"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        mints = []
-        for tag in soup.find_all("a", href=True):
-            if "/token/" in tag["href"]:
-                mint = tag["href"].split("/token/")[-1].split("?")[0]
-                if len(mint) >= 32:
-                    mints.append(mint)
-        return list(dict.fromkeys(mints))[:5]
-    except Exception as e:
-        logging.error(f"❌ HTML scrape from Pump.fun failed: {e}")
-        return []
-
-def fetch_gecko_trending():
-    try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
+        url = "https://pump.fun/api/v1/mints/recent"
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
-        return [item["id"] for item in data.get("data", [])][:5]
+        mints = [item["mint"] for item in data if "mint" in item]
+        return list(dict.fromkeys(mints))[:5]
+    except Exception as e:
+        logging.error(f"❌ Pump.fun API fetch failed: {e}")
+        return []
+
+def fetch_gecko_trending():
+    try:
+        url = "https://api.geckoterminal.com/api/v2/search/trending"
+        headers = {"User-Agent": "Mozilla/5.0"}
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        pools = data.get("data", {}).get("attributes", {}).get("trending_pools", [])
+        return [p["id"] for p in pools if "id" in p][:5]
     except Exception as e:
         logging.error(f"❌ Failed to fetch GeckoTerminal trending pools: {e}")
         return []
