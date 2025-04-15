@@ -152,7 +152,7 @@ def real_buy_token(to_addr: str, lamports: int):
         blockhash_resp = solana_client.get_latest_blockhash()
         blockhash = blockhash_resp.value.blockhash
         msg = Message([ix], keypair.pubkey())
-        tx = VersionedTransaction(message=msg, signers=[keypair])
+        tx = VersionedTransaction([keypair], msg)
         resp = solana_client.send_transaction(tx)
         tx_sig = getattr(resp, "value", None)
         if isinstance(tx_sig, list):
