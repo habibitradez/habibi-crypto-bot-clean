@@ -26,7 +26,7 @@ from solders.pubkey import Pubkey as PublicKey
 from solders.keypair import Keypair
 from solders.transaction import VersionedTransaction
 from solders.system_program import transfer, TransferParams
-from solders.message import MessageV0
+from solders.message import Message
 import base58
 import ssl
 import urllib3
@@ -151,12 +151,7 @@ def real_buy_token(to_addr: str, lamports: int):
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash_resp = solana_client.get_latest_blockhash()
         blockhash = blockhash_resp.value.blockhash
-        msg = MessageV0.from_parts(
-            keypair.pubkey(),
-            [ix],
-            blockhash,
-            []
-        )
+        msg = Message([ix], keypair.pubkey(), blockhash)
         tx = VersionedTransaction(message=msg, signers=[keypair])
         resp = solana_client.send_transaction(tx)
         tx_sig = getattr(resp, "value", None)
