@@ -151,11 +151,12 @@ def real_buy_token(to_addr: str, lamports: int):
         recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash_resp = solana_client.get_latest_blockhash()
-        blockhash = blockhash_resp.value.blockhash  # keep as string
+        blockhash = blockhash_resp.value.blockhash
         msg = MessageV0.try_compile(
             payer=keypair.pubkey(),
             instructions=[ix],
-            recent_blockhash=blockhash
+            recent_blockhash=blockhash,
+            address_lookup_table_accounts=[]
         )
         tx = VersionedTransaction.from_message_and_signers(msg, [keypair])
         resp = solana_client.send_transaction(tx)
