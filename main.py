@@ -95,18 +95,19 @@ def should_prioritize_pool(pool_data):
 
 def fetch_trending_tokens():
     try:
-        pump_fun_tokens = requests.get("https://pump.fun/api/trending", timeout=5).json()
-        trending = [x.get("mint") for x in pump_fun_tokens if "mint" in x]
-        return trending[:10]
+        r = requests.get("https://pump.fun/api/trending", timeout=5)
+        if r.status_code != 200:
+            raise Exception(f"Status {r.status_code}")
+        data = r.json()
+        return [x.get("mint") for x in data if "mint" in x][:10]
     except Exception as e:
         logging.error(f"❌ Failed to fetch pump.fun trending tokens: {e}")
-        return []
+        return ["So11111111111111111111111111111111111111112"]  # fallback to wSOL
 
 def fetch_dexscreener():
     try:
         r = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
-        data = r.json()
-        return [pair['pairAddress'] for pair in data.get('pairs', [])[:10]]
+        return [pair['pairAddress'] for pair in r.json().get('pairs', [])[:10]]
     except Exception as e:
         logging.error(f"❌ DexScreener fetch failed: {e}")
         return []
@@ -114,8 +115,7 @@ def fetch_dexscreener():
 def fetch_birdeye():
     try:
         r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
-        data = r.json()
-        return [token['address'] for token in data.get('data', [])[:10]]
+        return [token['address'] for token in r.json().get('data', [])[:10]]
     except Exception as e:
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
@@ -156,14 +156,8 @@ def real_buy_token(to_addr: str, lamports: int):
         keypair = get_phantom_keypair()
         recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
         ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash_resp = solana_client.get_latest_blockhash()
-        blockhash = blockhash_resp.value.blockhash
-        msg = MessageV0.try_compile(
-            payer=keypair.pubkey(),
-            instructions=[ix],
-            recent_blockhash=blockhash,
-            address_lookup_table_accounts=[]
-        )
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        msg = MessageV0.try_compile(payer=keypair.pubkey(), instructions=[ix], recent_blockhash=blockhash, address_lookup_table_accounts=[])
         tx = VersionedTransaction(msg, [keypair])
         resp = solana_client.send_transaction(tx)
         tx_sig = getattr(resp, "value", None)
