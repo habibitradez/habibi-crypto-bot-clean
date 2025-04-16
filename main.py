@@ -124,14 +124,23 @@ def real_buy_token(to_addr: str, lamports: int):
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
+        logging.info(f"📊 Quote fetched: {quote}")
+
+        if not quote.get("routes"):
+            raise Exception("No swap route available")
+
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
         }).json()
+        logging.info(f"🔄 Swap generated: {swap}")
+
         tx = VersionedTransaction.from_bytes(base58.b58decode(swap["swapTransaction"]))
         tx.sign([kp])
+        logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
+
         sig = solana_client.send_transaction(tx)
         logging.info(f"✅ Buy tx: {sig}")
         return sig
@@ -145,14 +154,23 @@ def real_sell_token(to_addr: str):
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
+        logging.info(f"📊 Quote fetched: {quote}")
+
+        if not quote.get("routes"):
+            raise Exception("No swap route available")
+
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
         }).json()
+        logging.info(f"🔄 Swap generated: {swap}")
+
         tx = VersionedTransaction.from_bytes(base58.b58decode(swap["swapTransaction"]))
         tx.sign([kp])
+        logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
+
         sig = solana_client.send_transaction(tx)
         logging.info(f"✅ Sell tx: {sig}")
         return sig
