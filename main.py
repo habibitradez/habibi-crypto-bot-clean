@@ -87,31 +87,6 @@ def log_wallet_balance():
     except Exception as e:
         logging.error(f"❌ Wallet balance check failed: {e}")
 
-async def simulate_token_buy(address):
-    return True
-
-def should_prioritize_pool(pool_data):
-    return True
-
-def fetch_trending_tokens():
-    try:
-        r = requests.get("https://pump.fun/api/trending", timeout=5)
-        if r.status_code != 200:
-            raise Exception(f"Status {r.status_code}")
-        data = r.json()
-        return [x.get("mint") for x in data if "mint" in x][:10]
-    except Exception as e:
-        logging.error(f"❌ Failed to fetch pump.fun trending tokens: {e}")
-        return []
-
-def fetch_dexscreener():
-    try:
-        r = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
-        return [pair['pairAddress'] for pair in r.json().get('pairs', [])[:10]]
-    except Exception as e:
-        logging.error(f"❌ DexScreener fetch failed: {e}")
-        return []
-
 def fetch_birdeye():
     try:
         r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
@@ -121,22 +96,9 @@ def fetch_birdeye():
         return []
 
 async def detect_meme_trend():
-    tokens = fetch_trending_tokens() + fetch_dexscreener() + fetch_birdeye()
-    tokens = list(set(tokens))
+    tokens = fetch_birdeye()
     logging.info(f"🔥 Trending Tokens: {tokens}")
     return tokens
-
-async def notify_discord(content=None, tx_sig=None):
-    try:
-        await bot.wait_until_ready()
-        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-        if channel and content:
-            msg = content
-            if tx_sig:
-                msg += f"\n🔗 [View Transaction](https://solscan.io/tx/{tx_sig})"
-            await channel.send(msg)
-    except Exception as e:
-        logging.error(f"❌ Failed to send notification: {e}")
 
 def fallback_rpc():
     global solana_client
@@ -191,38 +153,25 @@ def real_sell_token(to_addr: str):
         fallback_rpc()
         return None
 
-@tasks.loop(seconds=60)
-async def sniper_loop():
-    try:
-        trending_tokens = await detect_meme_trend()
-        for token_address in trending_tokens:
-            if token_address not in bought_tokens:
-                if await simulate_token_buy(token_address):
-                    logging.info(f"🚀 Sniping {token_address}")
-                    await asyncio.sleep(2)
-                    real_buy_token(token_address, lamports=1000000)
-    except Exception as e:
-        logging.error(f"❌ Sniper loop error: {e}")
+@bot.command()
+async def buy(ctx, token: str):
+    await ctx.send(f"Buying {token}...")
+    sig = real_buy_token(token, 1000000)
+    if sig:
+        await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
 
-@tasks.loop(seconds=30)
-async def sell_monitor():
-    try:
-        for token, data in list(bought_tokens.items()):
-            simulated_price = random.uniform(1.0, 3.0) * data["buy_price"]
-            if simulated_price >= SELL_PROFIT_TRIGGER * data["buy_price"]:
-                logging.info(f"💰 Selling {token} for 2x gain")
-                real_sell_token(token)
-                del bought_tokens[token]
-    except Exception as e:
-        logging.error(f"❌ Sell monitor error: {e}")
+@bot.command()
+async def sell(ctx, token: str):
+    await ctx.send(f"Selling {token}...")
+    sig = real_sell_token(token)
+    if sig:
+        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
 
 @bot.event
 async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
-    sniper_loop.start()
-    sell_monitor.start()
-    logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
+    logging.info("🚀 Features loaded: real buy/sell via Jupiter API, Discord buy/sell commands active")
 
 bot.run(DISCORD_TOKEN)
