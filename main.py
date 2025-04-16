@@ -179,6 +179,28 @@ def real_buy_token(to_addr: str, lamports: int):
         fallback_rpc()
         return None
 
+def real_sell_token(to_addr: str):
+    try:
+        keypair = get_phantom_keypair()
+        recipient = PublicKey.from_string(keypair.pubkey())
+        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=500000))
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        msg = MessageV0.try_compile(payer=keypair.pubkey(), instructions=[ix], recent_blockhash=blockhash, address_lookup_table_accounts=[])
+        tx = VersionedTransaction(msg, [keypair])
+        resp = solana_client.send_transaction(tx)
+        tx_sig = getattr(resp, "value", None)
+        if isinstance(tx_sig, list):
+            tx_sig = tx_sig[0]
+        if not isinstance(tx_sig, str):
+            raise ValueError(f"Invalid tx signature: {tx_sig}")
+        logging.info(f"📉 Sell TX: {tx_sig}")
+        asyncio.create_task(notify_discord(f"💰 Sold token: {to_addr}", tx_sig))
+        return tx_sig
+    except Exception as e:
+        logging.error(f"❌ Sell failed: {e}")
+        fallback_rpc()
+        return None
+
 @tasks.loop(seconds=60)
 async def sniper_loop():
     try:
@@ -199,7 +221,7 @@ async def sell_monitor():
             simulated_price = random.uniform(1.0, 3.0) * data["buy_price"]
             if simulated_price >= SELL_PROFIT_TRIGGER * data["buy_price"]:
                 logging.info(f"💰 Selling {token} for 2x gain")
-                asyncio.create_task(notify_discord(f"💰 Sold {token} for profit!"))
+                real_sell_token(token)
                 del bought_tokens[token]
     except Exception as e:
         logging.error(f"❌ Sell monitor error: {e}")
