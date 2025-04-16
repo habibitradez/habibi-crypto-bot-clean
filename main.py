@@ -158,7 +158,7 @@ def real_buy_token(to_addr: str, lamports: int):
             recent_blockhash=blockhash,
             address_lookup_table_accounts=[]
         )
-        tx = VersionedTransaction(msg, [keypair])  # ✅ FIXED LINE
+        tx = VersionedTransaction(msg, [keypair])
         resp = solana_client.send_transaction(tx)
         tx_sig = getattr(resp, "value", None)
         if isinstance(tx_sig, list):
@@ -187,7 +187,8 @@ async def sniper_loop():
             if token_address not in bought_tokens:
                 if await simulate_token_buy(token_address):
                     logging.info(f"🚀 Sniping {token_address}")
-                    real_buy_token(token_address, lamports=1000000)  # 0.001 SOL
+                    await asyncio.sleep(2)  # ⏱️ throttle between snipes
+                    real_buy_token(token_address, lamports=1000000)
     except Exception as e:
         logging.error(f"❌ Sniper loop error: {e}")
 
