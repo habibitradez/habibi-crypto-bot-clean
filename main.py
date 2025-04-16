@@ -144,7 +144,7 @@ def real_buy_token(to_addr: str, lamports: int):
         }).json()
         logging.info(f"🔄 Swap generated: {swap}")
 
-        tx = VersionedTransaction.from_bytes(decode_transaction_blob(swap["swapTransaction"]))
+        tx = VersionedTransaction.deserialize(decode_transaction_blob(swap["swapTransaction"]))
         tx.sign([kp])
         logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
 
@@ -174,7 +174,7 @@ def real_sell_token(to_addr: str):
         }).json()
         logging.info(f"🔄 Swap generated: {swap}")
 
-        tx = VersionedTransaction.from_bytes(decode_transaction_blob(swap["swapTransaction"]))
+        tx = VersionedTransaction.deserialize(decode_transaction_blob(swap["swapTransaction"]))
         tx.sign([kp])
         logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
 
