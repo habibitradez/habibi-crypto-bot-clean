@@ -155,8 +155,7 @@ def real_buy_token(to_addr: str, lamports: int):
         msg = MessageV0.try_compile(
             payer=keypair.pubkey(),
             instructions=[ix],
-            address_lookup_tables=[],
-            recent_blockhash=blockhash  # pass as string, not Hash object
+            recent_blockhash=blockhash
         )
         tx = VersionedTransaction.from_message_and_signers(msg, [keypair])
         resp = solana_client.send_transaction(tx)
@@ -200,4 +199,3 @@ async def on_ready():
     logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
 
 bot.run(DISCORD_TOKEN)
-
