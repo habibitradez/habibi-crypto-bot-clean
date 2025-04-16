@@ -102,7 +102,7 @@ def fetch_trending_tokens():
         return [x.get("mint") for x in data if "mint" in x][:10]
     except Exception as e:
         logging.error(f"❌ Failed to fetch pump.fun trending tokens: {e}")
-        return ["So11111111111111111111111111111111111111112"]
+        return []
 
 def fetch_dexscreener():
     try:
@@ -153,27 +153,19 @@ def fallback_rpc():
 
 def real_buy_token(to_addr: str, lamports: int):
     try:
-        keypair = get_phantom_keypair()
-        recipient = PublicKey.from_string(to_addr.replace("solana_", ""))
-        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = MessageV0.try_compile(payer=keypair.pubkey(), instructions=[ix], recent_blockhash=blockhash, address_lookup_table_accounts=[])
-        tx = VersionedTransaction(msg, [keypair])
-        resp = solana_client.send_transaction(tx)
-        tx_sig = getattr(resp, "value", None)
-        if isinstance(tx_sig, list):
-            tx_sig = tx_sig[0]
-        if not isinstance(tx_sig, str):
-            raise ValueError(f"Invalid tx signature: {tx_sig}")
-        logging.info(f"📈 Buy TX: {tx_sig}")
-        asyncio.create_task(notify_discord(f"✅ Bought token: {to_addr}", tx_sig))
-        bought_tokens[to_addr] = {
-            "amount": lamports,
-            "buy_price": lamports / 1e9,
-            "buy_sig": tx_sig,
-            "buy_time": time.time()
-        }
-        return tx_sig
+        kp = get_phantom_keypair()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
+        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
+            "userPublicKey": str(kp.pubkey()),
+            "wrapUnwrapSOL": True,
+            "quoteResponse": quote,
+            "computeUnitPriceMicroLamports": 0
+        }).json()
+        tx = VersionedTransaction.from_bytes(base58.b58decode(swap["swapTransaction"]))
+        tx.sign([kp])
+        sig = solana_client.send_transaction(tx)
+        logging.info(f"✅ Buy tx: {sig}")
+        return sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
         fallback_rpc()
@@ -181,21 +173,19 @@ def real_buy_token(to_addr: str, lamports: int):
 
 def real_sell_token(to_addr: str):
     try:
-        keypair = get_phantom_keypair()
-        recipient = PublicKey.from_string(keypair.pubkey())
-        ix = transfer(TransferParams(from_pubkey=keypair.pubkey(), to_pubkey=recipient, lamports=500000))
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = MessageV0.try_compile(payer=keypair.pubkey(), instructions=[ix], recent_blockhash=blockhash, address_lookup_table_accounts=[])
-        tx = VersionedTransaction(msg, [keypair])
-        resp = solana_client.send_transaction(tx)
-        tx_sig = getattr(resp, "value", None)
-        if isinstance(tx_sig, list):
-            tx_sig = tx_sig[0]
-        if not isinstance(tx_sig, str):
-            raise ValueError(f"Invalid tx signature: {tx_sig}")
-        logging.info(f"📉 Sell TX: {tx_sig}")
-        asyncio.create_task(notify_discord(f"💰 Sold token: {to_addr}", tx_sig))
-        return tx_sig
+        kp = get_phantom_keypair()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
+        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
+            "userPublicKey": str(kp.pubkey()),
+            "wrapUnwrapSOL": True,
+            "quoteResponse": quote,
+            "computeUnitPriceMicroLamports": 0
+        }).json()
+        tx = VersionedTransaction.from_bytes(base58.b58decode(swap["swapTransaction"]))
+        tx.sign([kp])
+        sig = solana_client.send_transaction(tx)
+        logging.info(f"✅ Sell tx: {sig}")
+        return sig
     except Exception as e:
         logging.error(f"❌ Sell failed: {e}")
         fallback_rpc()
