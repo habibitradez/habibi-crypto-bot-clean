@@ -126,7 +126,7 @@ def real_buy_token(to_addr: str, lamports: int):
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
         logging.info(f"📊 Quote fetched: {quote}")
 
-        if not quote.get("routes"):
+        if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
@@ -156,7 +156,7 @@ def real_sell_token(to_addr: str):
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
         logging.info(f"📊 Quote fetched: {quote}")
 
-        if not quote.get("routes"):
+        if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
