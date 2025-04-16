@@ -93,30 +93,36 @@ async def simulate_token_buy(address):
 def should_prioritize_pool(pool_data):
     return True
 
-def fetch_dexscreener_new():
+def fetch_trending_tokens():
     try:
-        logging.warning("⚠️ DexScreener unreachable. Using mock tokens.")
-        return [
-            "6kShJbJRMKiGVGJ5qXfzQFQZmLqs7mVZywhMmhQXH6Ft",
-            "7AG7EXcFfRC6swfEGUJcFq3dThA8vjvduYjzvzRfqRFS"
-        ]
+        pump_fun_tokens = requests.get("https://pump.fun/api/trending", timeout=5).json()
+        trending = [x.get("mint") for x in pump_fun_tokens if "mint" in x]
+        return trending[:10]
     except Exception as e:
-        logging.error(f"❌ DexScreener fallback failed: {e}")
+        logging.error(f"❌ Failed to fetch pump.fun trending tokens: {e}")
         return []
 
-def fetch_birdeye_mock():
+def fetch_dexscreener():
     try:
-        logging.warning("⚠️ Birdeye API fallback activated. Using hardcoded tokens.")
-        return [
-            "5B8uKhNYa8B4uj8MUpu9mEtRcuPjhkN3EBgAj9cdCJWd",
-            "A1yP3uDgETo1kAfnjK92PmtFah4EFLkVW2KhtwGLUm8x"
-        ]
+        r = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
+        data = r.json()
+        return [pair['pairAddress'] for pair in data.get('pairs', [])[:10]]
     except Exception as e:
-        logging.error(f"❌ Birdeye fallback failed: {e}")
+        logging.error(f"❌ DexScreener fetch failed: {e}")
+        return []
+
+def fetch_birdeye():
+    try:
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
+        data = r.json()
+        return [token['address'] for token in data.get('data', [])[:10]]
+    except Exception as e:
+        logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
 
 async def detect_meme_trend():
-    tokens = fetch_dexscreener_new() + fetch_birdeye_mock()
+    tokens = fetch_trending_tokens() + fetch_dexscreener() + fetch_birdeye()
+    tokens = list(set(tokens))
     logging.info(f"🔥 Trending Tokens: {tokens}")
     return tokens
 
@@ -187,7 +193,7 @@ async def sniper_loop():
             if token_address not in bought_tokens:
                 if await simulate_token_buy(token_address):
                     logging.info(f"🚀 Sniping {token_address}")
-                    await asyncio.sleep(2)  # ⏱️ throttle between snipes
+                    await asyncio.sleep(2)
                     real_buy_token(token_address, lamports=1000000)
     except Exception as e:
         logging.error(f"❌ Sniper loop error: {e}")
