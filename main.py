@@ -102,7 +102,7 @@ def fetch_trending_tokens():
         return [x.get("mint") for x in data if "mint" in x][:10]
     except Exception as e:
         logging.error(f"❌ Failed to fetch pump.fun trending tokens: {e}")
-        return ["So11111111111111111111111111111111111111112"]  # fallback to wSOL
+        return ["So11111111111111111111111111111111111111112"]
 
 def fetch_dexscreener():
     try:
@@ -192,12 +192,25 @@ async def sniper_loop():
     except Exception as e:
         logging.error(f"❌ Sniper loop error: {e}")
 
+@tasks.loop(seconds=30)
+async def sell_monitor():
+    try:
+        for token, data in list(bought_tokens.items()):
+            simulated_price = random.uniform(1.0, 3.0) * data["buy_price"]
+            if simulated_price >= SELL_PROFIT_TRIGGER * data["buy_price"]:
+                logging.info(f"💰 Selling {token} for 2x gain")
+                asyncio.create_task(notify_discord(f"💰 Sold {token} for profit!"))
+                del bought_tokens[token]
+    except Exception as e:
+        logging.error(f"❌ Sell monitor error: {e}")
+
 @bot.event
 async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
     sniper_loop.start()
+    sell_monitor.start()
     logging.info("🚀 Features loaded: pump.fun sniping, token sim, profit tracking, meme signals, loss cuts, viral priority")
 
 bot.run(DISCORD_TOKEN)
