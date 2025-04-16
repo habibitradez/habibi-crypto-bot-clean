@@ -113,9 +113,16 @@ def fallback_rpc():
         except Exception as e:
             logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
 
+def sanitize_token_address(addr: str) -> str:
+    addr = addr.strip()
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", addr):
+        raise ValueError("Invalid token address")
+    return addr
+
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
+        to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
@@ -136,6 +143,7 @@ def real_buy_token(to_addr: str, lamports: int):
 def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
+        to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
@@ -155,17 +163,27 @@ def real_sell_token(to_addr: str):
 
 @bot.command()
 async def buy(ctx, token: str):
-    await ctx.send(f"Buying {token}...")
-    sig = real_buy_token(token, 1000000)
-    if sig:
-        await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
+    try:
+        await ctx.send(f"Buying {token}...")
+        sig = real_buy_token(token, 1000000)
+        if sig:
+            await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
+        else:
+            await ctx.send(f"❌ Buy failed for {token}. Check logs for details.")
+    except Exception as e:
+        await ctx.send(f"🚫 Error: {e}")
 
 @bot.command()
 async def sell(ctx, token: str):
-    await ctx.send(f"Selling {token}...")
-    sig = real_sell_token(token)
-    if sig:
-        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+    try:
+        await ctx.send(f"Selling {token}...")
+        sig = real_sell_token(token)
+        if sig:
+            await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+        else:
+            await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
+    except Exception as e:
+        await ctx.send(f"🚫 Error: {e}")
 
 @bot.event
 async def on_ready():
