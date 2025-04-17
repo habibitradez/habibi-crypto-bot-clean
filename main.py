@@ -23,7 +23,7 @@ import random
 from bs4 import BeautifulSoup
 from solana.rpc.api import Client
 from solders.transaction import VersionedTransaction
-from solana.publickey import PublicKey
+from solders.pubkey import Pubkey
 from solana.keypair import Keypair
 from solana.system_program import TransferParams, transfer
 from solana.message import Message
@@ -91,10 +91,17 @@ def fetch_birdeye():
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
 
-async def detect_meme_trend():
-    tokens = fetch_birdeye()
-    logging.info(f"🔥 Trending Tokens: {tokens}")
-    return tokens
+async def auto_snipe():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        tokens = fetch_birdeye()
+        for token in tokens:
+            if token not in bought_tokens:
+                logging.info(f"🤖 Sniping token: {token}")
+                sig = real_buy_token(token, 1000000)
+                if sig:
+                    bought_tokens[token] = {'buy_sig': sig, 'buy_time': datetime.utcnow()}
+        await asyncio.sleep(60)
 
 def fallback_rpc():
     global solana_client
@@ -204,6 +211,7 @@ async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
-    logging.info("🚀 Features loaded: real buy/sell via Jupiter API, Discord buy/sell commands active")
+    bot.loop.create_task(auto_snipe())
+    logging.info("🚀 Features loaded: real buy/sell via Jupiter API, Discord buy/sell commands active, auto-sniping enabled")
 
 bot.run(DISCORD_TOKEN)
