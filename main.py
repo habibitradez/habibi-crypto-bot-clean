@@ -29,6 +29,7 @@ import base64
 import ssl
 import urllib3
 import time
+import matplotlib.pyplot as plt
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -75,6 +76,25 @@ def log_trade(entry):
 
 def summarize_daily_profit():
     logging.info(f"📊 Estimated Daily Profit So Far: ${daily_profit:.2f}")
+
+def generate_profit_chart():
+    if not trade_log:
+        return None
+    timestamps = [entry['timestamp'] for entry in trade_log if entry['type'] == 'sell']
+    profits = [entry['profit'] for entry in trade_log if entry['type'] == 'sell']
+    if not timestamps or not profits:
+        return None
+    cumulative = [sum(profits[:i+1]) for i in range(len(profits))]
+    plt.figure(figsize=(10, 4))
+    plt.plot(timestamps, cumulative, marker='o')
+    plt.title("Daily Profit from Trades")
+    plt.xlabel("Time")
+    plt.ylabel("Cumulative Profit ($)")
+    plt.grid(True)
+    filename = "daily_profit.png"
+    plt.savefig(filename)
+    plt.close()
+    return filename
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -223,12 +243,25 @@ async def sell(ctx, token: str):
     else:
         await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
 
+@bot.command()
+async def profit(ctx):
+    await ctx.send(f"📊 Today's profit so far: ${daily_profit:.2f}")
+
+@tasks.loop(time=datetime.utcnow().replace(hour=23, minute=59, second=0, microsecond=0))
+async def dump_daily_chart():
+    file = generate_profit_chart()
+    if file and DISCORD_NEWS_CHANNEL_ID:
+        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+        if channel:
+            await channel.send("📈 Here's the full profit chart for today:", file=discord.File(file))
+
 @bot.event
 async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
     bot.loop.create_task(auto_snipe())
+    dump_daily_chart.start()
     logging.info("🚀 Features loaded: real buy/sell via Jupiter API, Discord buy/sell commands active, auto-sniping enabled")
 
 bot.run(DISCORD_TOKEN)
