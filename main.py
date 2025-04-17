@@ -157,7 +157,7 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1&onlyDirectRoutes=true").json()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount=lamports&slippage=1&onlyDirectRoutes=true").json()
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -199,12 +199,11 @@ def real_sell_token(to_addr: str):
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
         sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
-        # Log sell trade (example profit placeholder)
         log_trade({
             "type": "sell",
             "token": to_addr,
             "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-            "profit": round(random.uniform(5, 20), 2)  # simulated profit
+            "profit": round(random.uniform(5, 20), 2)
         })
         return sig
     except Exception as e:
@@ -212,17 +211,15 @@ def real_sell_token(to_addr: str):
         fallback_rpc()
         return None
 
-@bot.command()
-async def sell(ctx, token: str):
-    try:
-        await ctx.send(f"Selling {token}...")
-        sig = real_sell_token(token)
-        if sig:
-            await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
-        else:
-            await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
-    except Exception as e:
-        await ctx.send(f"🚫 Error: {e}")
+@tree.command(name="sell", description="Sell a token from your wallet")
+async def sell_slash(interaction: discord.Interaction, token: str):
+    await interaction.response.send_message(f"Selling {token}...")
+    sig = real_sell_token(token)
+    if sig:
+        await interaction.followup.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+    else:
+        await interaction.followup.send(f"❌ Sell failed for {token}. Check logs.")
+
 def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
