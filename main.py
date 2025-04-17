@@ -99,6 +99,7 @@ def generate_profit_chart():
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
     secret_bytes = b58decode(PHANTOM_SECRET_KEY.strip())
+    assert len(secret_bytes) == 64, "Keypair length must be 64 bytes"
     return Keypair.from_bytes(secret_bytes)
 
 def log_wallet_balance():
@@ -163,11 +164,13 @@ def real_buy_token(to_addr: str, lamports: int):
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0
+            "computeUnitPriceMicroLamports": 0,
+            "asLegacyTransaction": True
         }).json()
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        sig = solana_client.send_raw_transaction(tx_data)
+        logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
+        sig = solana_client.send_raw_transaction(tx_data, opts={"skip_preflight": True})
         return sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
@@ -186,17 +189,18 @@ def real_sell_token(to_addr: str):
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0
+            "computeUnitPriceMicroLamports": 0,
+            "asLegacyTransaction": True
         }).json()
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        sig = solana_client.send_raw_transaction(tx_data)
+        logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
+        sig = solana_client.send_raw_transaction(tx_data, opts={"skip_preflight": True})
         return sig
     except Exception as e:
         logging.error(f"❌ Sell failed: {e}")
         fallback_rpc()
         return None
-
 async def auto_snipe():
     await bot.wait_until_ready()
     while not bot.is_closed():
