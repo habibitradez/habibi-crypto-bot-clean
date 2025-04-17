@@ -96,14 +96,30 @@ async def auto_snipe():
                 logging.info(f"🤖 Sniping token: {token}")
                 sig = real_buy_token(token, 1000000)
                 if sig:
-                    bought_tokens[token] = {'buy_sig': sig, 'buy_time': datetime.utcnow()}
+                    bought_tokens[token] = {
+                        'buy_sig': sig,
+                        'buy_time': datetime.utcnow(),
+                        'token': token,
+                        'initial_price': get_token_price(token)
+                    }
             else:
-                if datetime.utcnow() - bought_tokens[token]['buy_time'] > timedelta(minutes=3):
-                    logging.info(f"💸 Auto-selling {token} after 3 minutes")
+                price_now = get_token_price(token)
+                token_data = bought_tokens[token]
+                if price_now and token_data['initial_price'] and price_now >= token_data['initial_price'] * SELL_PROFIT_TRIGGER:
+                    logging.info(f"📈 Token {token} hit 2x, selling now")
                     sell_sig = real_sell_token(token)
                     if sell_sig:
                         logging.info(f"✅ Auto-sold {token} with tx: {sell_sig}")
+                        del bought_tokens[token]
         await asyncio.sleep(60)
+
+def get_token_price(token: str):
+    try:
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token}&amount=1000000").json()
+        return float(quote['outAmount']) / 1_000_000 if 'outAmount' in quote else None
+    except Exception as e:
+        logging.warning(f"⚠️ Price fetch failed for {token}: {e}")
+        return None
 
 def fallback_rpc():
     global solana_client
