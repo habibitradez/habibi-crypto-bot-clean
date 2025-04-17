@@ -28,7 +28,6 @@ from solders.transaction import VersionedTransaction
 from solders.system_program import transfer, TransferParams
 from solders.message import MessageV0
 from solders.hash import Hash
-from solders.transaction_status import EncodedTransaction
 import base58
 import base64
 import ssl
@@ -150,7 +149,7 @@ def real_buy_token(to_addr: str, lamports: int):
         tx.sign([kp])
         logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
 
-        sig = solana_client.send_transaction(tx)
+        sig = solana_client.send_raw_transaction(tx.serialize())
         logging.info(f"✅ Buy tx: {sig}")
         return sig
     except Exception as e:
@@ -181,7 +180,7 @@ def real_sell_token(to_addr: str):
         tx.sign([kp])
         logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
 
-        sig = solana_client.send_transaction(tx)
+        sig = solana_client.send_raw_transaction(tx.serialize())
         logging.info(f"✅ Sell tx: {sig}")
         return sig
     except Exception as e:
