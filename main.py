@@ -22,7 +22,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import random
 from bs4 import BeautifulSoup
 from solana.rpc.api import Client
-from solana.transaction import Transaction
+from solders.transaction import VersionedTransaction
 from solana.publickey import PublicKey
 from solana.keypair import Keypair
 from solana.system_program import TransferParams, transfer
@@ -140,11 +140,7 @@ def real_buy_token(to_addr: str, lamports: int):
         logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        tx = Transaction.deserialize(tx_data)
-        tx.sign(kp)
-        logging.info(f"📝 TX signed: {b58encode(tx.serialize()).decode()}")
-
-        sig = solana_client.send_raw_transaction(tx.serialize())
+        sig = solana_client.send_raw_transaction(tx_data)
         logging.info(f"✅ Buy tx: {sig}")
         return sig
     except Exception as e:
@@ -171,11 +167,7 @@ def real_sell_token(to_addr: str):
         logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        tx = Transaction.deserialize(tx_data)
-        tx.sign(kp)
-        logging.info(f"📝 TX signed: {b58encode(tx.serialize()).decode()}")
-
-        sig = solana_client.send_raw_transaction(tx.serialize())
+        sig = solana_client.send_raw_transaction(tx_data)
         logging.info(f"✅ Sell tx: {sig}")
         return sig
     except Exception as e:
