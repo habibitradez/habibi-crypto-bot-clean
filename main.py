@@ -22,13 +22,13 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import random
 from bs4 import BeautifulSoup
 from solana.rpc.api import Client
-from solders.pubkey import Pubkey as PublicKey
-from solders.keypair import Keypair
-from solders.transaction import VersionedTransaction
-from solders.system_program import transfer, TransferParams
-from solders.message import MessageV0
-from solders.hash import Hash
-import base58
+from solana.transaction import Transaction
+from solana.publickey import PublicKey
+from solana.keypair import Keypair
+from solana.system_program import TransferParams, transfer
+from solana.message import Message
+from solana.rpc.types import TxOpts
+from base58 import b58decode, b58encode
 import base64
 import ssl
 import urllib3
@@ -71,18 +71,13 @@ bitquery_unauthorized = False
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
-    secret_bytes = base58.b58decode(PHANTOM_SECRET_KEY.strip())
-    if len(secret_bytes) == 64:
-        return Keypair.from_bytes(secret_bytes)
-    elif len(secret_bytes) == 32:
-        return Keypair.from_seed(secret_bytes)
-    else:
-        raise ValueError("Secret key must be 32 or 64 bytes.")
+    secret_bytes = b58decode(PHANTOM_SECRET_KEY.strip())
+    return Keypair.from_secret_key(secret_bytes)
 
 def log_wallet_balance():
     try:
         kp = get_phantom_keypair()
-        lamports = solana_client.get_balance(kp.pubkey()).value
+        lamports = solana_client.get_balance(kp.public_key).value
         balance = lamports / 1_000_000_000
         logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
     except Exception as e:
@@ -106,7 +101,7 @@ def fallback_rpc():
     for endpoint in rpc_endpoints[1:]:
         try:
             test_client = Client(endpoint)
-            test_key = get_phantom_keypair().pubkey()
+            test_key = get_phantom_keypair().public_key
             test_client.get_balance(test_key)
             solana_client = test_client
             logging.info(f"✅ Switched to fallback RPC: {endpoint}")
@@ -124,7 +119,7 @@ def decode_transaction_blob(blob_str: str) -> bytes:
     try:
         return base64.b64decode(blob_str)
     except Exception:
-        return base58.b58decode(blob_str)
+        return b58decode(blob_str)
 
 def real_buy_token(to_addr: str, lamports: int):
     try:
@@ -137,7 +132,7 @@ def real_buy_token(to_addr: str, lamports: int):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
+            "userPublicKey": str(kp.public_key),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
@@ -145,9 +140,9 @@ def real_buy_token(to_addr: str, lamports: int):
         logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        tx = VersionedTransaction.from_bytes(tx_data)
-        tx.sign([kp])
-        logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
+        tx = Transaction.deserialize(tx_data)
+        tx.sign(kp)
+        logging.info(f"📝 TX signed: {b58encode(tx.serialize()).decode()}")
 
         sig = solana_client.send_raw_transaction(tx.serialize())
         logging.info(f"✅ Buy tx: {sig}")
@@ -168,7 +163,7 @@ def real_sell_token(to_addr: str):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
+            "userPublicKey": str(kp.public_key),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
@@ -176,9 +171,9 @@ def real_sell_token(to_addr: str):
         logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
-        tx = VersionedTransaction.from_bytes(tx_data)
-        tx.sign([kp])
-        logging.info(f"📝 TX signed: {base58.b58encode(tx.serialize()).decode()}")
+        tx = Transaction.deserialize(tx_data)
+        tx.sign(kp)
+        logging.info(f"📝 TX signed: {b58encode(tx.serialize()).decode()}")
 
         sig = solana_client.send_raw_transaction(tx.serialize())
         logging.info(f"✅ Sell tx: {sig}")
