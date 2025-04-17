@@ -30,6 +30,7 @@ import ssl
 import urllib3
 import time
 import matplotlib.pyplot as plt
+from solana.rpc.types import TxOpts
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -170,13 +171,37 @@ def real_buy_token(to_addr: str, lamports: int):
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
-        sig = solana_client.send_raw_transaction(tx_data, opts={"skip_preflight": True})
+        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
         return sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
         fallback_rpc()
         return None
 
+def real_sell_token(to_addr: str):
+    try:
+        kp = get_phantom_keypair()
+        to_addr = sanitize_token_address(to_addr)
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
+        if not quote.get("routePlan"):
+            raise Exception("No swap route available")
+
+        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
+            "userPublicKey": str(kp.pubkey()),
+            "wrapUnwrapSOL": True,
+            "quoteResponse": quote,
+            "computeUnitPriceMicroLamports": 0,
+            "asLegacyTransaction": True
+        }).json()
+
+        tx_data = decode_transaction_blob(swap["swapTransaction"])
+        logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
+        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
+        return sig
+    except Exception as e:
+        logging.error(f"❌ Sell failed: {e}")
+        fallback_rpc()
+        return None
 def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
