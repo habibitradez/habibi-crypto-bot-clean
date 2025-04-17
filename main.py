@@ -157,7 +157,7 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1&onlyDirectRoutes=true").json()
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -166,7 +166,8 @@ def real_buy_token(to_addr: str, lamports: int):
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True
+            "asLegacyTransaction": True,
+            "onlyDirectRoutes": True
         }).json()
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
@@ -182,7 +183,7 @@ def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1&onlyDirectRoutes=true").json()
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -191,7 +192,8 @@ def real_sell_token(to_addr: str):
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True
+            "asLegacyTransaction": True,
+            "onlyDirectRoutes": True
         }).json()
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
