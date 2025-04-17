@@ -22,12 +22,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 import random
 from bs4 import BeautifulSoup
 from solana.rpc.api import Client
-from solders.transaction import VersionedTransaction
+from solders.keypair import Keypair
 from solders.pubkey import Pubkey
-from solana.keypair import Keypair
-from solana.system_program import TransferParams, transfer
-from solana.message import Message
-from solana.rpc.types import TxOpts
 from base58 import b58decode, b58encode
 import base64
 import ssl
@@ -72,12 +68,12 @@ bitquery_unauthorized = False
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
     secret_bytes = b58decode(PHANTOM_SECRET_KEY.strip())
-    return Keypair.from_secret_key(secret_bytes)
+    return Keypair.from_bytes(secret_bytes)
 
 def log_wallet_balance():
     try:
         kp = get_phantom_keypair()
-        lamports = solana_client.get_balance(kp.public_key).value
+        lamports = solana_client.get_balance(kp.pubkey()).value
         balance = lamports / 1_000_000_000
         logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
     except Exception as e:
@@ -108,7 +104,7 @@ def fallback_rpc():
     for endpoint in rpc_endpoints[1:]:
         try:
             test_client = Client(endpoint)
-            test_key = get_phantom_keypair().public_key
+            test_key = get_phantom_keypair().pubkey()
             test_client.get_balance(test_key)
             solana_client = test_client
             logging.info(f"✅ Switched to fallback RPC: {endpoint}")
@@ -139,7 +135,7 @@ def real_buy_token(to_addr: str, lamports: int):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.public_key),
+            "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
@@ -166,7 +162,7 @@ def real_sell_token(to_addr: str):
             raise Exception("No swap route available")
 
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.public_key),
+            "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
