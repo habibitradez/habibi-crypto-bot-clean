@@ -17,7 +17,7 @@ import json
 from dotenv import load_dotenv
 from discord.ui import View, Button
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dtime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import random
 from bs4 import BeautifulSoup
@@ -247,7 +247,7 @@ async def sell(ctx, token: str):
 async def profit(ctx):
     await ctx.send(f"📊 Today's profit so far: ${daily_profit:.2f}")
 
-@tasks.loop(time=datetime.utcnow().replace(hour=23, minute=59, second=0, microsecond=0))
+@tasks.loop(time=dtime(hour=23, minute=59))
 async def dump_daily_chart():
     file = generate_profit_chart()
     if file and DISCORD_NEWS_CHANNEL_ID:
