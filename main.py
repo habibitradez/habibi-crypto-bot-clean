@@ -157,7 +157,7 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount=lamports&slippage=1&onlyDirectRoutes=true").json()
+        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1&onlyDirectRoutes=true").json()
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -210,7 +210,6 @@ def real_sell_token(to_addr: str):
         logging.error(f"❌ Sell failed: {e}")
         fallback_rpc()
         return None
-
 @tree.command(name="sell", description="Sell a token from your wallet")
 async def sell_slash(interaction: discord.Interaction, token: str):
     await interaction.response.send_message(f"Selling {token}...")
