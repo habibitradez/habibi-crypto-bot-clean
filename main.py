@@ -97,6 +97,12 @@ async def auto_snipe():
                 sig = real_buy_token(token, 1000000)
                 if sig:
                     bought_tokens[token] = {'buy_sig': sig, 'buy_time': datetime.utcnow()}
+            else:
+                if datetime.utcnow() - bought_tokens[token]['buy_time'] > timedelta(minutes=3):
+                    logging.info(f"💸 Auto-selling {token} after 3 minutes")
+                    sell_sig = real_sell_token(token)
+                    if sell_sig:
+                        logging.info(f"✅ Auto-sold {token} with tx: {sell_sig}")
         await asyncio.sleep(60)
 
 def fallback_rpc():
