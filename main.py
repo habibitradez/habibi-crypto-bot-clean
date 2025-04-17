@@ -60,10 +60,21 @@ rpc_endpoints = [
 solana_client = Client(rpc_endpoints[0])
 
 bought_tokens = {}
+daily_profit = 0
+trade_log = []
 SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
-SIMULATED_GAIN_CAP = 2.0
 bitquery_unauthorized = False
+
+def log_trade(entry):
+    global daily_profit
+    trade_log.append(entry)
+    if entry.get("type") == "sell":
+        daily_profit += entry.get("profit", 0)
+    logging.info(f"🧾 TRADE LOG: {entry}")
+
+def summarize_daily_profit():
+    logging.info(f"📊 Estimated Daily Profit So Far: ${daily_profit:.2f}")
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -87,32 +98,6 @@ def fetch_birdeye():
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
 
-async def auto_snipe():
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        tokens = fetch_birdeye()
-        for token in tokens:
-            if token not in bought_tokens:
-                logging.info(f"🤖 Sniping token: {token}")
-                sig = real_buy_token(token, 1000000)
-                if sig:
-                    bought_tokens[token] = {
-                        'buy_sig': sig,
-                        'buy_time': datetime.utcnow(),
-                        'token': token,
-                        'initial_price': get_token_price(token)
-                    }
-            else:
-                price_now = get_token_price(token)
-                token_data = bought_tokens[token]
-                if price_now and token_data['initial_price'] and price_now >= token_data['initial_price'] * SELL_PROFIT_TRIGGER:
-                    logging.info(f"📈 Token {token} hit 2x, selling now")
-                    sell_sig = real_sell_token(token)
-                    if sell_sig:
-                        logging.info(f"✅ Auto-sold {token} with tx: {sell_sig}")
-                        del bought_tokens[token]
-        await asyncio.sleep(60)
-
 def get_token_price(token: str):
     try:
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token}&amount=1000000").json()
@@ -120,6 +105,12 @@ def get_token_price(token: str):
     except Exception as e:
         logging.warning(f"⚠️ Price fetch failed for {token}: {e}")
         return None
+
+def decode_transaction_blob(blob_str: str) -> bytes:
+    try:
+        return base64.b64decode(blob_str)
+    except Exception:
+        return b58decode(blob_str)
 
 def fallback_rpc():
     global solana_client
@@ -140,19 +131,11 @@ def sanitize_token_address(addr: str) -> str:
         raise ValueError("Invalid token address")
     return addr
 
-def decode_transaction_blob(blob_str: str) -> bytes:
-    try:
-        return base64.b64decode(blob_str)
-    except Exception:
-        return b58decode(blob_str)
-
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1").json()
-        logging.info(f"📊 Quote fetched: {quote}")
-
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -162,11 +145,9 @@ def real_buy_token(to_addr: str, lamports: int):
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
         }).json()
-        logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         sig = solana_client.send_raw_transaction(tx_data)
-        logging.info(f"✅ Buy tx: {sig}")
         return sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
@@ -178,8 +159,6 @@ def real_sell_token(to_addr: str):
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
         quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1").json()
-        logging.info(f"📊 Quote fetched: {quote}")
-
         if not quote.get("routePlan"):
             raise Exception("No swap route available")
 
@@ -189,40 +168,60 @@ def real_sell_token(to_addr: str):
             "quoteResponse": quote,
             "computeUnitPriceMicroLamports": 0
         }).json()
-        logging.info(f"🔄 Swap generated: {swap}")
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         sig = solana_client.send_raw_transaction(tx_data)
-        logging.info(f"✅ Sell tx: {sig}")
         return sig
     except Exception as e:
         logging.error(f"❌ Sell failed: {e}")
         fallback_rpc()
         return None
 
+async def auto_snipe():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        tokens = fetch_birdeye()
+        for token in tokens:
+            if token not in bought_tokens:
+                sig = real_buy_token(token, 1000000)
+                if sig:
+                    price = get_token_price(token)
+                    bought_tokens[token] = {
+                        'buy_sig': sig,
+                        'buy_time': datetime.utcnow(),
+                        'token': token,
+                        'initial_price': price
+                    }
+                    log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow(), "price": price})
+            else:
+                price_now = get_token_price(token)
+                token_data = bought_tokens[token]
+                if price_now and token_data['initial_price'] and price_now >= token_data['initial_price'] * SELL_PROFIT_TRIGGER:
+                    sell_sig = real_sell_token(token)
+                    if sell_sig:
+                        profit = price_now - token_data['initial_price']
+                        log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "price": price_now, "profit": profit})
+                        del bought_tokens[token]
+        summarize_daily_profit()
+        await asyncio.sleep(30)
+
 @bot.command()
 async def buy(ctx, token: str):
-    try:
-        await ctx.send(f"Buying {token}...")
-        sig = real_buy_token(token, 1000000)
-        if sig:
-            await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
-        else:
-            await ctx.send(f"❌ Buy failed for {token}. Check logs for details.")
-    except Exception as e:
-        await ctx.send(f"🚫 Error: {e}")
+    await ctx.send(f"Buying {token}...")
+    sig = real_buy_token(token, 1000000)
+    if sig:
+        await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
+    else:
+        await ctx.send(f"❌ Buy failed for {token}. Check logs for details.")
 
 @bot.command()
 async def sell(ctx, token: str):
-    try:
-        await ctx.send(f"Selling {token}...")
-        sig = real_sell_token(token)
-        if sig:
-            await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
-        else:
-            await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
-    except Exception as e:
-        await ctx.send(f"🚫 Error: {e}")
+    await ctx.send(f"Selling {token}...")
+    sig = real_sell_token(token)
+    if sig:
+        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+    else:
+        await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
 
 @bot.event
 async def on_ready():
