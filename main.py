@@ -68,162 +68,64 @@ SELL_PROFIT_TRIGGER = 2.0
 LOSS_CUT_PERCENT = 0.4
 bitquery_unauthorized = False
 
-def log_trade(entry):
-    global daily_profit
-    trade_log.append(entry)
-    if entry.get("type") == "sell":
-        daily_profit += entry.get("profit", 0)
-    logging.info(f"🧾 TRADE LOG: {entry}")
+# --- Add missing buy command ---
+@bot.command()
+async def buy(ctx, token: str):
+    await ctx.send(f"Buying {token}...")
+    sig = real_buy_token(token, 1000000)
+    if sig:
+        await ctx.send(f"✅ Bought {token}! https://solscan.io/tx/{sig}")
+    else:
+        await ctx.send(f"❌ Buy failed for {token}. Check logs.")
 
-def summarize_daily_profit():
-    logging.info(f"📊 Estimated Daily Profit So Far: ${daily_profit:.2f}")
-
-def generate_profit_chart():
-    if not trade_log:
-        return None
-    timestamps = [entry['timestamp'] for entry in trade_log if entry['type'] == 'sell']
-    profits = [entry['profit'] for entry in trade_log if entry['type'] == 'sell']
-    if not timestamps or not profits:
-        return None
-    cumulative = [sum(profits[:i+1]) for i in range(len(profits))]
-    plt.figure(figsize=(10, 4))
-    plt.plot(timestamps, cumulative, marker='o')
-    plt.title("Daily Profit from Trades")
-    plt.xlabel("Time")
-    plt.ylabel("Cumulative Profit ($)")
-    plt.grid(True)
-    filename = "daily_profit.png"
-    plt.savefig(filename)
-    plt.close()
-    return filename
-
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
-def get_phantom_keypair():
-    secret_bytes = b58decode(PHANTOM_SECRET_KEY.strip())
-    assert len(secret_bytes) == 64, "Keypair length must be 64 bytes"
-    return Keypair.from_bytes(secret_bytes)
-
-def log_wallet_balance():
-    try:
-        kp = get_phantom_keypair()
-        lamports = solana_client.get_balance(kp.pubkey()).value
-        balance = lamports / 1_000_000_000
-        logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
-    except Exception as e:
-        logging.error(f"❌ Wallet balance check failed: {e}")
-
-def fetch_birdeye():
-    try:
-        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
-        return [token['address'] for token in r.json().get('data', [])[:10]]
-    except Exception as e:
-        logging.error(f"❌ Birdeye fetch failed: {e}")
-        return []
-
-def get_token_price(token: str):
-    try:
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token}&amount=1000000&onlyDirectRoutes=true").json()
-        return float(quote['outAmount']) / 1_000_000 if 'outAmount' in quote else None
-    except Exception as e:
-        logging.warning(f"⚠️ Price fetch failed for {token}: {e}")
-        return None
-
-def decode_transaction_blob(blob_str: str) -> bytes:
-    try:
-        return base64.b64decode(blob_str)
-    except Exception:
-        return b58decode(blob_str)
-
-def fallback_rpc():
-    global solana_client
-    for endpoint in rpc_endpoints[1:]:
-        try:
-            test_client = Client(endpoint)
-            test_key = get_phantom_keypair().pubkey()
-            test_client.get_balance(test_key)
-            solana_client = test_client
-            logging.info(f"✅ Switched to fallback RPC: {endpoint}")
-            return
-        except Exception as e:
-            logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
-
-def sanitize_token_address(addr: str) -> str:
-    addr = addr.strip()
-    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", addr):
-        raise ValueError("Invalid token address")
-    return addr
-
-def real_buy_token(to_addr: str, lamports: int):
-    try:
-        kp = get_phantom_keypair()
-        to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1&onlyDirectRoutes=true").json()
-        if not quote.get("routePlan"):
-            raise Exception("No swap route available")
-
-        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
-            "wrapUnwrapSOL": True,
-            "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True,
-            "onlyDirectRoutes": True
-        }).json()
-
-        tx_data = decode_transaction_blob(swap["swapTransaction"])
-        logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
-        return sig
-    except Exception as e:
-        logging.error(f"❌ Buy failed: {e}")
-        fallback_rpc()
-        return None
-
-def real_sell_token(to_addr: str):
-    try:
-        kp = get_phantom_keypair()
-        to_addr = sanitize_token_address(to_addr)
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1&onlyDirectRoutes=true").json()
-        if not quote.get("routePlan"):
-            raise Exception("No swap route available")
-
-        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
-            "wrapUnwrapSOL": True,
-            "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True,
-            "onlyDirectRoutes": True
-        }).json()
-
-        tx_data = decode_transaction_blob(swap["swapTransaction"])
-        logging.info(f"🚀 Sending transaction: {tx_data.hex()[:80]}...")
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
-        log_trade({
-            "type": "sell",
-            "token": to_addr,
-            "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-            "profit": round(random.uniform(5, 20), 2)
-        })
-        return sig
-    except Exception as e:
-        logging.error(f"❌ Sell failed: {e}")
-        fallback_rpc()
-        return None
-
-@tree.command(name="sell", description="Sell a token from your wallet")
-async def sell_slash(interaction: discord.Interaction, token: str):
-    await interaction.response.send_message(f"Selling {token}...")
+# --- Add missing sell command ---
+@bot.command()
+async def sell(ctx, token: str):
+    await ctx.send(f"Selling {token}...")
     sig = real_sell_token(token)
     if sig:
-        await interaction.followup.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
     else:
-        await interaction.followup.send(f"❌ Sell failed for {token}. Check logs.")
+        await ctx.send(f"❌ Sell failed for {token}. Check logs.")
 
+# --- Keep existing bot event ---
 @bot.event
 async def on_ready():
     await tree.sync()
     logging.info(f"✅ Logged in as {bot.user}")
     log_wallet_balance()
     logging.info("🚀 Slash commands synced and ready.")
+    bot.loop.create_task(auto_snipe())
+
+async def auto_snipe():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            tokens = fetch_birdeye()
+            for token in tokens:
+                if token not in bought_tokens:
+                    sig = real_buy_token(token, 1000000)
+                    if sig:
+                        price = get_token_price(token)
+                        bought_tokens[token] = {
+                            'buy_sig': sig,
+                            'buy_time': datetime.utcnow(),
+                            'token': token,
+                            'initial_price': price
+                        }
+                        log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow(), "price": price})
+                else:
+                    price_now = get_token_price(token)
+                    token_data = bought_tokens[token]
+                    if price_now and token_data['initial_price'] and price_now >= token_data['initial_price'] * SELL_PROFIT_TRIGGER:
+                        sell_sig = real_sell_token(token)
+                        if sell_sig:
+                            profit = price_now - token_data['initial_price']
+                            log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "price": price_now, "profit": profit})
+                            del bought_tokens[token]
+            summarize_daily_profit()
+        except Exception as e:
+            logging.error(f"❌ Error during auto-sniping loop: {e}")
+        await asyncio.sleep(30)
+
 bot.run(DISCORD_TOKEN)
