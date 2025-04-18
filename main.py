@@ -211,12 +211,19 @@ def real_sell_token(to_addr: str):
         fallback_rpc()
         return None
 
-@bot.command()
-async def sell(ctx, token: str):
-    await ctx.send(f"Selling {token}...")
+@tree.command(name="sell", description="Sell a token from your wallet")
+async def sell_slash(interaction: discord.Interaction, token: str):
+    await interaction.response.send_message(f"Selling {token}...")
     sig = real_sell_token(token)
     if sig:
-        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+        await interaction.followup.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
     else:
-        await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
+        await interaction.followup.send(f"❌ Sell failed for {token}. Check logs.")
+
+@bot.event
+async def on_ready():
+    await tree.sync()
+    logging.info(f"✅ Logged in as {bot.user}")
+    log_wallet_balance()
+    logging.info("🚀 Slash commands synced and ready.")
 bot.run(DISCORD_TOKEN)
