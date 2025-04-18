@@ -210,4 +210,13 @@ def real_sell_token(to_addr: str):
         logging.error(f"❌ Sell failed: {e}")
         fallback_rpc()
         return None
+
+@bot.command()
+async def sell(ctx, token: str):
+    await ctx.send(f"Selling {token}...")
+    sig = real_sell_token(token)
+    if sig:
+        await ctx.send(f"✅ Sold {token}! https://solscan.io/tx/{sig}")
+    else:
+        await ctx.send(f"❌ Sell failed for {token}. Check logs for details.")
 bot.run(DISCORD_TOKEN)
