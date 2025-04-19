@@ -134,7 +134,7 @@ def real_buy_token(to_addr: str, lamports: int):
         tx.fee_payer = kp.pubkey()
         tx.sign([kp])
         sig = solana_client.send_raw_transaction(tx.serialize())
-        return sig
+        return sig.value if hasattr(sig, 'value') else sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
         fallback_rpc()
