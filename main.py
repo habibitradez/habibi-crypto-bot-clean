@@ -133,8 +133,17 @@ def real_buy_token(to_addr: str, lamports: int):
         tx.recent_blockhash = blockhash
         tx.fee_payer = kp.pubkey()
         tx.sign([kp])
-        sig = solana_client.send_raw_transaction(tx.serialize())
-        return sig.value if hasattr(sig, 'value') else sig
+        serialized = tx.serialize()
+        sig = solana_client.send_raw_transaction(serialized, opts=TxOpts(skip_preflight=True))
+        if hasattr(sig, 'value'):
+            return sig.value
+        elif isinstance(sig, str):
+            return sig
+        elif isinstance(sig, dict):
+            return sig.get("result")
+        else:
+            logging.error(f"❌ Unexpected response from send_raw_transaction: {sig}")
+            return None
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
         fallback_rpc()
@@ -180,16 +189,18 @@ async def auto_snipe():
                         }
                         log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow()})
                 else:
-                    if random.random() > 0.5:
+                    price_sim = random.uniform(1.5, 2.5)
+                    if price_sim >= SELL_PROFIT_TRIGGER:
                         logging.info(f"💸 Attempting to sell {token}")
                         sell_sig = real_sell_token(token)
                         if sell_sig:
-                            log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "profit": round(random.uniform(100, 400), 2)})
+                            profit = round((price_sim - 1) * (BUY_AMOUNT_LAMPORTS / 1_000_000_000) * 150, 2)
+                            log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "profit": profit})
                             del bought_tokens[token]
             summarize_daily_profit()
         except Exception as e:
             logging.error(f"❌ Error in auto-snipe loop: {e}")
-        await asyncio.sleep(25)
+        await asyncio.sleep(20)
 
 try:
     bot.run(DISCORD_TOKEN)
