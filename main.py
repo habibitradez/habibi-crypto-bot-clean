@@ -29,7 +29,7 @@ import ssl
 import urllib3
 from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
-from solders.message import Message, MessageHeader
+from solders.message import Message
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -128,7 +128,6 @@ def real_buy_token(to_addr: str, lamports: int):
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
         msg = Message(
-            header=MessageHeader(1, 0, 1),
             account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
             recent_blockhash=blockhash,
             instructions=[
@@ -154,7 +153,6 @@ def real_sell_token(to_addr: str):
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
         msg = Message(
-            header=MessageHeader(1, 0, 1),
             account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
             recent_blockhash=blockhash,
             instructions=[
