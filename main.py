@@ -79,6 +79,9 @@ def fetch_tokens():
     try:
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
         r = requests.get(url, timeout=5)
+        if r.status_code == 404:
+            logging.warning("🚫 GeckoTerminal 'trending' returned 404, falling back to 'recent'")
+            r = requests.get("https://api.geckoterminal.com/api/v2/networks/solana/pools/recent", timeout=5)
         pools = r.json().get('data', [])
         if not pools:
             logging.warning("🚫 GeckoTerminal returned no tokens.")
