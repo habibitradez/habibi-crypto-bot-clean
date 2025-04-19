@@ -29,6 +29,8 @@ import ssl
 import urllib3
 from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
+from solders.hash import Hash
+from solders.message import Message
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -125,15 +127,23 @@ def fallback_rpc():
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
-        tx = Transaction()
-        tx.add(
-            transfer(
-                TransferParams(
-                    from_pubkey=kp.pubkey(),
-                    to_pubkey=Pubkey.from_string(to_addr),
-                    lamports=lamports
-                )
-            )
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        tx = Transaction(
+            from_keypairs=[kp],
+            message=Message.new_with_blockhash(
+                payer=kp.pubkey(),
+                instructions=[
+                    transfer(
+                        TransferParams(
+                            from_pubkey=kp.pubkey(),
+                            to_pubkey=Pubkey.from_string(to_addr),
+                            lamports=lamports
+                        )
+                    )
+                ],
+                recent_blockhash=Hash.from_string(blockhash)
+            ),
+            recent_blockhash=Hash.from_string(blockhash)
         )
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
@@ -144,15 +154,23 @@ def real_buy_token(to_addr: str, lamports: int):
 def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
-        tx = Transaction()
-        tx.add(
-            transfer(
-                TransferParams(
-                    from_pubkey=kp.pubkey(),
-                    to_pubkey=Pubkey.from_string(to_addr),
-                    lamports=BUY_AMOUNT_LAMPORTS
-                )
-            )
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        tx = Transaction(
+            from_keypairs=[kp],
+            message=Message.new_with_blockhash(
+                payer=kp.pubkey(),
+                instructions=[
+                    transfer(
+                        TransferParams(
+                            from_pubkey=kp.pubkey(),
+                            to_pubkey=Pubkey.from_string(to_addr),
+                            lamports=BUY_AMOUNT_LAMPORTS
+                        )
+                    )
+                ],
+                recent_blockhash=Hash.from_string(blockhash)
+            ),
+            recent_blockhash=Hash.from_string(blockhash)
         )
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
