@@ -45,6 +45,7 @@ PHANTOM_SECRET_KEY = os.getenv("PHANTOM_SECRET_KEY")
 DISCORD_NEWS_CHANNEL_ID = os.getenv("DISCORD_NEWS_CHANNEL_ID")
 SHYFT_RPC_KEY = os.getenv("SHYFT_RPC_KEY")
 BITQUERY_API_KEY = os.getenv("BITQUERY_API_KEY", "H1FlmA.MxT2zi3Zm~~eohOFKv8")
+BIRDEYE_API_KEY = os.getenv("BIRDEYE_API_KEY")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai.api_key = OPENAI_API_KEY
 
@@ -85,7 +86,12 @@ def log_wallet_balance():
 
 def fetch_birdeye():
     try:
-        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
+        headers = {
+            "accept": "application/json",
+            "X-API-KEY": BIRDEYE_API_KEY
+        }
+        logging.info(f"🔍 Fetching from Birdeye using API key: {BIRDEYE_API_KEY[:4]}***")
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", headers=headers, timeout=5)
         tokens = r.json().get('data', [])
         if not tokens:
             logging.warning("🚫 Birdeye returned no tokens.")
@@ -93,15 +99,6 @@ def fetch_birdeye():
     except Exception as e:
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
-
-def get_token_price(token: str):
-    try:
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token}&amount=1000000&onlyDirectRoutes=true").json()
-        return float(quote['outAmount']) / 1_000_000 if 'outAmount' in quote else None
-    except Exception as e:
-        logging.warning(f"⚠️ Price fetch failed for {token}: {e}")
-        return None
-
 def decode_transaction_blob(blob_str: str) -> bytes:
     try:
         return base64.b64decode(blob_str)
