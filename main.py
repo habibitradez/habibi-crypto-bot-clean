@@ -186,4 +186,10 @@ async def auto_snipe():
                         del bought_tokens[token]
             summarize_daily_profit()
         except Exception as e:
-bot.run(DISCORD_TOKEN)
+            logging.error(f"❌ Error in auto-snipe loop: {e}")
+        await asyncio.sleep(30)
+
+try:
+    bot.run(DISCORD_TOKEN)
+except Exception as e:
+    logging.error(f"❌ Bot failed to run: {e}")
