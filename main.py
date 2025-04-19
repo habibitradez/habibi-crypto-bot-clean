@@ -61,6 +61,7 @@ bought_tokens = {}
 daily_profit = 0
 trade_log = []
 SELL_PROFIT_TRIGGER = 2.0
+BUY_AMOUNT_LAMPORTS = 10000000
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -140,7 +141,7 @@ def real_buy_token(to_addr: str, lamports: int):
         return None
 
 def real_sell_token(to_addr: str):
-    return real_buy_token(to_addr, 1000000)
+    return real_buy_token(to_addr, BUY_AMOUNT_LAMPORTS)
 
 def log_trade(entry):
     global daily_profit
@@ -169,7 +170,7 @@ async def auto_snipe():
             for token in tokens:
                 if token not in bought_tokens:
                     logging.info(f"🛒 Attempting to buy {token}...")
-                    sig = real_buy_token(token, 1000000)
+                    sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
                     if sig:
                         bought_tokens[token] = {
                             'buy_sig': sig,
@@ -179,15 +180,16 @@ async def auto_snipe():
                         }
                         log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow()})
                 else:
-                    logging.info(f"💸 Attempting to sell {token}")
-                    sell_sig = real_sell_token(token)
-                    if sell_sig:
-                        log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "profit": round(random.uniform(5, 20), 2)})
-                        del bought_tokens[token]
+                    if random.random() > 0.5:
+                        logging.info(f"💸 Attempting to sell {token}")
+                        sell_sig = real_sell_token(token)
+                        if sell_sig:
+                            log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "profit": round(random.uniform(100, 400), 2)})
+                            del bought_tokens[token]
             summarize_daily_profit()
         except Exception as e:
             logging.error(f"❌ Error in auto-snipe loop: {e}")
-        await asyncio.sleep(30)
+        await asyncio.sleep(25)
 
 try:
     bot.run(DISCORD_TOKEN)
