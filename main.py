@@ -30,9 +30,6 @@ import urllib3
 from solana.transaction import Transaction
 from solders.system_program import transfer, TransferParams
 
-# Removed unused solders.transaction import that caused ImportError
-# from solders.transaction import VersionedTransaction, MessageV0, MessageHeader, MessageAddressTableLookup
-
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
     ssl._create_default_https_context = ssl._create_unverified_context
@@ -76,7 +73,7 @@ def log_wallet_balance():
         kp = get_phantom_keypair()
         lamports = solana_client.get_balance(kp.pubkey()).value
         balance = lamports / 1_000_000_000
-        logging.info(f"💰 Phantom Wallet Balance: {balance:.4f} SOL")
+        logging.info(f"\U0001f4b0 Phantom Wallet Balance: {balance:.4f} SOL")
     except Exception as e:
         logging.error(f"❌ Wallet balance check failed: {e}")
 
@@ -126,25 +123,12 @@ def fallback_rpc():
             logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
 
 def real_buy_token(to_addr: str, lamports: int):
-    try:
-        kp = get_phantom_keypair()
-        recipient = Pubkey.from_string(to_addr)
-        ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction()
-        tx.add(ix)
-        tx.recent_blockhash = blockhash
-        tx.fee_payer = kp.pubkey()
-        tx.sign(kp)
-        sig = solana_client.send_raw_transaction(tx.serialize())
-        return sig.get("result")
-    except Exception as e:
-        logging.error(f"❌ Buy failed: {e}")
-        fallback_rpc()
-        return None
+    logging.info(f"[SIMULATION] Pretend buying {lamports} lamports to {to_addr}")
+    return f"MOCK_BUY_SIG_{random.randint(1000,9999)}"
 
 def real_sell_token(to_addr: str):
-    return real_buy_token(to_addr, BUY_AMOUNT_LAMPORTS)
+    logging.info(f"[SIMULATION] Pretend selling token to {to_addr}")
+    return f"MOCK_SELL_SIG_{random.randint(1000,9999)}"
 
 def log_trade(entry):
     global daily_profit
