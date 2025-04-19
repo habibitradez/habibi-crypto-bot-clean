@@ -123,12 +123,42 @@ def fallback_rpc():
             logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
 
 def real_buy_token(to_addr: str, lamports: int):
-    logging.info(f"[SIMULATION] Pretend buying {lamports} lamports to {to_addr}")
-    return f"MOCK_BUY_SIG_{random.randint(1000,9999)}"
+    try:
+        kp = get_phantom_keypair()
+        tx = Transaction()
+        tx.add(
+            transfer(
+                TransferParams(
+                    from_pubkey=kp.pubkey(),
+                    to_pubkey=Pubkey.from_string(to_addr),
+                    lamports=lamports
+                )
+            )
+        )
+        res = solana_client.send_transaction(tx, kp)
+        return res.value if hasattr(res, 'value') else res
+    except Exception as e:
+        logging.error(f"❌ Real buy failed: {e}")
+        return None
 
 def real_sell_token(to_addr: str):
-    logging.info(f"[SIMULATION] Pretend selling token to {to_addr}")
-    return f"MOCK_SELL_SIG_{random.randint(1000,9999)}"
+    try:
+        kp = get_phantom_keypair()
+        tx = Transaction()
+        tx.add(
+            transfer(
+                TransferParams(
+                    from_pubkey=kp.pubkey(),
+                    to_pubkey=Pubkey.from_string(to_addr),
+                    lamports=BUY_AMOUNT_LAMPORTS
+                )
+            )
+        )
+        res = solana_client.send_transaction(tx, kp)
+        return res.value if hasattr(res, 'value') else res
+    except Exception as e:
+        logging.error(f"❌ Real sell failed: {e}")
+        return None
 
 def log_trade(entry):
     global daily_profit
