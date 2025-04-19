@@ -29,7 +29,7 @@ import ssl
 import urllib3
 from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
-from solders.message import Message
+from solders.message import Message, MessageHeader
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -127,8 +127,10 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = Message.new(
-            payer=kp.pubkey(),
+        msg = Message(
+            header=MessageHeader(1, 0, 1),
+            account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
+            recent_blockhash=blockhash,
             instructions=[
                 transfer(
                     TransferParams(
@@ -138,7 +140,7 @@ def real_buy_token(to_addr: str, lamports: int):
                     )
                 )
             ],
-            recent_blockhash=blockhash
+            address_table_lookups=[]
         )
         tx = Transaction([kp], msg, blockhash)
         res = solana_client.send_transaction(tx, kp)
@@ -151,8 +153,10 @@ def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = Message.new(
-            payer=kp.pubkey(),
+        msg = Message(
+            header=MessageHeader(1, 0, 1),
+            account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
+            recent_blockhash=blockhash,
             instructions=[
                 transfer(
                     TransferParams(
@@ -162,7 +166,7 @@ def real_sell_token(to_addr: str):
                     )
                 )
             ],
-            recent_blockhash=blockhash
+            address_table_lookups=[]
         )
         tx = Transaction([kp], msg, blockhash)
         res = solana_client.send_transaction(tx, kp)
