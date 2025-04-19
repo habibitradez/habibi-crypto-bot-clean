@@ -86,7 +86,10 @@ def log_wallet_balance():
 def fetch_birdeye():
     try:
         r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
-        return [token['address'] for token in r.json().get('data', [])[:10]]
+        tokens = r.json().get('data', [])
+        if not tokens:
+            logging.warning("🚫 Birdeye returned no tokens.")
+        return [token['address'] for token in tokens[:10] if 'address' in token]
     except Exception as e:
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
