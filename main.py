@@ -130,8 +130,8 @@ def real_buy_token(to_addr: str, lamports: int):
         tx = Transaction(
             from_keypairs=[kp],
             message=Message.new_with_blockhash(
-                kp.pubkey(),
-                [
+                payer=kp.pubkey(),
+                instructions=[
                     transfer(
                         TransferParams(
                             from_pubkey=kp.pubkey(),
@@ -140,7 +140,7 @@ def real_buy_token(to_addr: str, lamports: int):
                         )
                     )
                 ],
-                blockhash
+                recent_blockhash=blockhash
             ),
             recent_blockhash=blockhash
         )
@@ -157,8 +157,8 @@ def real_sell_token(to_addr: str):
         tx = Transaction(
             from_keypairs=[kp],
             message=Message.new_with_blockhash(
-                kp.pubkey(),
-                [
+                payer=kp.pubkey(),
+                instructions=[
                     transfer(
                         TransferParams(
                             from_pubkey=kp.pubkey(),
@@ -167,7 +167,7 @@ def real_sell_token(to_addr: str):
                         )
                     )
                 ],
-                blockhash
+                recent_blockhash=blockhash
             ),
             recent_blockhash=blockhash
         )
