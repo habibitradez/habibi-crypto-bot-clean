@@ -27,7 +27,7 @@ from base58 import b58decode
 import base64
 import ssl
 import urllib3
-from solana.transaction import Transaction
+from solders.transaction import Transaction
 from solders.system_program import transfer, TransferParams
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
