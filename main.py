@@ -28,7 +28,7 @@ import base64
 import ssl
 import urllib3
 from solana.rpc.types import TxOpts
-from solders.transaction import Transaction
+from solders.transaction import VersionedTransaction, MessageV0, MessageHeader, MessageAddressTableLookup
 from solders.system_program import transfer, TransferParams
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -130,9 +130,8 @@ def real_buy_token(to_addr: str, lamports: int):
         ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=recipient, lamports=lamports))
         blockhash = solana_client.get_latest_blockhash().value.blockhash
         tx = Transaction([ix], kp.pubkey(), blockhash)
-        tx.sign(kp)
-        serialized = tx.serialize()
-        sig = solana_client.send_raw_transaction(serialized, opts=TxOpts(skip_preflight=True))
+        tx.sign([kp])
+        sig = solana_client.send_transaction(tx, [kp], opts=TxOpts(skip_preflight=True))
         if hasattr(sig, 'value'):
             return sig.value
         elif isinstance(sig, str):
@@ -140,7 +139,7 @@ def real_buy_token(to_addr: str, lamports: int):
         elif isinstance(sig, dict):
             return sig.get("result")
         else:
-            logging.error(f"❌ Unexpected response from send_raw_transaction: {sig}")
+            logging.error(f"❌ Unexpected response from send_transaction: {sig}")
             return None
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
