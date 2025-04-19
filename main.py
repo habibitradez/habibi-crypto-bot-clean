@@ -31,7 +31,6 @@ from solders.instruction import Instruction
 from solders.system_program import transfer, TransferParams
 from solders.message import MessageV0
 from solders.transaction import VersionedTransaction
-from solders.message import LoadedMessage
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
