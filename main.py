@@ -132,7 +132,7 @@ def real_buy_token(to_addr: str, lamports: int):
         tx = Transaction.new_unsigned([ix])
         tx.recent_blockhash = blockhash
         tx.fee_payer = kp.pubkey()
-        tx.sign([kp])
+        tx.sign(kp)
         serialized = tx.serialize()
         sig = solana_client.send_raw_transaction(serialized, opts=TxOpts(skip_preflight=True))
         if hasattr(sig, 'value'):
