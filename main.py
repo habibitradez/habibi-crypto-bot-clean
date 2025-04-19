@@ -127,23 +127,20 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction(
-            from_keypairs=[kp],
-            message=Message.new_with_blockhash(
-                kp.pubkey(),
-                [
-                    transfer(
-                        TransferParams(
-                            from_pubkey=kp.pubkey(),
-                            to_pubkey=Pubkey.from_string(to_addr),
-                            lamports=lamports
-                        )
+        msg = Message.new_with_blockhash(
+            payer=kp.pubkey(),
+            instructions=[
+                transfer(
+                    TransferParams(
+                        from_pubkey=kp.pubkey(),
+                        to_pubkey=Pubkey.from_string(to_addr),
+                        lamports=lamports
                     )
-                ],
-                blockhash
-            ),
-            recent_blockhash=blockhash
+                )
+            ],
+            blockhash=blockhash
         )
+        tx = Transaction([kp], msg)
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
@@ -154,23 +151,20 @@ def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        tx = Transaction(
-            from_keypairs=[kp],
-            message=Message.new_with_blockhash(
-                kp.pubkey(),
-                [
-                    transfer(
-                        TransferParams(
-                            from_pubkey=kp.pubkey(),
-                            to_pubkey=Pubkey.from_string(to_addr),
-                            lamports=BUY_AMOUNT_LAMPORTS
-                        )
+        msg = Message.new_with_blockhash(
+            payer=kp.pubkey(),
+            instructions=[
+                transfer(
+                    TransferParams(
+                        from_pubkey=kp.pubkey(),
+                        to_pubkey=Pubkey.from_string(to_addr),
+                        lamports=BUY_AMOUNT_LAMPORTS
                     )
-                ],
-                blockhash
-            ),
-            recent_blockhash=blockhash
+                )
+            ],
+            blockhash=blockhash
         )
+        tx = Transaction([kp], msg)
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
