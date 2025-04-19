@@ -81,16 +81,28 @@ def fetch_tokens():
     try:
         url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/recent"
         r = requests.get(url, timeout=5)
-        pools = r.json().get('data', [])
-        if pools:
-            return [pool['attributes']['token_address'] for pool in pools if 'attributes' in pool and 'token_address' in pool['attributes']]
+        if r.status_code == 404:
+            logging.warning("🚫 GeckoTerminal 'recent' returned 404, trying DexScreener...")
+        else:
+            try:
+                pools = r.json().get('data', [])
+                if pools:
+                    return [pool['attributes']['token_address'] for pool in pools if 'attributes' in pool and 'token_address' in pool['attributes']]
+            except json.JSONDecodeError:
+                logging.error("❌ Invalid JSON from GeckoTerminal")
 
-        screener = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5).json()
-        pairs = screener.get("pairs", [])
-        if not pairs:
-            logging.warning("🚫 DEX Screener returned no pairs.")
+        # Fallback to DexScreener
+        screener = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
+        try:
+            data = screener.json()
+            pairs = data.get("pairs", [])
+            if not pairs:
+                logging.warning("🚫 DEX Screener returned no pairs.")
+                return []
+            return [pair['baseToken']['address'] for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']]
+        except json.JSONDecodeError:
+            logging.error("❌ Invalid JSON from DEX Screener")
             return []
-        return [pair['baseToken']['address'] for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']]
     except Exception as e:
         logging.error(f"❌ Token fetch failed: {e}")
         return []
