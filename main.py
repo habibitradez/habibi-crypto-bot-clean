@@ -91,7 +91,6 @@ def fetch_tokens():
             except json.JSONDecodeError:
                 logging.error("❌ Invalid JSON from GeckoTerminal")
 
-        # Fallback to DexScreener
         screener = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
         try:
             data = screener.json()
@@ -107,7 +106,7 @@ def fetch_tokens():
         logging.warning(f"⚠️ All APIs failed. Using hardcoded fallback tokens.")
         return [
             "So11111111111111111111111111111111111111112",
-            "4k3Dyjzvzp8eNYk3uVwPZCzvmmYrFw1DQv3q4U2CGLuM"  # Raydium & others
+            "4k3Dyjzvzp8eNYk3uVwPZCzvmmYrFw1DQv3q4U2CGLuM"
         ]
 
 def fallback_rpc():
@@ -128,7 +127,7 @@ def real_buy_token(to_addr: str, lamports: int):
         kp = get_phantom_keypair()
         recipient = Pubkey.from_string(to_addr)
         ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=recipient, lamports=lamports))
-        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        blockhash = solana_client.get_latest_blockhash().value.blockhash
         tx = Transaction.new_unsigned([ix])
         tx.recent_blockhash = blockhash
         tx.fee_payer = kp.pubkey()
@@ -187,7 +186,4 @@ async def auto_snipe():
                         del bought_tokens[token]
             summarize_daily_profit()
         except Exception as e:
-            logging.error(f"❌ Error in auto-snipe loop: {e}")
-        await asyncio.sleep(30)
-
 bot.run(DISCORD_TOKEN)
