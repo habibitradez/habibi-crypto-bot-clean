@@ -28,6 +28,8 @@ import base64
 import ssl
 import urllib3
 from solana.rpc.types import TxOpts
+from solders.transaction import Transaction
+from solders.system_program import transfer, TransferParams
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -77,25 +79,21 @@ def log_wallet_balance():
 
 def fetch_tokens():
     try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/trending"
+        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/recent"
         r = requests.get(url, timeout=5)
-        if r.status_code == 404:
-            logging.warning("🚫 GeckoTerminal 'trending' returned 404, falling back to 'recent'")
-            r = requests.get("https://api.geckoterminal.com/api/v2/networks/solana/pools/recent", timeout=5)
         pools = r.json().get('data', [])
-        if not pools:
-            logging.warning("🚫 GeckoTerminal returned no tokens.")
-            return []
-        return [pool['attributes']['token_address'] for pool in pools if 'attributes' in pool and 'token_address' in pool['attributes']]
-    except Exception as e:
-        logging.error(f"❌ GeckoTerminal fetch failed: {e}")
-        return []
+        if pools:
+            return [pool['attributes']['token_address'] for pool in pools if 'attributes' in pool and 'token_address' in pool['attributes']]
 
-def decode_transaction_blob(blob_str: str) -> bytes:
-    try:
-        return base64.b64decode(blob_str)
-    except Exception:
-        return b58decode(blob_str)
+        screener = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5).json()
+        pairs = screener.get("pairs", [])
+        if not pairs:
+            logging.warning("🚫 DEX Screener returned no pairs.")
+            return []
+        return [pair['baseToken']['address'] for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']]
+    except Exception as e:
+        logging.error(f"❌ Token fetch failed: {e}")
+        return []
 
 def fallback_rpc():
     global solana_client
@@ -113,21 +111,14 @@ def fallback_rpc():
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1&onlyDirectRoutes=true").json()
-        if not quote.get("routePlan"):
-            raise Exception("No swap route available")
-
-        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
-            "wrapUnwrapSOL": True,
-            "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True,
-            "onlyDirectRoutes": True
-        }).json()
-
-        tx_data = decode_transaction_blob(swap["swapTransaction"])
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
+        recipient = Pubkey.from_string(to_addr)
+        ix = transfer(TransferParams(from_pubkey=kp.pubkey(), to_pubkey=recipient, lamports=lamports))
+        blockhash = solana_client.get_latest_blockhash()["result"]["value"]["blockhash"]
+        tx = Transaction.new_unsigned([ix])
+        tx.recent_blockhash = blockhash
+        tx.fee_payer = kp.pubkey()
+        tx.sign([kp])
+        sig = solana_client.send_raw_transaction(tx.serialize())
         return sig
     except Exception as e:
         logging.error(f"❌ Buy failed: {e}")
@@ -135,28 +126,7 @@ def real_buy_token(to_addr: str, lamports: int):
         return None
 
 def real_sell_token(to_addr: str):
-    try:
-        kp = get_phantom_keypair()
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=1&onlyDirectRoutes=true").json()
-        if not quote.get("routePlan"):
-            raise Exception("No swap route available")
-
-        swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-            "userPublicKey": str(kp.pubkey()),
-            "wrapUnwrapSOL": True,
-            "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True,
-            "onlyDirectRoutes": True
-        }).json()
-
-        tx_data = decode_transaction_blob(swap["swapTransaction"])
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
-        return sig
-    except Exception as e:
-        logging.error(f"❌ Sell failed: {e}")
-        fallback_rpc()
-        return None
+    return real_buy_token(to_addr, 1000000)
 
 def log_trade(entry):
     global daily_profit
@@ -181,7 +151,7 @@ async def auto_snipe():
     while not bot.is_closed():
         try:
             tokens = fetch_tokens()
-            logging.info(f"🔍 Found {len(tokens)} tokens from GeckoTerminal.")
+            logging.info(f"🔍 Found {len(tokens)} tokens.")
             for token in tokens:
                 if token not in bought_tokens:
                     logging.info(f"🛒 Attempting to buy {token}...")
@@ -195,7 +165,6 @@ async def auto_snipe():
                         }
                         log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow()})
                 else:
-                    # For demo purposes we use a fixed 2x trigger
                     logging.info(f"💸 Attempting to sell {token}")
                     sell_sig = real_sell_token(token)
                     if sell_sig:
