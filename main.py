@@ -98,14 +98,17 @@ def fetch_tokens():
             pairs = data.get("pairs", [])
             if not pairs:
                 logging.warning("🚫 DEX Screener returned no pairs.")
-                return []
+                raise ValueError("No pairs from DEX Screener")
             return [pair['baseToken']['address'] for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']]
         except json.JSONDecodeError:
             logging.error("❌ Invalid JSON from DEX Screener")
-            return []
+            raise
     except Exception as e:
-        logging.error(f"❌ Token fetch failed: {e}")
-        return []
+        logging.warning(f"⚠️ All APIs failed. Using hardcoded fallback tokens.")
+        return [
+            "So11111111111111111111111111111111111111112",
+            "4k3Dyjzvzp8eNYk3uVwPZCzvmmYrFw1DQv3q4U2CGLuM"  # Raydium & others
+        ]
 
 def fallback_rpc():
     global solana_client
