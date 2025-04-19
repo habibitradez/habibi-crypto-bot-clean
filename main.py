@@ -27,9 +27,11 @@ from base58 import b58decode
 import base64
 import ssl
 import urllib3
-from solders.transaction import Transaction
+from solders.instruction import Instruction
 from solders.system_program import transfer, TransferParams
-from solders.message import Message
+from solders.message import MessageV0
+from solders.transaction import VersionedTransaction
+from solders.message import LoadedMessage
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -127,21 +129,15 @@ def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = Message(
-            account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
-            recent_blockhash=blockhash,
-            instructions=[
-                transfer(
-                    TransferParams(
-                        from_pubkey=kp.pubkey(),
-                        to_pubkey=Pubkey.from_string(to_addr),
-                        lamports=lamports
-                    )
-                )
-            ],
-            address_table_lookups=[]
+        instruction = transfer(
+            TransferParams(
+                from_pubkey=kp.pubkey(),
+                to_pubkey=Pubkey.from_string(to_addr),
+                lamports=lamports
+            )
         )
-        tx = Transaction([kp], msg, blockhash)
+        msg = MessageV0(instructions=[instruction], payer=kp.pubkey(), recent_blockhash=blockhash)
+        tx = VersionedTransaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
@@ -152,21 +148,15 @@ def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
         blockhash = solana_client.get_latest_blockhash().value.blockhash
-        msg = Message(
-            account_keys=[kp.pubkey(), Pubkey.from_string(to_addr)],
-            recent_blockhash=blockhash,
-            instructions=[
-                transfer(
-                    TransferParams(
-                        from_pubkey=kp.pubkey(),
-                        to_pubkey=Pubkey.from_string(to_addr),
-                        lamports=BUY_AMOUNT_LAMPORTS
-                    )
-                )
-            ],
-            address_table_lookups=[]
+        instruction = transfer(
+            TransferParams(
+                from_pubkey=kp.pubkey(),
+                to_pubkey=Pubkey.from_string(to_addr),
+                lamports=BUY_AMOUNT_LAMPORTS
+            )
         )
-        tx = Transaction([kp], msg, blockhash)
+        msg = MessageV0(instructions=[instruction], payer=kp.pubkey(), recent_blockhash=blockhash)
+        tx = VersionedTransaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
