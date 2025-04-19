@@ -192,7 +192,6 @@ def log_trade(entry):
 def summarize_daily_profit():
     logging.info(f"📊 Estimated Daily Profit So Far: ${daily_profit:.2f}")
 
-# --- Add missing buy command ---
 @bot.command()
 async def buy(ctx, token: str):
     await ctx.send(f"Buying {token}...")
@@ -202,7 +201,6 @@ async def buy(ctx, token: str):
     else:
         await ctx.send(f"❌ Buy failed for {token}. Check logs.")
 
-# --- Add missing sell command ---
 @bot.command()
 async def sell(ctx, token: str):
     await ctx.send(f"Selling {token}...")
@@ -212,7 +210,6 @@ async def sell(ctx, token: str):
     else:
         await ctx.send(f"❌ Sell failed for {token}. Check logs.")
 
-# --- Keep existing bot event ---
 @bot.event
 async def on_ready():
     await tree.sync()
@@ -226,8 +223,11 @@ async def auto_snipe():
     while not bot.is_closed():
         try:
             tokens = fetch_birdeye()
+            logging.info(f"🔍 Found {len(tokens)} tokens from Birdeye.")
             for token in tokens:
+                logging.info(f"⚙️ Checking token: {token}")
                 if token not in bought_tokens:
+                    logging.info(f"🛒 Attempting to buy {token}...")
                     sig = real_buy_token(token, 1000000)
                     if sig:
                         price = get_token_price(token)
@@ -237,11 +237,15 @@ async def auto_snipe():
                             'token': token,
                             'initial_price': price
                         }
+                        logging.info(f"✅ Bought {token} at price {price}")
                         log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow(), "price": price})
+                    else:
+                        logging.warning(f"❌ Failed to buy {token}")
                 else:
                     price_now = get_token_price(token)
                     token_data = bought_tokens[token]
                     if price_now and token_data['initial_price'] and price_now >= token_data['initial_price'] * SELL_PROFIT_TRIGGER:
+                        logging.info(f"💸 Attempting to sell {token} at {price_now}")
                         sell_sig = real_sell_token(token)
                         if sell_sig:
                             profit = price_now - token_data['initial_price']
