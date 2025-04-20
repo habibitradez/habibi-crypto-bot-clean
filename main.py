@@ -207,3 +207,4 @@ try:
     bot.run(DISCORD_TOKEN)
 except Exception as e:
     logging.error(f"❌ Bot failed to run: {e}")
+
