@@ -28,7 +28,7 @@ import urllib3
 from solders.instruction import Instruction
 from solders.system_program import transfer, TransferParams
 from solders.message import Message
-from solders.transaction import VersionedTransaction
+from solders.transaction import Transaction
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 try:
@@ -112,7 +112,7 @@ def real_buy_token(to_addr: str, lamports: int):
             )
         )
         msg = Message([instruction], kp.pubkey(), blockhash)
-        tx = VersionedTransaction(msg, [kp])
+        tx = Transaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
@@ -131,7 +131,7 @@ def real_sell_token(to_addr: str):
             )
         )
         msg = Message([instruction], kp.pubkey(), blockhash)
-        tx = VersionedTransaction(msg, [kp])
+        tx = Transaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
