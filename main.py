@@ -53,10 +53,10 @@ solana_client = Client(rpc_endpoints[0])
 bought_tokens = {}
 daily_profit = 0
 trade_log = []
-SELL_PROFIT_TRIGGER = 2.0  # Sell when price is 2x the buy price
-STOP_LOSS_TRIGGER = 0.7    # Sell when price drops to 0.7x the buy price
-MAX_TOKENS_TO_HOLD = 5     # Maximum number of tokens to hold at once
-BUY_AMOUNT_LAMPORTS = 10000000  # 0.01 SOL per trade
+SELL_PROFIT_TRIGGER = 1.3  # Lowered to 1.3x for faster profits
+STOP_LOSS_TRIGGER = 0.85   # Raised to 0.85x for tighter stop loss
+MAX_TOKENS_TO_HOLD = 10    # Increased to hold more tokens simultaneously
+BUY_AMOUNT_LAMPORTS = 200000000  # 0.2 SOL per trade as requested
 
 def get_token_price(token_address):
     try:
@@ -123,6 +123,39 @@ def fetch_birdeye():
 def fetch_new_tokens():
     tokens = []
     
+    # Focus more on most recent tokens
+    # Try Birdeye's recent tokens endpoint (increased limit from 10 to 30)
+    try:
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=30", 
+                        timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            birdeye_count = 0
+            if 'data' in data:
+                for token in data['data']:
+                    if 'address' in token and token['address'] not in tokens:
+                        tokens.append(token['address'])
+                        birdeye_count += 1
+            logging.info(f"✅ Added {birdeye_count} tokens from Birdeye recent")
+    except Exception as e:
+        logging.error(f"❌ Birdeye recent token fetch failed: {str(e)}")
+    
+    try:
+        # Also try a special endpoint for hot new tokens/DeFi launches
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=v24hPercent&sort_type=desc&offset=0&limit=20", 
+                         timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            hot_tokens_count = 0
+            if 'data' in data:
+                for token in data['data']:
+                    if 'address' in token and token['address'] not in tokens:
+                        tokens.append(token['address'])
+                        hot_tokens_count += 1
+            logging.info(f"✅ Added {hot_tokens_count} tokens from Birdeye hot tokens")
+    except Exception as e:
+        logging.error(f"❌ Birdeye hot tokens fetch failed: {str(e)}")
+    
     try:
         # Try Solana FM API
         headers = {"accept": "application/json"}
@@ -132,9 +165,9 @@ def fetch_new_tokens():
             data = r.json()
             if 'data' in data and 'list' in data['data']:
                 for token in data['data']['list']:
-                    if 'mintAddress' in token:
+                    if 'mintAddress' in token and token['mintAddress'] not in tokens:
                         tokens.append(token['mintAddress'])
-                logging.info(f"✅ Fetched {len(tokens)} tokens from Solscan")
+                logging.info(f"✅ Fetched {len(tokens) - hot_tokens_count - birdeye_count} tokens from Solscan")
         else:
             logging.warning(f"❌ Solscan API returned status code: {r.status_code}")
     except Exception as e:
@@ -155,21 +188,8 @@ def fetch_new_tokens():
     except Exception as e:
         logging.error(f"❌ Jupiter token fetch failed: {str(e)}")
         
-    # Try additional Birdeye endpoint
-    try:
-        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=10", 
-                        timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            birdeye_count = 0
-            if 'data' in data:
-                for token in data['data']:
-                    if 'address' in token and token['address'] not in tokens:
-                        tokens.append(token['address'])
-                        birdeye_count += 1
-            logging.info(f"✅ Added {birdeye_count} tokens from Birdeye recent")
-    except Exception as e:
-        logging.error(f"❌ Birdeye recent token fetch failed: {str(e)}")
+    # Shuffle the tokens list to add randomness - this helps avoid competing with other bots
+    random.shuffle(tokens)
     
     logging.info(f"✅ Total: Found {len(tokens)} tokens from all APIs")
     return tokens
@@ -231,15 +251,30 @@ def is_valid_token(token_address):
             logging.info(f"🔍 Token {token_address} has no data")
             return False
             
-        # Check if there's liquidity
+        # Check if there's liquidity - lowered threshold for new launches
         liquidity = token_data.get('liquidity', 0)
-        if not liquidity or float(liquidity) < 1000:  # At least $1000 in liquidity
-            logging.info(f"🔍 Token {token_address} has insufficient liquidity: ${liquidity}")
+        if not liquidity or float(liquidity) < 100:  # Lower threshold to $100 in liquidity
+            logging.info(f"🔍 Token {token_address} has very low liquidity: ${liquidity}, but continuing for potential early snipe")
+            
+            # For very new tokens, we'll still allow trading if they have any liquidity at all
+            if float(liquidity) > 0:
+                logging.info(f"🚀 Potential new launch detected! Token {token_address} has minimal liquidity: ${float(liquidity):.2f}")
+                return True
             return False
             
-        # Check if token has been trading
+        # For new tokens, we'll be more lenient with volume requirements
         volume = token_data.get('volume', {}).get('h24', 0)
-        if not volume or float(volume) <= 0:
+        creation_time = token_data.get('createdAt', 0)
+        current_time = time.time() * 1000  # Current time in milliseconds
+        
+        # If token was created in the last hour, ignore volume requirement
+        is_new_token = False
+        if creation_time and (current_time - creation_time) < 3600000:  # 1 hour in milliseconds
+            is_new_token = True
+            logging.info(f"🚀 New token detected! {token_address} was created less than 1 hour ago")
+            
+        # Only check volume for tokens that aren't brand new
+        if not is_new_token and (not volume or float(volume) <= 0):
             logging.info(f"🔍 Token {token_address} has no recent trading volume")
             return False
             
@@ -463,19 +498,19 @@ async def auto_snipe():
         try:
             # Skip if we're already holding max tokens
             if len(bought_tokens) >= MAX_TOKENS_TO_HOLD:
-                logging.info(f"🛑 Already holding maximum of {MAX_TOKENS_TO_HOLD} tokens. Skipping buy.")
+                logging.info(f"🛑 Already holding maximum of {MAX_TOKENS_TO_HOLD} tokens. Checking existing positions...")
                 
                 # Just check existing holdings
                 for token, token_data in list(bought_tokens.items()):
                     await check_and_sell_token(token, token_data)
                 
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)  # Reduced sleep time for more frequent checking
                 continue
             
-            # Get both high volume and new tokens
+            # Get both high volume and new tokens - prioritize new tokens
             logging.info("🔍 Fetching tokens from APIs...")
+            new_tokens = fetch_new_tokens()  # Get new tokens first
             volume_tokens = fetch_birdeye()
-            new_tokens = fetch_new_tokens()
             
             # Combine and prioritize new tokens (avoiding duplicates)
             all_tokens = new_tokens + [t for t in volume_tokens if t not in new_tokens]
@@ -488,8 +523,8 @@ async def auto_snipe():
             
             logging.info(f"🔍 Found {len(target_tokens)} potential tokens to snipe")
             
-            # Try to buy new tokens
-            for token in target_tokens[:3]:  # Limit to top 3 to avoid too many transactions
+            # Try to buy new tokens - increased from 3 to 5 per cycle
+            for token in target_tokens[:5]:  
                 if len(bought_tokens) >= MAX_TOKENS_TO_HOLD:
                     break
                     
@@ -517,6 +552,9 @@ async def auto_snipe():
                         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
                         if channel:
                             await channel.send(f"🚀 Auto-bought {token} at ${price:.6f}! https://solscan.io/tx/{sig}")
+                
+                # Add a short delay between buy attempts to avoid rate limits
+                await asyncio.sleep(2)
             
             # Check existing positions for selling
             for token, token_data in list(bought_tokens.items()):
@@ -529,7 +567,7 @@ async def auto_snipe():
         except Exception as e:
             logging.error(f"❌ Error in auto_snipe: {e}")
             
-        await asyncio.sleep(30)
+        await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading
 
 async def check_and_sell_token(token, token_data):
     try:
@@ -540,12 +578,12 @@ async def check_and_sell_token(token, token_data):
             return
             
         price_ratio = price_now / initial_price
-        hours_since_buy = (datetime.utcnow() - token_data['buy_time']).total_seconds() / 3600
+        minutes_since_buy = (datetime.utcnow() - token_data['buy_time']).total_seconds() / 60
         
         # Sell conditions:
-        # 1. Hit profit target
-        # 2. Hit stop loss
-        # 3. Been holding more than 24 hours
+        # 1. Hit profit target - using faster target
+        # 2. Hit stop loss - tighter stop to avoid bigger losses
+        # 3. Been holding more than 30 minutes - much faster cycling
         should_sell = False
         sell_reason = ""
         
@@ -555,9 +593,14 @@ async def check_and_sell_token(token, token_data):
         elif price_ratio <= STOP_LOSS_TRIGGER:
             should_sell = True
             sell_reason = f"stop loss triggered ({price_ratio:.2f}x)"
-        elif hours_since_buy >= 24:
-            should_sell = True
-            sell_reason = f"held for {hours_since_buy:.1f} hours"
+        elif minutes_since_buy >= 30:
+            # If token has been held for 30 minutes, check if it's profitable at all
+            if price_ratio > 1.05:  # 5% profit or more
+                should_sell = True
+                sell_reason = f"profit taking after {minutes_since_buy:.1f} minutes ({price_ratio:.2f}x)"
+            elif minutes_since_buy >= 60:  # Force sell after 1 hour regardless
+                should_sell = True
+                sell_reason = f"held for {minutes_since_buy:.1f} minutes"
             
         if should_sell:
             logging.info(f"🔄 Selling {token} - {sell_reason}")
@@ -583,6 +626,10 @@ async def check_and_sell_token(token, token_data):
                         await channel.send(f"💰 Auto-sold {token} at ${price_now:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit) - {sell_reason}! https://solscan.io/tx/{sell_sig}")
                 
                 del bought_tokens[token]
+                
+                # If this was a very profitable trade (over 50% gain), log it specially
+                if price_ratio >= 1.5:
+                    logging.info(f"💎 HIGHLY PROFITABLE TRADE: {token} at {price_ratio:.2f}x return!")
     except Exception as e:
         logging.error(f"❌ Error checking token {token}: {e}")
 
