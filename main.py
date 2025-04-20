@@ -1,3 +1,8 @@
+def summarize_daily_profit():
+    global trade_log
+    total = sum(entry.get("profit", 0) for entry in trade_log if entry.get("type") == "sell")
+    logging.info(f"📊 Estimated Daily Profit So Far: ${total:.2f}")
+
 def fetch_birdeye():
     try:
         r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
