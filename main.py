@@ -19,12 +19,10 @@ from discord.ui import View, Button
 import asyncio
 from datetime import datetime
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
-import random
 from solana.rpc.api import Client
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
 from base58 import b58decode
-import base64
 import ssl
 import urllib3
 from solders.instruction import Instruction
@@ -63,6 +61,7 @@ daily_profit = 0
 trade_log = []
 SELL_PROFIT_TRIGGER = 2.0
 BUY_AMOUNT_LAMPORTS = 10000000
+DAILY_PROFIT_GOAL = 1000
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -81,48 +80,25 @@ def log_wallet_balance():
 
 def fetch_tokens():
     try:
-        url = "https://api.geckoterminal.com/api/v2/networks/solana/pools/recent"
-        r = requests.get(url, timeout=5)
-        if r.status_code == 404:
-            logging.warning("🚫 GeckoTerminal 'recent' returned 404, trying DexScreener...")
-        else:
-            try:
-                pools = r.json().get('data', [])
-                if pools:
-                    return [pool['attributes']['token_address'] for pool in pools if 'attributes' in pool and 'token_address' in pool['attributes']]
-            except json.JSONDecodeError:
-                logging.error("❌ Invalid JSON from GeckoTerminal")
-
         screener = requests.get("https://api.dexscreener.com/latest/dex/pairs/solana", timeout=5)
-        try:
-            data = screener.json()
-            pairs = data.get("pairs", [])
-            if not pairs:
-                logging.warning("🚫 DEX Screener returned no pairs.")
-                raise ValueError("No pairs from DEX Screener")
-            return [pair['baseToken']['address'] for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']]
-        except json.JSONDecodeError:
-            logging.error("❌ Invalid JSON from DEX Screener")
-            raise
+        data = screener.json()
+        pairs = data.get("pairs", [])
+        if not pairs:
+            logging.warning("🚫 DEX Screener returned no pairs.")
+            raise ValueError("No pairs from DEX Screener")
+        return [
+            {
+                "address": pair['baseToken']['address'],
+                "priceUsd": float(pair['priceUsd']) if 'priceUsd' in pair else 0.0
+            }
+            for pair in pairs[:10] if 'baseToken' in pair and 'address' in pair['baseToken']
+        ]
     except Exception as e:
         logging.warning(f"⚠️ All APIs failed. Using hardcoded fallback tokens.")
         return [
-            "So11111111111111111111111111111111111111112",
-            "4k3Dyjzvzp8eNYk3uVwPZCzvmmYrFw1DQv3q4U2CGLuM"
+            {"address": "So11111111111111111111111111111111111111112", "priceUsd": 1.0},
+            {"address": "4k3Dyjzvzp8eNYk3uVwPZCzvmmYrFw1DQv3q4U2CGLuM", "priceUsd": 1.0}
         ]
-
-def fallback_rpc():
-    global solana_client
-    for endpoint in rpc_endpoints[1:]:
-        try:
-            test_client = Client(endpoint)
-            test_key = get_phantom_keypair().pubkey()
-            test_client.get_balance(test_key)
-            solana_client = test_client
-            logging.info(f"✅ Switched to fallback RPC: {endpoint}")
-            return
-        except Exception as e:
-            logging.warning(f"❌ Fallback RPC {endpoint} failed: {e}")
 
 def real_buy_token(to_addr: str, lamports: int):
     try:
@@ -168,6 +144,12 @@ def log_trade(entry):
     if entry.get("type") == "sell":
         daily_profit += entry.get("profit", 0)
     logging.info(f"🧾 TRADE LOG: {entry}")
+    try:
+        channel = discord.utils.get(bot.get_all_channels(), name="trades")
+        if channel:
+            asyncio.run_coroutine_threadsafe(channel.send(f"**{entry['type'].upper()}** {entry['token']}\nTX: {entry['tx']}\nProfit: ${entry.get('profit', 0):.2f}"), bot.loop)
+    except Exception as e:
+        logging.warning(f"⚠️ Could not send Discord alert: {e}")
 
 def summarize_daily_profit():
     logging.info(f"📊 Estimated Daily Profit So Far: ${daily_profit:.2f}")
@@ -181,30 +163,39 @@ async def on_ready():
     bot.loop.create_task(auto_snipe())
 
 async def auto_snipe():
+    global daily_profit
     await bot.wait_until_ready()
     while not bot.is_closed():
         try:
+            if daily_profit >= DAILY_PROFIT_GOAL:
+                logging.info("🎯 Daily profit goal reached. Pausing auto-snipe until next cycle.")
+                await asyncio.sleep(60)
+                continue
+
             tokens = fetch_tokens()
             logging.info(f"🔍 Found {len(tokens)} tokens.")
-            for token in tokens:
+            for token_data in tokens:
+                token = token_data['address']
+                price = token_data['priceUsd']
+
                 if token not in bought_tokens:
-                    logging.info(f"🛒 Attempting to buy {token}...")
+                    logging.info(f"🛒 Attempting to buy {token} at ${price:.4f}...")
                     sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
                     if sig:
                         bought_tokens[token] = {
                             'buy_sig': sig,
                             'buy_time': datetime.utcnow(),
                             'token': token,
-                            'initial_price': 1
+                            'initial_price': price
                         }
                         log_trade({"type": "buy", "token": token, "tx": sig, "timestamp": datetime.utcnow()})
                 else:
-                    price_sim = random.uniform(1.5, 2.5)
-                    if price_sim >= SELL_PROFIT_TRIGGER:
-                        logging.info(f"💸 Attempting to sell {token}")
+                    buy_price = bought_tokens[token]['initial_price']
+                    if price / buy_price >= SELL_PROFIT_TRIGGER:
+                        logging.info(f"💸 Attempting to sell {token} at ${price:.4f} (bought at ${buy_price:.4f})")
                         sell_sig = real_sell_token(token)
                         if sell_sig:
-                            profit = round((price_sim - 1) * (BUY_AMOUNT_LAMPORTS / 1_000_000_000) * 150, 2)
+                            profit = round((price - buy_price) * (BUY_AMOUNT_LAMPORTS / 1_000_000_000), 2)
                             log_trade({"type": "sell", "token": token, "tx": sell_sig, "timestamp": datetime.utcnow(), "profit": profit})
                             del bought_tokens[token]
             summarize_daily_profit()
