@@ -183,6 +183,12 @@ def fetch_new_tokens():
                 for token in data['data']:
                     if 'address' in token and token['address'] not in tokens:
                         percent_change = token.get('v24hPercent', 0)
+                        if isinstance(percent_change, str):
+                            try:
+                                percent_change = float(percent_change)
+                            except:
+                                percent_change = 0
+                                
                         if float(percent_change) > 10:  # Only add tokens with >10% 24h change
                             tokens.append(token['address'])
                             hot_tokens_count += 1
@@ -442,7 +448,7 @@ def real_sell_token(to_addr: str):
             logging.warning(f"❌ Zero balance for {to_addr}")
             return None
             
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=1"
+        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=2"  # Increased slippage for sells too
         logging.info(f"🔍 Getting sell quote from: {quote_url}")
         
         r = requests.get(quote_url, timeout=10)
@@ -456,11 +462,14 @@ def real_sell_token(to_addr: str):
             logging.warning(f"❌ No sell route available for {to_addr}")
             return None
 
+        # Randomize compute unit price for sell as well
+        compute_price = random.randint(500, 1500)  # Random price between 500-1500 micro-lamports
+
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
+            "computeUnitPriceMicroLamports": compute_price,
             "asLegacyTransaction": True
         }, timeout=10).json()
 
@@ -525,13 +534,32 @@ async def buy_slash(interaction: discord.Interaction, token: str):
 @tree.command(name="sell", description="Sell a token for SOL")
 async def sell_slash(interaction: discord.Interaction, token: str):
     await interaction.response.send_message(f"Selling {token}...")
+    
+    # Additional validation for token address
+    try:
+        token = sanitize_token_address(token)
+    except ValueError as e:
+        await interaction.followup.send(f"❌ Invalid token address format: {str(e)}")
+        return
+        
     initial_price = 0
     if token in bought_tokens:
         initial_price = bought_tokens[token]['initial_price']
+        if isinstance(initial_price, str):
+            try:
+                initial_price = float(initial_price)
+            except:
+                initial_price = 0
     
     sig = real_sell_token(token)
     if sig:
         current_price = get_token_price(token)
+        if isinstance(current_price, str):
+            try:
+                current_price = float(current_price)
+            except:
+                current_price = 0
+                
         profit = 0
         if initial_price > 0 and current_price > 0:
             profit = ((current_price - initial_price) / initial_price) * BUY_AMOUNT_LAMPORTS / 1_000_000_000
@@ -572,12 +600,103 @@ async def holdings_slash(interaction: discord.Interaction):
     for token, data in bought_tokens.items():
         current_price = get_token_price(token)
         initial_price = data['initial_price']
+        
+        # Handle string conversion
+        if isinstance(current_price, str):
+            try:
+                current_price = float(current_price)
+            except:
+                current_price = 0
+                
+        if isinstance(initial_price, str):
+            try:
+                initial_price = float(initial_price)
+            except:
+                initial_price = 0
+        
         profit_percent = ((current_price - initial_price) / initial_price * 100) if initial_price > 0 else 0
         buy_time = data['buy_time'].strftime("%H:%M:%S")
         
         holdings_text += f"- {token}: Bought at ${initial_price:.6f}, Now ${current_price:.6f} ({profit_percent:.2f}%) - Bought at {buy_time}\n"
         
     await interaction.response.send_message(holdings_text)
+
+async def check_and_sell_token(token, token_data):
+    try:
+        price_now = get_token_price(token)
+        initial_price = token_data['initial_price']
+        
+        # Fix type issues by ensuring we have proper numeric values
+        if isinstance(price_now, str):
+            try:
+                price_now = float(price_now)
+            except:
+                price_now = 0
+                
+        if isinstance(initial_price, str):
+            try:
+                initial_price = float(initial_price)
+            except:
+                initial_price = 0
+        
+        if price_now <= 0 or initial_price <= 0:
+            return
+            
+        price_ratio = price_now / initial_price
+        minutes_since_buy = (datetime.utcnow() - token_data['buy_time']).total_seconds() / 60
+        
+        # Sell conditions:
+        # 1. Hit profit target - using faster target
+        # 2. Hit stop loss - tighter stop to avoid bigger losses
+        # 3. Been holding more than 30 minutes - much faster cycling
+        should_sell = False
+        sell_reason = ""
+        
+        if price_ratio >= SELL_PROFIT_TRIGGER:
+            should_sell = True
+            sell_reason = f"profit target reached ({price_ratio:.2f}x)"
+        elif price_ratio <= STOP_LOSS_TRIGGER:
+            should_sell = True
+            sell_reason = f"stop loss triggered ({price_ratio:.2f}x)"
+        elif minutes_since_buy >= 30:
+            # If token has been held for 30 minutes, check if it's profitable at all
+            if price_ratio > 1.05:  # 5% profit or more
+                should_sell = True
+                sell_reason = f"profit taking after {minutes_since_buy:.1f} minutes ({price_ratio:.2f}x)"
+            elif minutes_since_buy >= 60:  # Force sell after 1 hour regardless
+                should_sell = True
+                sell_reason = f"held for {minutes_since_buy:.1f} minutes"
+            
+        if should_sell:
+            logging.info(f"🔄 Selling {token} - {sell_reason}")
+            sell_sig = real_sell_token(token)
+            
+            if sell_sig:
+                profit = ((price_now - initial_price) / initial_price) * BUY_AMOUNT_LAMPORTS / 1_000_000_000
+                
+                log_trade({
+                    "type": "sell", 
+                    "token": token,
+                    "tx": sell_sig,
+                    "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+                    "price": price_now,
+                    "profit": profit,
+                    "reason": sell_reason
+                })
+                
+                # Notify in Discord
+                if DISCORD_NEWS_CHANNEL_ID:
+                    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+                    if channel:
+                        await channel.send(f"💰 Auto-sold {token} at ${price_now:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit) - {sell_reason}! https://solscan.io/tx/{sell_sig}")
+                
+                del bought_tokens[token]
+                
+                # If this was a very profitable trade (over 50% gain), log it specially
+                if price_ratio >= 1.5:
+                    logging.info(f"💎 HIGHLY PROFITABLE TRADE: {token} at {price_ratio:.2f}x return!")
+    except Exception as e:
+        logging.error(f"❌ Error checking token {token}: {e}")
 
 async def auto_snipe():
     await bot.wait_until_ready()
@@ -668,94 +787,7 @@ async def auto_snipe():
         except Exception as e:
             logging.error(f"❌ Error in auto_snipe: {e}")
             
-        await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading()):
-                await check_and_sell_token(token, token_data)
-            
-            # Summarize current status
-            summarize_daily_profit()
-            log_wallet_balance()
-            
-        except Exception as e:
-            logging.error(f"❌ Error in auto_snipe: {e}")
-            
         await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading
-
-async def check_and_sell_token(token, token_data):
-    try:
-        price_now = get_token_price(token)
-        initial_price = token_data['initial_price']
-        
-        # Fix type issues by ensuring we have proper numeric values
-        if isinstance(price_now, str):
-            try:
-                price_now = float(price_now)
-            except:
-                price_now = 0
-                
-        if isinstance(initial_price, str):
-            try:
-                initial_price = float(initial_price)
-            except:
-                initial_price = 0
-        
-        if price_now <= 0 or initial_price <= 0:
-            return
-            
-        price_ratio = price_now / initial_price
-        minutes_since_buy = (datetime.utcnow() - token_data['buy_time']).total_seconds() / 60
-        
-        # Sell conditions:
-        # 1. Hit profit target - using faster target
-        # 2. Hit stop loss - tighter stop to avoid bigger losses
-        # 3. Been holding more than 30 minutes - much faster cycling
-        should_sell = False
-        sell_reason = ""
-        
-        if price_ratio >= SELL_PROFIT_TRIGGER:
-            should_sell = True
-            sell_reason = f"profit target reached ({price_ratio:.2f}x)"
-        elif price_ratio <= STOP_LOSS_TRIGGER:
-            should_sell = True
-            sell_reason = f"stop loss triggered ({price_ratio:.2f}x)"
-        elif minutes_since_buy >= 30:
-            # If token has been held for 30 minutes, check if it's profitable at all
-            if price_ratio > 1.05:  # 5% profit or more
-                should_sell = True
-                sell_reason = f"profit taking after {minutes_since_buy:.1f} minutes ({price_ratio:.2f}x)"
-            elif minutes_since_buy >= 60:  # Force sell after 1 hour regardless
-                should_sell = True
-                sell_reason = f"held for {minutes_since_buy:.1f} minutes"
-            
-        if should_sell:
-            logging.info(f"🔄 Selling {token} - {sell_reason}")
-            sell_sig = real_sell_token(token)
-            
-            if sell_sig:
-                profit = ((price_now - initial_price) / initial_price) * BUY_AMOUNT_LAMPORTS / 1_000_000_000
-                
-                log_trade({
-                    "type": "sell", 
-                    "token": token,
-                    "tx": sell_sig,
-                    "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-                    "price": price_now,
-                    "profit": profit,
-                    "reason": sell_reason
-                })
-                
-                # Notify in Discord
-                if DISCORD_NEWS_CHANNEL_ID:
-                    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                    if channel:
-                        await channel.send(f"💰 Auto-sold {token} at ${price_now:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit) - {sell_reason}! https://solscan.io/tx/{sell_sig}")
-                
-                del bought_tokens[token]
-                
-                # If this was a very profitable trade (over 50% gain), log it specially
-                if price_ratio >= 1.5:
-                    logging.info(f"💎 HIGHLY PROFITABLE TRADE: {token} at {price_ratio:.2f}x return!")
-    except Exception as e:
-        logging.error(f"❌ Error checking token {token}: {e}")
 
 @tree.command(name="debug", description="Debug token fetching")
 async def debug_slash(interaction: discord.Interaction):
@@ -828,13 +860,14 @@ Sample tokens:
     except Exception as e:
         await interaction.followup.send(f"Debug failed: {e}")
 
-@bot.event
-async def on_ready():
-    await tree.sync()
-    logging.info(f"✅ Logged in as {bot.user}")
-    log_wallet_balance()
-    bot.loop.create_task(auto_snipe())
-    logging.info("🚀 Bot fully ready: Commands, Auto-sniping, Wallet Active.")
+@tree.command(name="chart", description="Generate a profit chart")
+async def chart_slash(interaction: discord.Interaction):
+    await interaction.response.send_message("Generating profit chart...")
+    try:
+        generate_profit_chart()
+        await interaction.followup.send(file=discord.File('profit_chart.png'))
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to generate chart: {e}")
 
 def generate_profit_chart():
     try:
@@ -864,15 +897,6 @@ def generate_profit_chart():
     except Exception as e:
         logging.error(f"❌ Error generating profit chart: {e}")
 
-@tree.command(name="chart", description="Generate a profit chart")
-async def chart_slash(interaction: discord.Interaction):
-    await interaction.response.send_message("Generating profit chart...")
-    try:
-        generate_profit_chart()
-        await interaction.followup.send(file=discord.File('profit_chart.png'))
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to generate chart: {e}")
-
 # Load existing trade log if available
 try:
     with open("trade_log.json", "r") as f:
@@ -880,6 +904,14 @@ try:
     logging.info(f"✅ Loaded {len(trade_log)} previous trades")
 except FileNotFoundError:
     logging.info("No previous trade log found. Starting fresh.")
+
+@bot.event
+async def on_ready():
+    await tree.sync()
+    logging.info(f"✅ Logged in as {bot.user}")
+    log_wallet_balance()
+    bot.loop.create_task(auto_snipe())
+    logging.info("🚀 Bot fully ready: Commands, Auto-sniping, Wallet Active.")
 
 # Start the bot
 if __name__ == "__main__":
