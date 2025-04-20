@@ -111,7 +111,7 @@ def real_buy_token(to_addr: str, lamports: int):
                 lamports=lamports
             )
         )
-        msg = Message([instruction], kp.pubkey(), blockhash)
+        msg = Message([instruction], blockhash)
         tx = Transaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
@@ -130,7 +130,7 @@ def real_sell_token(to_addr: str):
                 lamports=BUY_AMOUNT_LAMPORTS
             )
         )
-        msg = Message([instruction], kp.pubkey(), blockhash)
+        msg = Message([instruction], blockhash)
         tx = Transaction(msg, [kp])
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
