@@ -103,7 +103,7 @@ def fetch_tokens():
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        blockhash_obj = solana_client.get_latest_blockhash().value
         instruction = transfer(
             TransferParams(
                 from_pubkey=kp.pubkey(),
@@ -112,7 +112,7 @@ def real_buy_token(to_addr: str, lamports: int):
             )
         )
         msg = Message([instruction], kp.pubkey())
-        tx = Transaction([kp], msg, blockhash)
+        tx = Transaction([kp], msg, blockhash_obj.blockhash)
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
@@ -122,7 +122,7 @@ def real_buy_token(to_addr: str, lamports: int):
 def real_sell_token(to_addr: str):
     try:
         kp = get_phantom_keypair()
-        blockhash = solana_client.get_latest_blockhash().value.blockhash
+        blockhash_obj = solana_client.get_latest_blockhash().value
         instruction = transfer(
             TransferParams(
                 from_pubkey=kp.pubkey(),
@@ -131,7 +131,7 @@ def real_sell_token(to_addr: str):
             )
         )
         msg = Message([instruction], kp.pubkey())
-        tx = Transaction([kp], msg, blockhash)
+        tx = Transaction([kp], msg, blockhash_obj.blockhash)
         res = solana_client.send_transaction(tx, kp)
         return res.value if hasattr(res, 'value') else res
     except Exception as e:
