@@ -162,6 +162,24 @@ async def on_ready():
     logging.info("🚀 Slash commands synced and ready.")
     bot.loop.create_task(auto_snipe())
 
+@tree.command(name="buy", description="Buy a token by contract address.")
+async def buy_command(interaction: discord.Interaction, address: str):
+    await interaction.response.defer(thinking=True)
+    sig = real_buy_token(address, BUY_AMOUNT_LAMPORTS)
+    if sig:
+        await interaction.followup.send(f"✅ Bought token `{address}`\nTransaction: {sig}")
+    else:
+        await interaction.followup.send(f"❌ Failed to buy token `{address}`.")
+
+@tree.command(name="sell", description="Sell a token by contract address.")
+async def sell_command(interaction: discord.Interaction, address: str):
+    await interaction.response.defer(thinking=True)
+    sig = real_sell_token(address)
+    if sig:
+        await interaction.followup.send(f"✅ Sold token `{address}`\nTransaction: {sig}")
+    else:
+        await interaction.followup.send(f"❌ Failed to sell token `{address}`.")
+
 async def auto_snipe():
     global daily_profit
     await bot.wait_until_ready()
