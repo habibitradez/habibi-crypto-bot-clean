@@ -66,7 +66,16 @@ def get_token_price(token_address):
             return 0
             
         price_data = r.json()
-        return price_data.get('data', {}).get('value', 0)
+        price_value = price_data.get('data', {}).get('value', 0)
+        
+        # Ensure we're returning a float
+        if isinstance(price_value, str):
+            try:
+                price_value = float(price_value)
+            except:
+                price_value = 0
+                
+        return price_value
     except Exception as e:
         logging.error(f"❌ Price fetch failed for {token_address}: {e}")
         return 0
@@ -306,6 +315,19 @@ def is_valid_token(token_address):
         creation_time = token_data.get('createdAt', 0)
         current_time = time.time() * 1000  # Current time in milliseconds
         
+        # Make sure we convert string values to float for comparison
+        if isinstance(liquidity, str):
+            try:
+                liquidity = float(liquidity)
+            except:
+                liquidity = 0
+                
+        if isinstance(volume, str):
+            try:
+                volume = float(volume)
+            except:
+                volume = 0
+        
         # Auto-approve if token was created very recently (within 1 hour)
         if creation_time and (current_time - creation_time) < 3600000:  # 1 hour in milliseconds
             logging.info(f"🚀 New token detected! {token_address} was created less than 1 hour ago - buying without further checks")
@@ -350,7 +372,15 @@ def real_buy_token(to_addr: str, lamports: int):
             return None
 
         # Check price impact - now much more permissive (up to 10%)
-        price_impact = quote.get('priceImpactPct', 0) * 100
+        price_impact = quote.get('priceImpactPct', 0)
+        if isinstance(price_impact, str):
+            try:
+                price_impact = float(price_impact)
+            except:
+                price_impact = 0
+        
+        price_impact = price_impact * 100  # Convert to percentage
+                
         if price_impact > 10:  # Increased from 5% to 10% tolerance
             logging.warning(f"❌ Price impact too high ({price_impact:.2f}%) for {to_addr}")
             return None
@@ -463,9 +493,24 @@ def real_sell_token(to_addr: str):
 @tree.command(name="buy", description="Buy a token using SOL")
 async def buy_slash(interaction: discord.Interaction, token: str):
     await interaction.response.send_message(f"Buying {token}...")
+    
+    # Additional protection: check token format
+    try:
+        token = sanitize_token_address(token)
+    except ValueError as e:
+        await interaction.followup.send(f"❌ Invalid token address format: {str(e)}")
+        return
+        
     sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
     if sig:
         price = get_token_price(token)
+        # Handle string prices
+        if isinstance(price, str):
+            try:
+                price = float(price)
+            except:
+                price = 0
+                
         log_trade({
             "type": "buy",
             "token": token,
@@ -568,15 +613,27 @@ async def auto_snipe():
             logging.info(f"🔍 Found {len(target_tokens)} potential tokens to snipe")
             
             # Try to buy new tokens - increased from 3 to 5 per cycle
-            for token in target_tokens[:5]:  
+            buy_counter = 0  # Count successful buys
+            for token in target_tokens[:10]:  # Try up to 10 tokens per cycle for higher success rate
                 if len(bought_tokens) >= MAX_TOKENS_TO_HOLD:
+                    break
+                
+                if buy_counter >= 5:  # Limit to 5 successful buys per cycle
                     break
                     
                 logging.info(f"💰 Attempting to buy token: {token}")
                 # Buy the token
                 sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
                 if sig:
+                    buy_counter += 1
                     price = get_token_price(token)
+                    # Handle string prices
+                    if isinstance(price, str):
+                        try:
+                            price = float(price)
+                        except:
+                            price = 0
+                            
                     bought_tokens[token] = {
                         'buy_sig': sig,
                         'buy_time': datetime.utcnow(),
@@ -611,12 +668,35 @@ async def auto_snipe():
         except Exception as e:
             logging.error(f"❌ Error in auto_snipe: {e}")
             
+        await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading()):
+                await check_and_sell_token(token, token_data)
+            
+            # Summarize current status
+            summarize_daily_profit()
+            log_wallet_balance()
+            
+        except Exception as e:
+            logging.error(f"❌ Error in auto_snipe: {e}")
+            
         await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading
 
 async def check_and_sell_token(token, token_data):
     try:
         price_now = get_token_price(token)
         initial_price = token_data['initial_price']
+        
+        # Fix type issues by ensuring we have proper numeric values
+        if isinstance(price_now, str):
+            try:
+                price_now = float(price_now)
+            except:
+                price_now = 0
+                
+        if isinstance(initial_price, str):
+            try:
+                initial_price = float(initial_price)
+            except:
+                initial_price = 0
         
         if price_now <= 0 or initial_price <= 0:
             return
