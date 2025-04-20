@@ -61,6 +61,10 @@ BUY_AMOUNT_LAMPORTS = 10000000  # 0.01 SOL per trade
 def get_token_price(token_address):
     try:
         r = requests.get(f"https://public-api.birdeye.so/public/price?address={token_address}", timeout=5)
+        if r.status_code != 200:
+            logging.warning(f"❌ Price API returned status code: {r.status_code}")
+            return 0
+            
         price_data = r.json()
         return price_data.get('data', {}).get('value', 0)
     except Exception as e:
@@ -99,33 +103,76 @@ def summarize_daily_profit():
 
 def fetch_birdeye():
     try:
-        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
-        return [token['address'] for token in r.json().get('data', [])[:10]]
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=20", timeout=10)
+        if r.status_code != 200:
+            logging.warning(f"❌ Birdeye API returned status code: {r.status_code}")
+            return []
+            
+        data = r.json()
+        if 'data' not in data:
+            logging.warning("❌ Birdeye API response missing 'data' field")
+            return []
+            
+        tokens = [token['address'] for token in data.get('data', []) if 'address' in token]
+        logging.info(f"✅ Fetched {len(tokens)} tokens from Birdeye")
+        return tokens
     except Exception as e:
         logging.error(f"❌ Birdeye fetch failed: {e}")
         return []
 
 def fetch_new_tokens():
+    tokens = []
+    
     try:
-        # Method 1: Check recent token creations via Solscan API
-        r = requests.get("https://api.solscan.io/token/list?sort=createdTime&direction=desc&limit=10", timeout=5)
-        new_tokens = [token['address'] for token in r.json().get('data', [])]
-        
-        # Method 2: Monitor Jupiter or Raydium for new listings
-        try:
-            r2 = requests.get("https://cache.jup.ag/tokens", timeout=5)
-            jupiter_tokens = r2.json()
-            # Sort by timestamp if available, otherwise this just gets all tokens
-            recent_jupiter = [token['address'] for token in jupiter_tokens if 'address' in token][:20]
-            new_tokens.extend(recent_jupiter)
-        except Exception as e:
-            logging.error(f"❌ Jupiter tokens fetch failed: {e}")
-        
-        # Remove duplicates and return
-        return list(set(new_tokens))
+        # Try Solana FM API
+        headers = {"accept": "application/json"}
+        r = requests.get("https://api.solscan.io/v2/token/list?sortBy=marketCapRank&direction=desc&limit=15", 
+                         headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            if 'data' in data and 'list' in data['data']:
+                for token in data['data']['list']:
+                    if 'mintAddress' in token:
+                        tokens.append(token['mintAddress'])
+                logging.info(f"✅ Fetched {len(tokens)} tokens from Solscan")
+        else:
+            logging.warning(f"❌ Solscan API returned status code: {r.status_code}")
     except Exception as e:
-        logging.error(f"❌ New token fetch failed: {e}")
-        return []
+        logging.error(f"❌ Solscan token fetch failed: {str(e)}")
+    
+    try:
+        # Also try Jupiter API for tokens
+        r = requests.get("https://token.jup.ag/all", timeout=10)
+        if r.status_code == 200:
+            jupiter_tokens = r.json()
+            # Get recent tokens from Jupiter
+            jupiter_count = 0
+            for token in jupiter_tokens[:30]:  # Limit to first 30
+                if 'address' in token and token['address'] not in tokens:
+                    tokens.append(token['address'])
+                    jupiter_count += 1
+            logging.info(f"✅ Added {jupiter_count} tokens from Jupiter")
+    except Exception as e:
+        logging.error(f"❌ Jupiter token fetch failed: {str(e)}")
+        
+    # Try additional Birdeye endpoint
+    try:
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=10", 
+                        timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            birdeye_count = 0
+            if 'data' in data:
+                for token in data['data']:
+                    if 'address' in token and token['address'] not in tokens:
+                        tokens.append(token['address'])
+                        birdeye_count += 1
+            logging.info(f"✅ Added {birdeye_count} tokens from Birdeye recent")
+    except Exception as e:
+        logging.error(f"❌ Birdeye recent token fetch failed: {str(e)}")
+    
+    logging.info(f"✅ Total: Found {len(tokens)} tokens from all APIs")
+    return tokens
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=2), retry=retry_if_exception_type(Exception))
 def get_phantom_keypair():
@@ -173,6 +220,10 @@ def is_valid_token(token_address):
     try:
         # Check if token has liquidity
         r = requests.get(f"https://public-api.birdeye.so/public/token/{token_address}?cluster=solana", timeout=5)
+        if r.status_code != 200:
+            logging.info(f"🔍 Token {token_address} API returned status {r.status_code}")
+            return False
+            
         token_data = r.json().get('data', {})
         
         # Basic validation checks
@@ -182,16 +233,17 @@ def is_valid_token(token_address):
             
         # Check if there's liquidity
         liquidity = token_data.get('liquidity', 0)
-        if float(liquidity) < 1000:  # At least $1000 in liquidity
+        if not liquidity or float(liquidity) < 1000:  # At least $1000 in liquidity
             logging.info(f"🔍 Token {token_address} has insufficient liquidity: ${liquidity}")
             return False
             
         # Check if token has been trading
         volume = token_data.get('volume', {}).get('h24', 0)
-        if float(volume) <= 0:
+        if not volume or float(volume) <= 0:
             logging.info(f"🔍 Token {token_address} has no recent trading volume")
             return False
             
+        logging.info(f"✅ Token {token_address} passed validation (liquidity: ${float(liquidity):.2f})")
         return True
     except Exception as e:
         logging.error(f"❌ Token validation failed for {token_address}: {e}")
@@ -207,7 +259,16 @@ def real_buy_token(to_addr: str, lamports: int):
             logging.warning(f"❌ Token {to_addr} failed validation checks. Skipping buy.")
             return None
             
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1", timeout=10).json()
+        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1"
+        logging.info(f"🔍 Getting buy quote from: {quote_url}")
+        
+        r = requests.get(quote_url, timeout=10)
+        if r.status_code != 200:
+            logging.warning(f"❌ Jupiter quote API returned {r.status_code}")
+            return None
+            
+        quote = r.json()
+        
         if not quote.get("routePlan"):
             logging.warning(f"❌ No swap route available for {to_addr}")
             return None
@@ -272,7 +333,16 @@ def real_sell_token(to_addr: str):
             logging.warning(f"❌ Zero balance for {to_addr}")
             return None
             
-        quote = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=1", timeout=10).json()
+        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=1"
+        logging.info(f"🔍 Getting sell quote from: {quote_url}")
+        
+        r = requests.get(quote_url, timeout=10)
+        if r.status_code != 200:
+            logging.warning(f"❌ Jupiter quote API returned {r.status_code}")
+            return None
+            
+        quote = r.json()
+        
         if not quote.get("routePlan"):
             logging.warning(f"❌ No sell route available for {to_addr}")
             return None
@@ -403,6 +473,7 @@ async def auto_snipe():
                 continue
             
             # Get both high volume and new tokens
+            logging.info("🔍 Fetching tokens from APIs...")
             volume_tokens = fetch_birdeye()
             new_tokens = fetch_new_tokens()
             
@@ -422,6 +493,7 @@ async def auto_snipe():
                 if len(bought_tokens) >= MAX_TOKENS_TO_HOLD:
                     break
                     
+                logging.info(f"💰 Attempting to buy token: {token}")
                 # Buy the token
                 sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
                 if sig:
@@ -513,6 +585,37 @@ async def check_and_sell_token(token, token_data):
                 del bought_tokens[token]
     except Exception as e:
         logging.error(f"❌ Error checking token {token}: {e}")
+
+@tree.command(name="debug", description="Debug token fetching")
+async def debug_slash(interaction: discord.Interaction):
+    await interaction.response.send_message("Running token fetch debug...")
+    try:
+        # Test fetch_birdeye
+        birdeye_start = time.time()
+        birdeye_tokens = fetch_birdeye()
+        birdeye_time = time.time() - birdeye_start
+        
+        # Test fetch_new_tokens
+        new_start = time.time()
+        new_tokens = fetch_new_tokens()
+        new_time = time.time() - new_start
+        
+        debug_info = f"""Debug Results:
+        
+Birdeye API: {len(birdeye_tokens)} tokens in {birdeye_time:.2f}s
+New Tokens APIs: {len(new_tokens)} tokens in {new_time:.2f}s
+
+Total Unique Tokens: {len(set(birdeye_tokens + new_tokens))}
+
+Sample Birdeye tokens:
+{', '.join(birdeye_tokens[:3]) if birdeye_tokens else 'None'}
+
+Sample New tokens:
+{', '.join(new_tokens[:3]) if new_tokens else 'None'}
+"""
+        await interaction.followup.send(debug_info)
+    except Exception as e:
+        await interaction.followup.send(f"Debug failed: {e}")
 
 @bot.event
 async def on_ready():
