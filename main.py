@@ -29,7 +29,7 @@ import ssl
 import urllib3
 from solders.instruction import Instruction
 from solders.system_program import transfer, TransferParams
-from solders.message import v0
+from solders.message_v0 import MessageV0
 from solders.transaction import VersionedTransaction
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -135,7 +135,7 @@ def real_buy_token(to_addr: str, lamports: int):
                 lamports=lamports
             )
         )
-        msg = v0.MessageV0.try_compile(
+        msg = MessageV0.try_compile(
             payer=kp.pubkey(),
             instructions=[instruction],
             recent_blockhash=blockhash
@@ -158,7 +158,7 @@ def real_sell_token(to_addr: str):
                 lamports=BUY_AMOUNT_LAMPORTS
             )
         )
-        msg = v0.MessageV0.try_compile(
+        msg = MessageV0.try_compile(
             payer=kp.pubkey(),
             instructions=[instruction],
             recent_blockhash=blockhash
