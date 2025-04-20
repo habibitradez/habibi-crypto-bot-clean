@@ -29,7 +29,7 @@ import ssl
 import urllib3
 from solders.instruction import Instruction
 from solders.system_program import transfer, TransferParams
-from solders.message import MessageV0, v0
+from solders.message import v0
 from solders.transaction import VersionedTransaction
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
