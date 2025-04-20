@@ -123,25 +123,48 @@ def fetch_birdeye():
 def fetch_new_tokens():
     tokens = []
     
-    # Focus more on most recent tokens
-    # Try Birdeye's recent tokens endpoint (increased limit from 10 to 30)
+    # Special mechanism to track recently launched tokens from several sources
     try:
-        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=30", 
+        # 1. Get tokens launched in the past hour from Birdeye
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=50", 
                         timeout=10)
         if r.status_code == 200:
             data = r.json()
             birdeye_count = 0
             if 'data' in data:
+                current_time = time.time() * 1000  # Current time in milliseconds
                 for token in data['data']:
-                    if 'address' in token and token['address'] not in tokens:
-                        tokens.append(token['address'])
-                        birdeye_count += 1
-            logging.info(f"✅ Added {birdeye_count} tokens from Birdeye recent")
+                    # Focus on tokens created in the last hour
+                    if 'address' in token and 'createdAt' in token:
+                        creation_time = token.get('createdAt', 0)
+                        if (current_time - creation_time) < 3600000:  # 1 hour in milliseconds
+                            tokens.append(token['address'])
+                            birdeye_count += 1
+                            logging.info(f"🔥 Found BRAND NEW token (created within last hour): {token['address']}")
+            logging.info(f"✅ Added {birdeye_count} ULTRA-NEW tokens from Birdeye recent")
     except Exception as e:
-        logging.error(f"❌ Birdeye recent token fetch failed: {str(e)}")
+        logging.error(f"❌ Birdeye ultra-new token fetch failed: {str(e)}")
     
+    # Focus more on most recent tokens
+    # Try Birdeye's recent tokens endpoint (increased limit from 10 to 30)
+    if len(tokens) < 10:  # Only if we don't have enough ultra-new tokens
+        try:
+            r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=30", 
+                            timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                birdeye_count = 0
+                if 'data' in data:
+                    for token in data['data']:
+                        if 'address' in token and token['address'] not in tokens:
+                            tokens.append(token['address'])
+                            birdeye_count += 1
+                logging.info(f"✅ Added {birdeye_count} tokens from Birdeye recent")
+        except Exception as e:
+            logging.error(f"❌ Birdeye recent token fetch failed: {str(e)}")
+    
+    # Try using tokens with high 24h percent change - these are often new launches with momentum
     try:
-        # Also try a special endpoint for hot new tokens/DeFi launches
         r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=v24hPercent&sort_type=desc&offset=0&limit=20", 
                          timeout=10)
         if r.status_code == 200:
@@ -150,44 +173,67 @@ def fetch_new_tokens():
             if 'data' in data:
                 for token in data['data']:
                     if 'address' in token and token['address'] not in tokens:
-                        tokens.append(token['address'])
-                        hot_tokens_count += 1
+                        percent_change = token.get('v24hPercent', 0)
+                        if float(percent_change) > 10:  # Only add tokens with >10% 24h change
+                            tokens.append(token['address'])
+                            hot_tokens_count += 1
+                            if float(percent_change) > 50:  # Log tokens with massive gains
+                                logging.info(f"🚀 Found HOT token with {percent_change}% 24h change: {token['address']}")
             logging.info(f"✅ Added {hot_tokens_count} tokens from Birdeye hot tokens")
     except Exception as e:
         logging.error(f"❌ Birdeye hot tokens fetch failed: {str(e)}")
     
+    # Try using tokens with rapidly increasing holders - often indicates new community projects
     try:
-        # Try Solana FM API
-        headers = {"accept": "application/json"}
-        r = requests.get("https://api.solscan.io/v2/token/list?sortBy=marketCapRank&direction=desc&limit=15", 
-                         headers=headers, timeout=10)
+        # Get tokens with rapidly growing holder counts
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=holders&sort_type=desc&offset=0&limit=20", 
+                         timeout=10)
         if r.status_code == 200:
             data = r.json()
-            if 'data' in data and 'list' in data['data']:
-                for token in data['data']['list']:
-                    if 'mintAddress' in token and token['mintAddress'] not in tokens:
-                        tokens.append(token['mintAddress'])
-                logging.info(f"✅ Fetched {len(tokens) - hot_tokens_count - birdeye_count} tokens from Solscan")
-        else:
-            logging.warning(f"❌ Solscan API returned status code: {r.status_code}")
+            holder_tokens_count = 0
+            if 'data' in data:
+                for token in data['data']:
+                    if 'address' in token and token['address'] not in tokens:
+                        tokens.append(token['address'])
+                        holder_tokens_count += 1
+            logging.info(f"✅ Added {holder_tokens_count} popular tokens by holder count")
     except Exception as e:
-        logging.error(f"❌ Solscan token fetch failed: {str(e)}")
+        logging.error(f"❌ Holder popularity token fetch failed: {str(e)}")
     
-    try:
-        # Also try Jupiter API for tokens
-        r = requests.get("https://token.jup.ag/all", timeout=10)
-        if r.status_code == 200:
-            jupiter_tokens = r.json()
-            # Get recent tokens from Jupiter
-            jupiter_count = 0
-            for token in jupiter_tokens[:30]:  # Limit to first 30
-                if 'address' in token and token['address'] not in tokens:
-                    tokens.append(token['address'])
-                    jupiter_count += 1
-            logging.info(f"✅ Added {jupiter_count} tokens from Jupiter")
-    except Exception as e:
-        logging.error(f"❌ Jupiter token fetch failed: {str(e)}")
+    # Add other API sources as backup
+    if len(tokens) < 20:  # Only if we need more tokens
+        try:
+            # Try Solana FM API
+            headers = {"accept": "application/json"}
+            r = requests.get("https://api.solscan.io/v2/token/list?sortBy=marketCapRank&direction=desc&limit=15", 
+                             headers=headers, timeout=10)
+            if r.status_code == 200:
+                data = r.json()
+                if 'data' in data and 'list' in data['data']:
+                    for token in data['data']['list']:
+                        if 'mintAddress' in token and token['mintAddress'] not in tokens:
+                            tokens.append(token['mintAddress'])
+                    logging.info(f"✅ Added backup tokens from Solscan")
+            else:
+                logging.warning(f"❌ Solscan API returned status code: {r.status_code}")
+        except Exception as e:
+            logging.error(f"❌ Solscan token fetch failed: {str(e)}")
         
+        try:
+            # Also try Jupiter API for tokens
+            r = requests.get("https://token.jup.ag/all", timeout=10)
+            if r.status_code == 200:
+                jupiter_tokens = r.json()
+                # Get recent tokens from Jupiter
+                jupiter_count = 0
+                for token in jupiter_tokens[:30]:  # Limit to first 30
+                    if 'address' in token and token['address'] not in tokens:
+                        tokens.append(token['address'])
+                        jupiter_count += 1
+                logging.info(f"✅ Added {jupiter_count} tokens from Jupiter")
+        except Exception as e:
+            logging.error(f"❌ Jupiter token fetch failed: {str(e)}")
+    
     # Shuffle the tokens list to add randomness - this helps avoid competing with other bots
     random.shuffle(tokens)
     
@@ -242,59 +288,54 @@ def is_valid_token(token_address):
         r = requests.get(f"https://public-api.birdeye.so/public/token/{token_address}?cluster=solana", timeout=5)
         if r.status_code != 200:
             logging.info(f"🔍 Token {token_address} API returned status {r.status_code}")
-            return False
+            # Even if API fails, let's try to buy anyway - could be a very new token
+            logging.info(f"🚀 API returned non-200 status but attempting to buy {token_address} anyway - could be very new")
+            return True
             
         token_data = r.json().get('data', {})
         
-        # Basic validation checks
+        # Super permissive validation - almost any token with data is valid
         if not token_data:
-            logging.info(f"🔍 Token {token_address} has no data")
-            return False
+            # Even with no data, we'll still try to buy - it might be so new the APIs haven't indexed it
+            logging.info(f"🚀 Token {token_address} has no data but attempting to buy anyway - could be ultra-new")
+            return True
             
-        # Check if there's liquidity - lowered threshold for new launches
+        # We'll allow any token with even minimal liquidity or any volume
         liquidity = token_data.get('liquidity', 0)
-        if not liquidity or float(liquidity) < 100:  # Lower threshold to $100 in liquidity
-            logging.info(f"🔍 Token {token_address} has very low liquidity: ${liquidity}, but continuing for potential early snipe")
-            
-            # For very new tokens, we'll still allow trading if they have any liquidity at all
-            if float(liquidity) > 0:
-                logging.info(f"🚀 Potential new launch detected! Token {token_address} has minimal liquidity: ${float(liquidity):.2f}")
-                return True
-            return False
-            
-        # For new tokens, we'll be more lenient with volume requirements
         volume = token_data.get('volume', {}).get('h24', 0)
         creation_time = token_data.get('createdAt', 0)
         current_time = time.time() * 1000  # Current time in milliseconds
         
-        # If token was created in the last hour, ignore volume requirement
-        is_new_token = False
+        # Auto-approve if token was created very recently (within 1 hour)
         if creation_time and (current_time - creation_time) < 3600000:  # 1 hour in milliseconds
-            is_new_token = True
-            logging.info(f"🚀 New token detected! {token_address} was created less than 1 hour ago")
+            logging.info(f"🚀 New token detected! {token_address} was created less than 1 hour ago - buying without further checks")
+            return True
+        
+        # If it has any liquidity or volume at all, approve it
+        if float(liquidity) > 0 or float(volume) > 0:
+            logging.info(f"✅ Token {token_address} approved (liquidity: ${float(liquidity):.2f}, volume: ${float(volume):.2f})")
+            return True
             
-        # Only check volume for tokens that aren't brand new
-        if not is_new_token and (not volume or float(volume) <= 0):
-            logging.info(f"🔍 Token {token_address} has no recent trading volume")
-            return False
-            
-        logging.info(f"✅ Token {token_address} passed validation (liquidity: ${float(liquidity):.2f})")
+        # Last resort - even if there's zero liquidity/volume, we'll still try if it has actual data
+        logging.info(f"🚀 Token {token_address} has minimal data but attempting to buy anyway")
         return True
+        
     except Exception as e:
-        logging.error(f"❌ Token validation failed for {token_address}: {e}")
-        return False
+        # Even if validation fails, we'll still attempt to buy
+        logging.error(f"❌ Token validation error for {token_address}: {e} - but attempting buy anyway")
+        return True
 
 def real_buy_token(to_addr: str, lamports: int):
     try:
         kp = get_phantom_keypair()
         to_addr = sanitize_token_address(to_addr)
         
-        # First check if the token is valid
+        # First check if the token is valid - now with much more permissive validation
         if not is_valid_token(to_addr):
             logging.warning(f"❌ Token {to_addr} failed validation checks. Skipping buy.")
             return None
             
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=1"
+        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=2"  # Increased slippage to 2%
         logging.info(f"🔍 Getting buy quote from: {quote_url}")
         
         r = requests.get(quote_url, timeout=10)
@@ -308,17 +349,20 @@ def real_buy_token(to_addr: str, lamports: int):
             logging.warning(f"❌ No swap route available for {to_addr}")
             return None
 
-        # Check price impact
+        # Check price impact - now much more permissive (up to 10%)
         price_impact = quote.get('priceImpactPct', 0) * 100
-        if price_impact > 5:  # If price impact is greater than 5%
+        if price_impact > 10:  # Increased from 5% to 10% tolerance
             logging.warning(f"❌ Price impact too high ({price_impact:.2f}%) for {to_addr}")
             return None
 
+        # Randomize compute unit price to avoid front-running
+        compute_price = random.randint(500, 1500)  # Random price between 500-1500 micro-lamports
+        
         swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
             "userPublicKey": str(kp.pubkey()),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote,
-            "computeUnitPriceMicroLamports": 0,
+            "computeUnitPriceMicroLamports": compute_price,
             "asLegacyTransaction": True
         }, timeout=10).json()
 
@@ -637,29 +681,69 @@ async def check_and_sell_token(token, token_data):
 async def debug_slash(interaction: discord.Interaction):
     await interaction.response.send_message("Running token fetch debug...")
     try:
-        # Test fetch_birdeye
-        birdeye_start = time.time()
-        birdeye_tokens = fetch_birdeye()
-        birdeye_time = time.time() - birdeye_start
+        # Test the ultra-new token finder
+        ultra_new_start = time.time()
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=created_at&sort_type=desc&offset=0&limit=50", 
+                        timeout=10)
+        ultra_new_tokens = []
+        if r.status_code == 200:
+            data = r.json()
+            if 'data' in data:
+                current_time = time.time() * 1000
+                for token in data['data']:
+                    if 'address' in token and 'createdAt' in token:
+                        creation_time = token.get('createdAt', 0)
+                        if (current_time - creation_time) < 3600000:
+                            ultra_new_tokens.append(token['address'])
+        ultra_new_time = time.time() - ultra_new_start
         
         # Test fetch_new_tokens
         new_start = time.time()
         new_tokens = fetch_new_tokens()
         new_time = time.time() - new_start
         
+        # Test token validation on a few tokens
+        validation_results = {}
+        for token in new_tokens[:5]:
+            validation_start = time.time()
+            result = is_valid_token(token)
+            validation_time = time.time() - validation_start
+            validation_results[token] = {
+                "valid": result,
+                "time": validation_time
+            }
+        
         debug_info = f"""Debug Results:
         
-Birdeye API: {len(birdeye_tokens)} tokens in {birdeye_time:.2f}s
-New Tokens APIs: {len(new_tokens)} tokens in {new_time:.2f}s
+🔥 Ultra-new tokens (created in last hour): {len(ultra_new_tokens)} in {ultra_new_time:.2f}s
+Sample ultra-new tokens:
+{', '.join(ultra_new_tokens[:3]) if ultra_new_tokens else 'None'}
 
-Total Unique Tokens: {len(set(birdeye_tokens + new_tokens))}
+🚀 All potential tokens: {len(new_tokens)} in {new_time:.2f}s
+Sample tokens:
+{', '.join(new_tokens[:5]) if new_tokens else 'None'}
 
-Sample Birdeye tokens:
-{', '.join(birdeye_tokens[:3]) if birdeye_tokens else 'None'}
-
-Sample New tokens:
-{', '.join(new_tokens[:3]) if new_tokens else 'None'}
+⚙️ Token validation results:
 """
+        for token, data in validation_results.items():
+            debug_info += f"- {token}: {'✅ PASS' if data['valid'] else '❌ FAIL'} in {data['time']:.2f}s\n"
+        
+        # Run a price impact check on a few tokens
+        debug_info += "\n💰 Price impact check:\n"
+        for token in new_tokens[:3]:
+            try:
+                quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token}&amount={BUY_AMOUNT_LAMPORTS}&slippage=2"
+                r = requests.get(quote_url, timeout=5)
+                if r.status_code == 200:
+                    quote = r.json()
+                    price_impact = quote.get('priceImpactPct', 0) * 100
+                    has_route = "Yes" if quote.get("routePlan") else "No"
+                    debug_info += f"- {token}: Impact {price_impact:.2f}%, Route available: {has_route}\n"
+                else:
+                    debug_info += f"- {token}: Quote API error {r.status_code}\n"
+            except Exception as e:
+                debug_info += f"- {token}: Error checking - {str(e)}\n"
+        
         await interaction.followup.send(debug_info)
     except Exception as e:
         await interaction.followup.send(f"Debug failed: {e}")
