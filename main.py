@@ -1,3 +1,11 @@
+def fetch_birdeye():
+    try:
+        r = requests.get("https://public-api.birdeye.so/public/tokenlist?sort_by=volume_24h&sort_type=desc", timeout=5)
+        return [token['address'] for token in r.json().get('data', [])[:10]]
+    except Exception as e:
+        logging.error(f"❌ Birdeye fetch failed: {e}")
+        return []
+
 try:
     import discord
     from discord.ext import commands, tasks
