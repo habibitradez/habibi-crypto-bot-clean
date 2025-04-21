@@ -408,20 +408,12 @@ def real_buy_token(to_addr: str, lamports: int):
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         logging.info(f"🚀 Sending BUY transaction for {to_addr}: {tx_data.hex()[:80]}...")
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
         
-        # Wait for confirmation
-        for _ in range(10):  # Try 10 times
-            try:
-                conf = solana_client.confirm_transaction(sig.value)
-                if conf.value:
-                    logging.info(f"✅ Buy transaction confirmed for {to_addr}")
-                    return sig.value
-                time.sleep(1)
-            except Exception:
-                time.sleep(1)
-                continue
-                
+        # Send the transaction but don't wait for confirmation here
+        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
+        logging.info(f"✅ Buy transaction sent for {to_addr}, sig: {sig.value}")
+        
+        # Return the signature immediately without waiting for confirmation
         return sig.value
     except Exception as e:
         logging.error(f"❌ Buy failed for {to_addr}: {e}")
@@ -479,20 +471,12 @@ def real_sell_token(to_addr: str):
 
         tx_data = decode_transaction_blob(swap["swapTransaction"])
         logging.info(f"🚀 Sending SELL transaction for {to_addr}: {tx_data.hex()[:80]}...")
-        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
         
-        # Wait for confirmation
-        for _ in range(10):  # Try 10 times
-            try:
-                conf = solana_client.confirm_transaction(sig.value)
-                if conf.value:
-                    logging.info(f"✅ Sell transaction confirmed for {to_addr}")
-                    return sig.value
-                time.sleep(1)
-            except Exception:
-                time.sleep(1)
-                continue
-                
+        # Send the transaction but don't wait for confirmation here
+        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True, preflight_commitment="confirmed"))
+        logging.info(f"✅ Sell transaction sent for {to_addr}, sig: {sig.value}")
+        
+        # Return the signature immediately without waiting for confirmation
         return sig.value
     except Exception as e:
         logging.error(f"❌ Sell failed for {to_addr}: {e}")
@@ -669,6 +653,7 @@ async def check_and_sell_token(token, token_data):
             
         if should_sell:
             logging.info(f"🔄 Selling {token} - {sell_reason}")
+            # Sell token but don't wait for confirmation
             sell_sig = real_sell_token(token)
             
             if sell_sig:
@@ -741,7 +726,7 @@ async def auto_snipe():
                     break
                     
                 logging.info(f"💰 Attempting to buy token: {token}")
-                # Buy the token
+                # Buy the token but don't block on confirmation
                 sig = real_buy_token(token, BUY_AMOUNT_LAMPORTS)
                 if sig:
                     buy_counter += 1
@@ -774,6 +759,7 @@ async def auto_snipe():
                             await channel.send(f"🚀 Auto-bought {token} at ${price:.6f}! https://solscan.io/tx/{sig}")
                 
                 # Add a short delay between buy attempts to avoid rate limits
+                # Using asyncio.sleep to avoid blocking
                 await asyncio.sleep(2)
             
             # Check existing positions for selling
@@ -787,6 +773,7 @@ async def auto_snipe():
         except Exception as e:
             logging.error(f"❌ Error in auto_snipe: {e}")
             
+        # Use asyncio.sleep to avoid blocking
         await asyncio.sleep(10)  # Reduced from 30 to 10 seconds for more aggressive trading
 
 @tree.command(name="debug", description="Debug token fetching")
