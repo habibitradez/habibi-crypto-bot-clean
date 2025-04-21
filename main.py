@@ -12,11 +12,16 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import openai
 from dotenv import load_dotenv
-from solana.rpc.api import Client
-from solders.keypair import Keypair
-from solana.transaction import Transaction
-from solders.pubkey import Pubkey
-from solana.rpc.types import TxOpts
+
+# Import Jupiter SDK
+try:
+    from jupiter_python_sdk.jupiter import Jupiter
+    from solders.keypair import Keypair
+    from solana.rpc.async_api import AsyncClient
+    JUPITER_AVAILABLE = True
+except ImportError:
+    logging.warning("⚠️ Jupiter SDK not available. Running in simulation mode.")
+    JUPITER_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
@@ -46,6 +51,7 @@ tree = bot.tree  # This is the tree variable needed for slash commands
 # Constants
 DAILY_PROFIT_TARGET = 1000.0  # Daily profit target in USD
 BUY_AMOUNT_LAMPORTS = 150_000_000  # Default buy amount (0.15 SOL)
+SOL_MINT = "So11111111111111111111111111111111111111112"  # SOL token mint address
 
 # Global variables
 bought_tokens = {}
@@ -55,13 +61,18 @@ total_buys_today = 0
 successful_sells_today = 0
 successful_2x_sells = 0
 
-# Solana client
-solana_client = None
+# Jupiter and Solana client
+jupiter_client = None
+solana_endpoint = "https://api.mainnet-beta.solana.com"  # Default RPC endpoint
 
-# Initialize Solana client
-def initialize_solana_client():
-    """Initialize and return a Solana client with the best RPC endpoint"""
-    global solana_client
+# Initialize Jupiter client
+async def initialize_jupiter():
+    """Initialize Jupiter client with the best RPC endpoint"""
+    global jupiter_client, solana_endpoint
+    
+    if not JUPITER_AVAILABLE:
+        logging.warning("⚠️ Jupiter SDK not available. Cannot initialize client.")
+        return None
     
     # List of Solana RPC endpoints to try
     rpc_endpoints = [
@@ -74,13 +85,24 @@ def initialize_solana_client():
     if ALCHEMY_API_KEY:
         rpc_endpoints.append(f"https://solana-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}")
     
-    best_rpc = get_best_rpc(rpc_endpoints)
+    # Find the best RPC
+    best_rpc = await get_best_rpc(rpc_endpoints)
     logging.info(f"Using RPC endpoint: {best_rpc}")
+    solana_endpoint = best_rpc
     
-    solana_client = Client(best_rpc)
-    return solana_client
+    try:
+        # Get keypair from private key
+        keypair = Keypair.from_bytes(base58.b58decode(PHANTOM_SECRET_KEY))
+        # Create Jupiter client
+        async_client = AsyncClient(best_rpc)
+        jupiter = Jupiter(async_client=async_client, keypair=keypair)
+        logging.info(f"✅ Jupiter client initialized with wallet: {keypair.pubkey()}")
+        return jupiter
+    except Exception as e:
+        logging.error(f"❌ Error initializing Jupiter client: {e}")
+        return None
 
-def get_best_rpc(endpoints=None):
+async def get_best_rpc(endpoints=None):
     """Test and find fastest RPC endpoint"""
     if not endpoints:
         endpoints = [
@@ -95,54 +117,30 @@ def get_best_rpc(endpoints=None):
     for endpoint in endpoints:
         try:
             start_time = time.time()
-            client = Client(endpoint)
-            # Simple API call to test responsiveness
-            client.get_recent_blockhash()
-            end_time = time.time()
+            # Simple RPC call to test responsiveness
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getRecentBlockhash"
+            }
+            response = requests.post(endpoint, json=payload, timeout=5)
             
-            response_time = end_time - start_time
-            logging.info(f"RPC {endpoint}: {response_time:.2f}s")
-            
-            if response_time < fastest_time:
-                fastest_time = response_time
-                fastest_endpoint = endpoint
+            if response.status_code == 200:
+                end_time = time.time()
+                response_time = end_time - start_time
+                logging.info(f"RPC {endpoint}: {response_time:.2f}s")
+                
+                if response_time < fastest_time:
+                    fastest_time = response_time
+                    fastest_endpoint = endpoint
         except Exception as e:
             logging.warning(f"RPC {endpoint} failed: {e}")
     
     return fastest_endpoint or "https://api.mainnet-beta.solana.com"  # Default fallback
 
-def get_phantom_keypair():
-    """Get Solana keypair from phantom secret key"""
-    try:
-        # Decode the base58 secret key
-        secret_key_bytes = base58.b58decode(PHANTOM_SECRET_KEY)
-        # Create keypair from bytes
-        keypair = Keypair.from_bytes(secret_key_bytes)
-        return keypair
-    except Exception as e:
-        logging.error(f"Failed to create keypair: {e}")
-        raise e
-
-def log_wallet_balance():
-    """Log current wallet balance"""
-    try:
-        keypair = get_phantom_keypair()
-        pubkey = keypair.pubkey()
-        
-        if not solana_client:
-            initialize_solana_client()
-            
-        balance_response = solana_client.get_balance(pubkey)
-        balance_lamports = balance_response.value
-        balance_sol = balance_lamports / 1_000_000_000  # Convert to SOL
-        logging.info(f"Current wallet balance: {balance_sol:.4f} SOL")
-    except Exception as e:
-        logging.error(f"Error checking wallet balance: {e}")
-
-def get_token_price(token_address):
+async def get_token_price(token_address):
     """
     Get current price of a token using Jupiter API or Birdeye
-    This is a simplified version - production code would handle more error cases
     """
     try:
         # Try Jupiter API first
@@ -172,126 +170,63 @@ def get_token_price(token_address):
         logging.error(f"Error getting token price: {e}")
         return 0.0
 
-def real_buy_token(token_address, amount_lamports):
+async def real_buy_token(token_address, amount_lamports):
     """
-    Execute actual token purchase using Jupiter API
+    Execute actual token purchase using Jupiter
     """
     try:
-        keypair = get_phantom_keypair()
-        public_key = str(keypair.pubkey())
-        
-        # 1. Get quote from Jupiter
-        quote_url = "https://quote-api.jup.ag/v6/quote"
-        params = {
-            "inputMint": "So11111111111111111111111111111111111111112",  # SOL
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": 100  # 1% slippage
-        }
-        
-        response = requests.get(quote_url, params=params)
-        if response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote: {response.text}")
-            return None
+        if not JUPITER_AVAILABLE or not jupiter_client:
+            # Simulation mode
+            tx_sig = f"sim_buy_{token_address[:8]}_{int(time.time())}"
+            logging.info(f"🔄 SIMULATION: Buy transaction created: {tx_sig}")
+            return tx_sig
             
-        quote_data = response.json()
+        # Execute the real transaction with Jupiter
+        tx_sig = await jupiter_client.swap(
+            input_mint=SOL_MINT,
+            output_mint=token_address,
+            amount=amount_lamports,
+            slippage_bps=100  # 1% slippage
+        )
         
-        # 2. Get serialized transactions
-        swap_url = "https://quote-api.jup.ag/v6/swap"
-        swap_data = {
-            "quoteResponse": quote_data,
-            "userPublicKey": public_key,
-            "wrapUnwrapSOL": True
-        }
-        
-        response = requests.post(swap_url, json=swap_data)
-        if response.status_code != 200:
-            logging.error(f"Failed to get Jupiter swap transaction: {response.text}")
-            return None
-            
-        swap_response = response.json()
-        transaction_base64 = swap_response["swapTransaction"]
-        
-        # 3. Sign and send transaction (using Jupiter's API)
-        signed_url = "https://quote-api.jup.ag/v6/swap-sign"
-        signed_data = {
-            "transaction": transaction_base64,
-            "keepOriginalLamports": True  # Let Jupiter cover the fees
-        }
-        
-        # Sign with our keypair
-        # Since we're using a complex transaction format from Jupiter,
-        # we'll use their transaction signing API
-        # This is simplified - in production you'd deserialize, sign, and serialize
-        
-        # For now, simulating the transaction signature
-        tx_sig = f"tx_{token_address[:8]}_{int(time.time())}"
-        
-        logging.info(f"Buy transaction created: {tx_sig}")
+        logging.info(f"✅ Real buy transaction created: {tx_sig}")
         return tx_sig
         
     except Exception as e:
-        logging.error(f"Error buying token: {e}")
+        logging.error(f"❌ Error buying token: {e}")
         return None
 
-def real_sell_token(token_address):
+async def real_sell_token(token_address):
     """
-    Execute actual token sale using Jupiter API
+    Execute actual token sale using Jupiter
     """
     try:
-        keypair = get_phantom_keypair()
-        public_key = str(keypair.pubkey())
-        
-        # First, we need to get token balance
-        # For simplicity, we're assuming a fixed amount to sell
+        if not JUPITER_AVAILABLE or not jupiter_client:
+            # Simulation mode
+            tx_sig = f"sim_sell_{token_address[:8]}_{int(time.time())}"
+            logging.info(f"🔄 SIMULATION: Sell transaction created: {tx_sig}")
+            return tx_sig
+            
+        # Get token balance - Need to implement this
         # In a real implementation, you would get the actual token balance
+        token_amount = 1000000  # Placeholder amount
         
-        amount_to_sell = 1000000  # Placeholder amount
+        # Execute the real transaction with Jupiter
+        tx_sig = await jupiter_client.swap(
+            input_mint=token_address,
+            output_mint=SOL_MINT,
+            amount=token_amount,
+            slippage_bps=100  # 1% slippage
+        )
         
-        # 1. Get quote from Jupiter (selling token for SOL)
-        quote_url = "https://quote-api.jup.ag/v6/quote"
-        params = {
-            "inputMint": token_address,  # Token being sold
-            "outputMint": "So11111111111111111111111111111111111111112",  # SOL
-            "amount": str(amount_to_sell),
-            "slippageBps": 100  # 1% slippage
-        }
-        
-        response = requests.get(quote_url, params=params)
-        if response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote for selling: {response.text}")
-            return None
-            
-        quote_data = response.json()
-        
-        # 2. Get serialized transactions
-        swap_url = "https://quote-api.jup.ag/v6/swap"
-        swap_data = {
-            "quoteResponse": quote_data,
-            "userPublicKey": public_key,
-            "wrapUnwrapSOL": True
-        }
-        
-        response = requests.post(swap_url, json=swap_data)
-        if response.status_code != 200:
-            logging.error(f"Failed to get Jupiter swap transaction for selling: {response.text}")
-            return None
-            
-        swap_response = response.json()
-        transaction_base64 = swap_response["swapTransaction"]
-        
-        # 3. Sign and send transaction
-        # For now, simulating the transaction signature
-        tx_sig = f"sell_tx_{token_address[:8]}_{int(time.time())}"
-        
-        logging.info(f"Sell transaction created: {tx_sig}")
+        logging.info(f"✅ Real sell transaction created: {tx_sig}")
         return tx_sig
         
     except Exception as e:
-        logging.error(f"Error selling token: {e}")
+        logging.error(f"❌ Error selling token: {e}")
         return None
 
-def find_new_promising_tokens(min_liquidity=2, max_results=3):
+async def find_new_promising_tokens(min_liquidity=2, max_results=3):
     """
     Find new promising tokens for sniping by monitoring DEX listings
     Returns a list of token addresses
@@ -323,7 +258,7 @@ def find_new_promising_tokens(min_liquidity=2, max_results=3):
         logging.error(f"Error finding new tokens: {e}")
         return []
 
-def is_token_safe(token_address):
+async def is_token_safe(token_address):
     """
     Check if a token is safe to buy by validating:
     - Not a honeypot
@@ -405,7 +340,7 @@ async def check_for_sell_opportunities():
             data = bought_tokens[token_address]
             initial_price = data.get('initial_price', 0)
             buy_amount = data.get('buy_amount', BUY_AMOUNT_LAMPORTS)
-            current_price = get_token_price(token_address)
+            current_price = await get_token_price(token_address)
             buy_time = data.get('buy_time', datetime.utcnow())
             
             # Handle string conversion
@@ -445,7 +380,7 @@ async def check_for_sell_opportunities():
             
             if sell_reason:
                 # Execute sell
-                sig = real_sell_token(token_address)
+                sig = await real_sell_token(token_address)
                 
                 if sig:
                     profit = ((current_price - initial_price) / initial_price) * buy_amount / 1_000_000_000
@@ -519,8 +454,7 @@ async def auto_snipe():
                 continue
                 
             # 1. Find new tokens - implement your token discovery method here
-            # This could be monitoring DEX listings, mempool for new pairs, etc.
-            new_tokens = find_new_promising_tokens(min_liquidity=MIN_LIQUIDITY, max_results=3)
+            new_tokens = await find_new_promising_tokens(min_liquidity=MIN_LIQUIDITY, max_results=3)
             
             if not new_tokens:
                 await asyncio.sleep(10)  # Check frequently for new opportunities
@@ -533,15 +467,15 @@ async def auto_snipe():
                     continue
                     
                 # Check token metrics before buying
-                if not is_token_safe(token_address):
+                if not await is_token_safe(token_address):
                     logging.info(f"⚠️ Skipping token {token_address} - failed safety checks")
                     continue
                     
                 # Attempt to buy the token
-                sig = real_buy_token(token_address, BUY_AMOUNT_LAMPORTS)
+                sig = await real_buy_token(token_address, BUY_AMOUNT_LAMPORTS)
                 
                 if sig:
-                    price = get_token_price(token_address)
+                    price = await get_token_price(token_address)
                     
                     # Handle string price
                     if isinstance(price, str):
@@ -641,7 +575,7 @@ async def holdings_slash(interaction: discord.Interaction):
     sorted_tokens = sorted(bought_tokens.items(), key=lambda x: x[1]['buy_time'])
     
     for token, data in sorted_tokens:
-        current_price = get_token_price(token)
+        current_price = await get_token_price(token)
         initial_price = data['initial_price']
         buy_amount = data.get('buy_amount', BUY_AMOUNT_LAMPORTS)
         buy_amount_sol = buy_amount / 1_000_000_000
@@ -723,10 +657,10 @@ async def buy_slash(interaction: discord.Interaction, token_address: str, amount
         token_address = sanitize_token_address(token_address)
         
         # Try to buy the token
-        sig = real_buy_token(token_address, amount_lamports)
+        sig = await real_buy_token(token_address, amount_lamports)
         
         if sig:
-            price = get_token_price(token_address)
+            price = await get_token_price(token_address)
             
             # Handle string price
             if isinstance(price, str):
@@ -770,14 +704,14 @@ async def sell_slash(interaction: discord.Interaction, token_address: str):
         token_address = sanitize_token_address(token_address)
         
         # Try to sell the token
-        sig = real_sell_token(token_address)
+        sig = await real_sell_token(token_address)
         
         if sig:
             if token_address in bought_tokens:
                 # Calculate profit if we have buy data
                 initial_price = bought_tokens[token_address].get('initial_price', 0)
                 buy_amount = bought_tokens[token_address].get('buy_amount', BUY_AMOUNT_LAMPORTS)
-                current_price = get_token_price(token_address)
+                current_price = await get_token_price(token_address)
                 
                 # Handle string conversion
                 if isinstance(current_price, str):
@@ -970,24 +904,48 @@ async def analyze_slash(interaction: discord.Interaction):
 @tree.command(name="newrpc", description="Test and switch to the fastest RPC endpoint")
 async def newrpc_slash(interaction: discord.Interaction):
     """Test all RPC endpoints and switch to the fastest one"""
-    global solana_client
+    global solana_endpoint, jupiter_client
     await interaction.response.defer(thinking=True)
     
     try:
-        old_rpc = solana_client.endpoint if solana_client else "Not connected"
-        best_rpc = get_best_rpc()
+        old_rpc = solana_endpoint
+        best_rpc = await get_best_rpc()
         
-        # Initialize client with the new RPC
-        solana_client = Client(best_rpc)
+        # Update the global endpoint
+        solana_endpoint = best_rpc
+        
+        if JUPITER_AVAILABLE:
+            # Reinitialize Jupiter with new RPC
+            jupiter_client = await initialize_jupiter()
+            status = "with Jupiter" if jupiter_client else "without Jupiter (check logs)"
+        else:
+            status = "without Jupiter (not available)"
         
         if best_rpc and best_rpc != old_rpc:
-            await interaction.followup.send(f"✅ Switched from {old_rpc} to faster RPC: {best_rpc}")
+            await interaction.followup.send(f"✅ Switched from {old_rpc} to faster RPC: {best_rpc} {status}")
         elif best_rpc == old_rpc:
-            await interaction.followup.send(f"✅ Current RPC endpoint ({old_rpc}) is already the fastest.")
+            await interaction.followup.send(f"✅ Current RPC endpoint ({old_rpc}) is already the fastest. {status}")
         else:
-            await interaction.followup.send("❌ Failed to find a faster RPC endpoint.")
+            await interaction.followup.send(f"❌ Failed to find a faster RPC endpoint. {status}")
     except Exception as e:
         await interaction.followup.send(f"❌ Error testing RPC endpoints: {str(e)}")
+
+@tree.command(name="jupstatus", description="Check Jupiter SDK status")
+async def jup_status_slash(interaction: discord.Interaction):
+    """Check if Jupiter SDK is available and working"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        if JUPITER_AVAILABLE and jupiter_client:
+            # Test Jupiter by getting SOL price
+            sol_price = await get_token_price(SOL_MINT)
+            await interaction.followup.send(f"✅ Jupiter SDK is available and working. SOL price: ${sol_price:.2f}")
+        elif JUPITER_AVAILABLE and not jupiter_client:
+            await interaction.followup.send(f"⚠️ Jupiter SDK is available but client is not initialized. Try running /newrpc to initialize.")
+        else:
+            await interaction.followup.send(f"❌ Jupiter SDK is not available. Please check installation (run: pip install jupiter-python-sdk).")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error checking Jupiter status: {str(e)}")
 
 # Add daily stats reset function
 async def reset_daily_stats():
@@ -1025,7 +983,20 @@ async def reset_daily_stats():
 
 @bot.event
 async def on_ready():
+    """Called when the bot is ready"""
+    global jupiter_client
     logging.info(f"Bot logged in as {bot.user}")
+    
+    # Initialize Jupiter if SDK is available
+    if JUPITER_AVAILABLE:
+        logging.info("Initializing Jupiter client...")
+        jupiter_client = await initialize_jupiter()
+        if jupiter_client:
+            logging.info("✅ Jupiter client initialized")
+        else:
+            logging.warning("⚠️ Failed to initialize Jupiter client")
+    
+    # Sync slash commands
     await tree.sync()
     
     # Load trade log if it exists
@@ -1043,12 +1014,9 @@ async def on_ready():
     
     # Start the daily stats reset task
     bot.loop.create_task(reset_daily_stats())
-    
-    # Log initial wallet balance
-    log_wallet_balance()
 
-def run_bot():
-    """Main function to run the bot"""
+async def main():
+    """Async main function"""
     try:
         if not DISCORD_TOKEN:
             logging.error("❌ DISCORD_TOKEN not set in .env file")
@@ -1057,23 +1025,13 @@ def run_bot():
         if not PHANTOM_SECRET_KEY:
             logging.error("❌ PHANTOM_SECRET_KEY not set in .env file")
             return
-            
-        # Test wallet connection
-        try:
-            kp = get_phantom_keypair()
-            pubkey = kp.pubkey()
-            logging.info(f"✅ Wallet loaded: {pubkey}")
-        except Exception as e:
-            logging.error(f"❌ Wallet setup failed: {e}")
-            return
-            
+        
         # Run the bot
         logging.info("🚀 Starting bot...")
-        bot.run(DISCORD_TOKEN)
+        await bot.start(DISCORD_TOKEN)
     except Exception as e:
         logging.error(f"❌ Bot run failed: {e}")
 
 if __name__ == "__main__":
-    # Initialize Solana client
-    initialize_solana_client()
-    run_bot()
+    # Run the bot
+    asyncio.run(main())
