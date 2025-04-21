@@ -170,8 +170,40 @@ async def get_token_price(token_address):
         logging.error(f"Error getting token price: {e}")
         return 0.0
 
-async def real_buy_token(token_address, amount_lamports):
+async def get_token_price(token_address):
     """
+    Get current price of a token using alternative price APIs
+    """
+    try:
+        # Try Birdeye API first if available
+        if BIRDEYE_API_KEY:
+            birdeye_url = f"https://public-api.birdeye.so/public/price?address={token_address}"
+            headers = {"X-API-KEY": BIRDEYE_API_KEY}
+            response = requests.get(birdeye_url, headers=headers, timeout=5)
+            data = response.json()
+            
+            if data.get('data') and 'value' in data['data']:
+                price = float(data['data']['value'])
+                logging.info(f"Got price from Birdeye: ${price:.6f} for {token_address}")
+                return price
+                
+        # Try Coingecko as backup for SOL price
+        if token_address == SOL_MINT:
+            coingecko_url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+            response = requests.get(coingecko_url, timeout=5)
+            data = response.json()
+            
+            if 'solana' in data and 'usd' in data['solana']:
+                price = float(data['solana']['usd'])
+                logging.info(f"Got SOL price from Coingecko: ${price:.2f}")
+                return price
+        
+        # If no price found
+        logging.warning(f"No price found for {token_address}")
+        return 0.0
+    except Exception as e:
+        logging.error(f"Error getting token price: {e}")
+        return 0.0
     Execute actual token purchase using Jupiter
     """
     try:
