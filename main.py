@@ -1,428 +1,31 @@
-# === Robust Transaction Execution ===
-
-# Constants for transaction reliability
-MAX_TRANSACTION_ATTEMPTS = 3      # Max retries for transactions
-TRANSACTION_RETRY_DELAY = 2       # Seconds between retries
-RPC_ENDPOINTS = [
-    f"https://rpc.shyft.to?api_key={SHYFT_RPC_KEY}",
-    "https://api.mainnet-beta.solana.com",
-    "https://solana-mainnet.g.alchemy.com/v2/demo",
-    "https://solana.genesysgo.net",
-    "https://ssc-dao.genesysgo.net"
-]
-
-def get_best_rpc():
-    """
-    Tests all RPC endpoints and returns the most responsive one
-    """
-    best_rpc = None
-    best_time = float('inf')
+@tree.command(name="holdings", description="Check current token holdings")
+async def holdings_slash(interaction: discord.Interaction):
+    """Enhanced holdings command with detailed metrics"""
+    if not bought_tokens:
+        await interaction.response.send_message("No tokens currently held.")
+        return
+        
+    holdings_text = "**Current Holdings:**\n"
+    total_value = 0
+    tokens_with_prices = 0
+    tokens_without_prices = 0
+    potential_profit = 0
     
-    for endpoint in RPC_ENDPOINTS:
-        try:
-            start_time = time.time()
-            test_client = Client(endpoint)
-            test_key = get_phantom_keypair().pubkey()
-            test_client.get_balance(test_key)
-            end_time = time.time()
-            
-            response_time = end_time - start_time
-            logging.info(f"RPC {endpoint} response time: {response_time:.3f}s")
-            
-            if response_time < best_time:
-                best_time = response_time
-                best_rpc = endpoint
-        except Exception as e:
-            logging.warning(f"RPC {endpoint} test failed: {str(e)[:100]}")
+    # Sort tokens by time held (oldest first)
+    sorted_tokens = sorted(bought_tokens.items(), key=lambda x: x[1]['buy_time'])
     
-    if best_rpc:
-        logging.info(f"Selected fastest RPC: {best_rpc} ({best_time:.3f}s)")
-        return best_rpc
-    else:
-        # Fallback to first endpoint if all tests fail
-        logging.warning(f"All RPC tests failed, using first endpoint")
-        return RPC_ENDPOINTS[0]
-
-# Enhanced buy function with retry mechanism
-@retry(stop=stop_after_attempt(MAX_TRANSACTION_ATTEMPTS), 
-       wait=wait_exponential(multiplier=1, max=10),
-       retry=retry_if_exception_type(Exception))
-def real_buy_token(to_addr: str, lamports: int):
-    """
-    Enhanced buy function with robust error handling and retry logic
-    """
-    try:
-        # Get wallet keypair
-        kp = get_phantom_keypair()
-        to_addr = sanitize_token_address(to_addr)
+    for token, data in sorted_tokens:
+        current_price = get_token_price(token)
+        initial_price = data['initial_price']
+        buy_amount = data.get('buy_amount', BUY_AMOUNT_LAMPORTS)
+        buy_amount_sol = buy_amount / 1_000_000_000
         
-        # Skip if we've reached daily profit target
-        if daily_profit >= DAILY_PROFIT_TARGET:
-            logging.info(f"🎯 Daily profit target reached. Skipping buy.")
-            return None
-        
-        # Get initial quote
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=2&maxAccounts=10"
-        logging.info(f"🔍 Getting buy quote for: {to_addr}")
-        
-        r = requests.get(quote_url, timeout=10)
-        if r.status_code != 200:
-            logging.warning(f"❌ Jupiter quote API returned {r.status_code}")
-            
-            # Retry with higher slippage
-            fallback_quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={lamports}&slippage=3&maxAccounts=10"
-            r = requests.get(fallback_quote_url, timeout=10)
-            if r.status_code != 200:
-                logging.error(f"❌ Jupiter quote retry failed with {r.status_code}")
-                return None
-            
-        quote = r.json()
-        
-        if not quote.get("routePlan"):
-            logging.warning(f"❌ No swap route available for {to_addr}")
-            return None
-            
-        # Check if the transaction is feasible
-        out_amount = quote.get('outAmount', '0')
-        if int(out_amount) <= 0:
-            logging.warning(f"❌ Zero output amount for {to_addr}")
-            return None
-
-        # Execute the transaction
-        swap_attempts = 0
-        max_swap_attempts = 2  # Try twice with different settings
-        
-        while swap_attempts < max_swap_attempts:
+        # Handle string conversion
+        if isinstance(current_price, str):
             try:
-                swap_payload = {
-                    "userPublicKey": str(kp.pubkey()),
-                    "wrapUnwrapSOL": True,
-                    "quoteResponse": quote,
-                    "computeUnitPriceMicroLamports": 1000,
-                    "asLegacyTransaction": False,
-                    "prioritizationFeeLamports": 0,
-                    "dynamicComputeUnitLimit": True
-                }
-                
-                # On second attempt, use simpler parameters
-                if swap_attempts > 0:
-                    swap_payload["prioritizationFeeLamports"] = 10000  # Add priority fee
-                    swap_payload["computeUnitPriceMicroLamports"] = 2000  # Increase compute unit price
-                
-                swap = requests.post("https://quote-api.jup.ag/v6/swap", 
-                                    json=swap_payload, 
-                                    timeout=10).json()
-                
-                if "swapTransaction" not in swap:
-                    swap_attempts += 1
-                    logging.error(f"❌ No swap transaction returned (attempt {swap_attempts})")
-                    continue
-
-                tx_data = decode_transaction_blob(swap["swapTransaction"])
-                logging.info(f"🚀 Sending BUY transaction for {to_addr}")
-                
-                # Send transaction with optimized parameters
-                tx_opts = TxOpts(
-                    skip_preflight=True,
-                    preflight_commitment="confirmed",
-                    max_retries=3
-                )
-                
-                sig = solana_client.send_raw_transaction(tx_data, opts=tx_opts)
-                
-                # Now wait for confirmation with timeout
-                try:
-                    commitment = "confirmed"
-                    timeout = 30  # seconds
-                    resp = solana_client.confirm_transaction_with_spinner(
-                        sig.value, commitment=commitment, timeout=timeout
-                    )
-                    if resp.value:
-                        logging.info(f"✅ Buy transaction CONFIRMED for {to_addr}, sig: {sig.value}")
-                        return sig.value
-                    else:
-                        logging.warning(f"⚠️ Buy transaction not confirmed within timeout")
-                        # Still return the signature, as transaction might still succeed
-                        return sig.value
-                except Exception as confirm_error:
-                    logging.warning(f"⚠️ Confirmation error: {str(confirm_error)[:100]}")
-                    # Return signature anyway, as transaction might still succeed
-                    return sig.value
-                
-            except Exception as swap_error:
-                swap_attempts += 1
-                logging.warning(f"⚠️ Swap attempt {swap_attempts} failed: {str(swap_error)[:100]}")
-                
-                # If first attempt failed, try with reduced amount
-                if swap_attempts < max_swap_attempts:
-                    reduced_lamports = int(lamports * 0.95)  # Reduce by 5%
-                    quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={reduced_lamports}&slippage=3&maxAccounts=5&onlyDirectRoutes=true"
-                    r = requests.get(quote_url, timeout=10)
-                    
-                    if r.status_code == 200:
-                        quote = r.json()
-                        logging.info(f"🔄 Retrying with simplified parameters and {reduced_lamports/1_000_000_000:.3f} SOL")
-                    else:
-                        break
-                else:
-                    break
-        
-        # If we've exhausted all attempts, try one last approach - even simpler transaction
-        try:
-            # Last resort - try with minimal transaction and higher slippage
-            minimal_lamports = int(lamports * 0.9)  # Reduce by 10%
-            minimal_quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={to_addr}&amount={minimal_lamports}&slippage=5&maxAccounts=3&onlyDirectRoutes=true"
-            r = requests.get(minimal_quote_url, timeout=10)
-            
-            if r.status_code == 200:
-                quote = r.json()
-                if quote.get("routePlan"):
-                    swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-                        "userPublicKey": str(kp.pubkey()),
-                        "wrapUnwrapSOL": True,
-                        "quoteResponse": quote,
-                        "computeUnitPriceMicroLamports": 2500,  # Higher compute price for priority
-                        "asLegacyTransaction": True,  # Try legacy transaction format
-                        "prioritizationFeeLamports": 15000,  # Higher priority fee
-                        "dynamicComputeUnitLimit": True
-                    }, timeout=10).json()
-                    
-                    if "swapTransaction" in swap:
-                        tx_data = decode_transaction_blob(swap["swapTransaction"])
-                        logging.info(f"🚀 Sending LAST RESORT BUY transaction for {to_addr}")
-                        
-                        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True))
-                        logging.info(f"✅ Last resort buy transaction sent for {to_addr}, sig: {sig.value}")
-                        return sig.value
-        except Exception as last_attempt_error:
-            logging.error(f"❌ Last resort buy failed: {str(last_attempt_error)[:100]}")
-        
-        return None
-        
-    except Exception as e:
-        logging.error(f"❌ Buy completely failed for {to_addr}: {str(e)[:150]}")
-        
-        # Switch to fallback RPC if needed
-        fallback_rpc()
-        
-        # Re-raise to trigger retry
-        raise e
-
-# Enhanced sell function with retry mechanism
-@retry(stop=stop_after_attempt(MAX_TRANSACTION_ATTEMPTS), 
-       wait=wait_exponential(multiplier=1, max=10),
-       retry=retry_if_exception_type(Exception))
-def real_sell_token(to_addr: str):
-    """
-    Enhanced sell function with robust error handling and retry logic
-    """
-    try:
-        # Get wallet keypair
-        kp = get_phantom_keypair()
-        to_addr = sanitize_token_address(to_addr)
-        
-        # Get token balance to sell
-        token_accounts = solana_client.get_token_accounts_by_owner(
-            kp.pubkey(),
-            {"mint": Pubkey.from_string(to_addr)}
-        ).value
-        
-        if not token_accounts:
-            logging.warning(f"❌ No token account found for {to_addr}")
-            return None
-            
-        token_balance = int(token_accounts[0].account.data.parsed['info']['tokenAmount']['amount'])
-        if token_balance <= 0:
-            logging.warning(f"❌ Zero balance for {to_addr}")
-            return None
-            
-        # Get initial quote
-        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=3&maxAccounts=10"
-        logging.info(f"🔍 Getting sell quote for: {to_addr}")
-        
-        r = requests.get(quote_url, timeout=10)
-        if r.status_code != 200:
-            logging.warning(f"❌ Jupiter quote API returned {r.status_code}")
-            
-            # Try with higher slippage
-            fallback_quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={token_balance}&slippage=5&maxAccounts=10"
-            r = requests.get(fallback_quote_url, timeout=10)
-            if r.status_code != 200:
-                logging.error(f"❌ Jupiter sell quote retry failed with {r.status_code}")
-                return None
-            
-        quote = r.json()
-        
-        if not quote.get("routePlan"):
-            logging.warning(f"❌ No sell route available for {to_addr}")
-            
-            # Try with a reduced amount as last resort
-            reduced_balance = int(token_balance * 0.95)  # Try with 95% of balance
-            reduced_quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={reduced_balance}&slippage=5&maxAccounts=5&onlyDirectRoutes=true"
-            r = requests.get(reduced_quote_url, timeout=10)
-            
-            if r.status_code != 200 or "routePlan" not in r.json():
-                logging.error(f"❌ No sell route available even with reduced amount")
-                return None
-                
-            quote = r.json()
-
-        # Execute the transaction
-        swap_attempts = 0
-        max_swap_attempts = 3  # Try three approaches for selling
-        
-        while swap_attempts < max_swap_attempts:
-            try:
-                swap_payload = {
-                    "userPublicKey": str(kp.pubkey()),
-                    "wrapUnwrapSOL": True,
-                    "quoteResponse": quote,
-                    "computeUnitPriceMicroLamports": 1000,
-                    "asLegacyTransaction": False,
-                    "prioritizationFeeLamports": 0,
-                    "dynamicComputeUnitLimit": True
-                }
-                
-                # Adjust parameters based on attempt number
-                if swap_attempts == 1:
-                    # Second attempt: Use higher priority
-                    swap_payload["prioritizationFeeLamports"] = 10000
-                    swap_payload["computeUnitPriceMicroLamports"] = 2000
-                elif swap_attempts == 2:
-                    # Third attempt: Use legacy transaction with maximum priority
-                    swap_payload["asLegacyTransaction"] = True
-                    swap_payload["prioritizationFeeLamports"] = 20000
-                    swap_payload["computeUnitPriceMicroLamports"] = 3000
-                
-                swap = requests.post("https://quote-api.jup.ag/v6/swap", 
-                                    json=swap_payload, 
-                                    timeout=10).json()
-                
-                if "swapTransaction" not in swap:
-                    swap_attempts += 1
-                    logging.error(f"❌ No swap transaction returned for sell (attempt {swap_attempts})")
-                    
-                    # On failure, try with reduced amount for next attempt
-                    if swap_attempts < max_swap_attempts:
-                        reduced_amount = int(token_balance * (0.95 - (swap_attempts * 0.05)))  # Reduce more with each attempt
-                        quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={reduced_amount}&slippage={3 + swap_attempts}&maxAccounts={10 - swap_attempts * 2}&onlyDirectRoutes={swap_attempts > 0}"
-                        r = requests.get(quote_url, timeout=10)
-                        
-                        if r.status_code == 200:
-                            quote = r.json()
-                            if "routePlan" in quote:
-                                logging.info(f"🔄 Retrying sell with {reduced_amount/token_balance:.1%} of balance")
-                            else:
-                                logging.error(f"❌ No route for reduced amount")
-                                # Continue anyway, will try different transaction parameters
-                    
-                    continue
-
-                tx_data = decode_transaction_blob(swap["swapTransaction"])
-                logging.info(f"🚀 Sending SELL transaction for {to_addr} (attempt {swap_attempts+1})")
-                
-                # Send transaction with optimized parameters
-                tx_opts = TxOpts(
-                    skip_preflight=True,
-                    preflight_commitment="confirmed",
-                    max_retries=3
-                )
-                
-                sig = solana_client.send_raw_transaction(tx_data, opts=tx_opts)
-                
-                # Wait for confirmation with timeout
-                try:
-                    commitment = "confirmed"
-                    timeout = 30  # seconds
-                    resp = solana_client.confirm_transaction_with_spinner(
-                        sig.value, commitment=commitment, timeout=timeout
-                    )
-                    if resp.value:
-                        logging.info(f"✅ Sell transaction CONFIRMED for {to_addr}, sig: {sig.value}")
-                        return sig.value
-                    else:
-                        logging.warning(f"⚠️ Sell transaction not confirmed within timeout")
-                        # Still return the signature, as transaction might still succeed
-                        return sig.value
-                except Exception as confirm_error:
-                    logging.warning(f"⚠️ Confirmation error: {str(confirm_error)[:100]}")
-                    # Return signature anyway, as transaction might still succeed
-                    return sig.value
-                
-            except Exception as swap_error:
-                swap_attempts += 1
-                logging.warning(f"⚠️ Sell swap attempt {swap_attempts} failed: {str(swap_error)[:100]}")
-                
-                # Try a different RPC endpoint for next attempt
-                if swap_attempts < max_swap_attempts:
-                    try:
-                        # Cycle through RPC endpoints
-                        endpoint_index = swap_attempts % len(RPC_ENDPOINTS)
-                        new_endpoint = RPC_ENDPOINTS[endpoint_index]
-                        solana_client = Client(new_endpoint)
-                        logging.info(f"🔄 Switched to RPC endpoint: {new_endpoint}")
-                    except Exception as rpc_error:
-                        logging.warning(f"⚠️ RPC switch failed: {str(rpc_error)[:100]}")
-        
-        # If we've exhausted all attempts, try one absolute last approach - sell half
-        try:
-            # Absolute last resort - try selling half the balance with maximum slippage
-            half_balance = int(token_balance * 0.5)  # Half of balance
-            half_quote_url = f"https://quote-api.jup.ag/v6/quote?inputMint={to_addr}&outputMint=So11111111111111111111111111111111111111112&amount={half_balance}&slippage=10&maxAccounts=3&onlyDirectRoutes=true"
-            r = requests.get(half_quote_url, timeout=10)
-            
-            if r.status_code == 200:
-                quote = r.json()
-                if quote.get("routePlan"):
-                    swap = requests.post("https://quote-api.jup.ag/v6/swap", json={
-                        "userPublicKey": str(kp.pubkey()),
-                        "wrapUnwrapSOL": True,
-                        "quoteResponse": quote,
-                        "computeUnitPriceMicroLamports": 5000,  # Maximum compute price
-                        "asLegacyTransaction": True,  # Use legacy format
-                        "prioritizationFeeLamports": 50000,  # Very high priority fee
-                        "dynamicComputeUnitLimit": True
-                    }, timeout=10).json()
-                    
-                    if "swapTransaction" in swap:
-                        tx_data = decode_transaction_blob(swap["swapTransaction"])
-                        logging.info(f"🚀 Sending ABSOLUTE LAST RESORT SELL transaction for {to_addr}")
-                        
-                        sig = solana_client.send_raw_transaction(tx_data, opts=TxOpts(skip_preflight=True))
-                        logging.info(f"✅ Last resort sell transaction sent for {to_addr}, sig: {sig.value}")
-                        return sig.value
-        except Exception as last_attempt_error:
-            logging.error(f"❌ Last resort sell failed: {str(last_attempt_error)[:100]}")
-        
-        return None
-        
-    except Exception as e:
-        logging.error(f"❌ Sell completely failed for {to_addr}: {str(e)[:150]}")
-        
-        # Switch to fallback RPC
-        fallback_rpc()
-        
-        # Re-raise to trigger retry
-        raise e
-
-# === Check and sell function focused on 2x profit ===
-async def check_and_sell_token(token, token_data):
-    """
-    Enhanced token profit checking focused on 2x target with robust selling
-    """
-    global daily_profit, successful_sells_today, successful_2x_sells
-    
-    try:
-        # Get current price
-        price_now = get_token_price(token)
-        initial_price = token_data.get('initial_price', 0)
-        
-        # Fix type issues
-        if isinstance(price_now, str):
-            try:
-                price_now = float(price_now)
+                current_price = float(current_price)
             except:
-                price_now = 0
+                current_price = 0
                 
         if isinstance(initial_price, str):
             try:
@@ -430,161 +33,415 @@ async def check_and_sell_token(token, token_data):
             except:
                 initial_price = 0
         
-        # Get buy amount
-        buy_amount = token_data.get('buy_amount', BUY_AMOUNT_LAMPORTS)
+        minutes_held = (datetime.utcnow() - data['buy_time']).total_seconds() / 60
         
-        # Calculate time since purchase
-        minutes_since_buy = (datetime.utcnow() - token_data['buy_time']).total_seconds() / 60
-        
-        # If we can't get price data yet
-        if price_now <= 0:
-            # Log status at intervals
-            if int(minutes_since_buy) % PROFIT_CHECK_INTERVAL == 0:
-                logging.info(f"⏳ Waiting for price data for {token} - held for {minutes_since_buy:.1f} minutes")
+        if current_price > 0 and initial_price > 0:
+            price_ratio = current_price / initial_price
+            profit_percent = (price_ratio - 1) * 100
+            estimated_value = buy_amount_sol * price_ratio
+            total_value += estimated_value
+            tokens_with_prices += 1
             
-            # Force sell after max holding time if still no price
-            if minutes_since_buy >= FORCE_SELL_MINUTES:
-                logging.info(f"⚠️ FORCE SELLING {token} after {minutes_since_buy:.1f} minutes with no price data")
+            token_profit = ((current_price - initial_price) / initial_price) * buy_amount / 1_000_000_000
+            potential_profit += token_profit
+            
+            # Color coding based on performance
+            if price_ratio >= 1.8:  # Almost 2x
+                emoji = "🔥"  # Fire for near target
+            elif price_ratio >= 1.2:  # Good profit
+                emoji = "💰"  # Money bag for profit
+            elif price_ratio >= 0.9:  # Near break-even
+                emoji = "⚖️"  # Balance for near break-even
+            else:  # Loss
+                emoji = "📉"  # Chart down for loss
                 
-                # Try to get ANY price data as last resort
+            holdings_text += f"{emoji} {token}: {price_ratio:.2f}x ({profit_percent:.1f}%) - ${token_profit:.2f} profit - Held {minutes_held:.1f}min\n"
+        else:
+            tokens_without_prices += 1
+            if initial_price > 0:
+                holdings_text += f"⏳ {token}: No current price (initial ${initial_price:.8f}) - Held {minutes_held:.1f}min\n"
+            else:
+                holdings_text += f"⏳ {token}: No price data yet - Held {minutes_held:.1f}min\n"
+    
+    # Summary stats
+    holdings_text += f"\n**Summary:**\n"
+    holdings_text += f"Total tokens: {len(bought_tokens)}\n"
+    holdings_text += f"Tokens with prices: {tokens_with_prices}\n"
+    holdings_text += f"Tokens awaiting prices: {tokens_without_prices}\n"
+    holdings_text += f"Total estimated value: ${total_value:.2f}\n"
+    holdings_text += f"Potential profit: ${potential_profit:.2f}\n"
+    
+    # Check if message is too long for Discord (limit is 2000 chars)
+    if len(holdings_text) > 1950:
+        # Trim message if too long
+        holdings_text = holdings_text[:1900] + "\n... (message trimmed due to length)"
+    
+    await interaction.response.send_message(holdings_text)
+
+@tree.command(name="buy", description="Buy a specific token")
+@app_commands.describe(token_address="Token mint address to buy", amount_sol="Amount in SOL to buy with (default: 0.15)")
+async def buy_slash(interaction: discord.Interaction, token_address: str, amount_sol: float = 0.15):
+    """Manual buy command with amount option"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # Convert SOL to lamports
+        amount_lamports = int(amount_sol * 1_000_000_000)
+        
+        # Cap the amount at 2 SOL for safety
+        if amount_lamports > 2_000_000_000:
+            amount_lamports = 2_000_000_000
+            await interaction.followup.send(f"⚠️ Amount capped at 2 SOL for safety.")
+        
+        # Validate token address format
+        token_address = sanitize_token_address(token_address)
+        
+        # Try to buy the token
+        sig = real_buy_token(token_address, amount_lamports)
+        
+        if sig:
+            price = get_token_price(token_address)
+            
+            # Handle string price
+            if isinstance(price, str):
                 try:
-                    # Try Jupiter quote API
-                    r = requests.get(f"https://quote-api.jup.ag/v6/quote?inputMint={token}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippage=5", timeout=5)
-                    if r.status_code == 200 and 'outAmount' in r.json():
-                        out_amount = int(r.json().get('outAmount', 0))
-                        if out_amount > 0:
-                            estimated_price = out_amount / 1000000000 / 1000000
-                            logging.info(f"✅ Last chance price estimate: ${estimated_price:.8f} for {token}")
-                            price_now = estimated_price
-                except Exception as e:
-                    logging.error(f"❌ Last chance price estimate failed: {str(e)[:100]}")
+                    price = float(price)
+                except:
+                    price = 0
+                    
+            bought_tokens[token_address] = {
+                'buy_sig': sig,
+                'buy_time': datetime.utcnow(),
+                'token': token_address,
+                'initial_price': price,
+                'buy_amount': amount_lamports
+            }
+            
+            log_trade({
+                "type": "buy", 
+                "token": token_address, 
+                "tx": sig, 
+                "timestamp": datetime.utcnow().strftime("%H:%M:%S"), 
+                "price": price,
+                "amount_lamports": amount_lamports,
+                "manual": True
+            })
+            
+            await interaction.followup.send(f"✅ Bought {token_address} with {amount_sol} SOL! Transaction: https://solscan.io/tx/{sig}")
+        else:
+            await interaction.followup.send(f"❌ Failed to buy {token_address}. Check logs for details.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {str(e)}")
+
+@tree.command(name="sell", description="Sell a specific token")
+@app_commands.describe(token_address="Token mint address to sell")
+async def sell_slash(interaction: discord.Interaction, token_address: str):
+    """Manual sell command"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # Validate token address format
+        token_address = sanitize_token_address(token_address)
+        
+        # Try to sell the token
+        sig = real_sell_token(token_address)
+        
+        if sig:
+            if token_address in bought_tokens:
+                # Calculate profit if we have buy data
+                initial_price = bought_tokens[token_address].get('initial_price', 0)
+                buy_amount = bought_tokens[token_address].get('buy_amount', BUY_AMOUNT_LAMPORTS)
+                current_price = get_token_price(token_address)
                 
-                # Force sell
-                sell_sig = real_sell_token(token)
+                # Handle string conversion
+                if isinstance(current_price, str):
+                    try:
+                        current_price = float(current_price)
+                    except:
+                        current_price = 0
+                        
+                if isinstance(initial_price, str):
+                    try:
+                        initial_price = float(initial_price)
+                    except:
+                        initial_price = 0
                 
-                if sell_sig:
-                    # Log the trade
-                    profit = 0
-                    if price_now > 0 and initial_price > 0:
-                        profit = ((price_now - initial_price) / initial_price) * buy_amount / 1_000_000_000
+                if current_price > 0 and initial_price > 0:
+                    profit = ((current_price - initial_price) / initial_price) * buy_amount / 1_000_000_000
+                    price_ratio = current_price / initial_price
                     
                     log_trade({
                         "type": "sell", 
-                        "token": token,
-                        "tx": sell_sig,
+                        "token": token_address,
+                        "tx": sig,
                         "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-                        "price": price_now if price_now > 0 else (initial_price if initial_price > 0 else 0.00000001),
+                        "price": current_price,
                         "profit": profit,
-                        "reason": f"force sold after {minutes_since_buy:.1f} minutes with no price data"
+                        "reason": "manual sell",
+                        "manual": True
                     })
                     
-                    # Notify in Discord
-                    if DISCORD_NEWS_CHANNEL_ID:
-                        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                        if channel:
-                            await channel.send(f"⚠️ Force-sold {token} after {minutes_since_buy:.1f} minutes with no price data! https://solscan.io/tx/{sell_sig}")
-                    
-                    del bought_tokens[token]
-                    
-            return
-            
-        # Update initial price if we didn't have one
-        if initial_price <= 0:
-            token_data['initial_price'] = price_now
-            logging.info(f"✅ Updated initial price for {token} to ${price_now:.8f}")
-            return
-            
-        # Calculate current profit ratio
-        price_ratio = price_now / initial_price
-        
-        # Log status at regular intervals
-        if int(minutes_since_buy) % PROFIT_CHECK_INTERVAL == 0:
-            approx_profit = ((price_now - initial_price) / initial_price) * buy_amount / 1_000_000_000
-            logging.info(f"📈 Token {token} price ratio: {price_ratio:.2f}x (${approx_profit:.2f} profit) - held for {minutes_since_buy:.1f} minutes")
-        
-        # FOCUSED SELL CONDITIONS:
-        # 1. Hit 2.0x target (primary goal)
-        # 2. Stop loss at 0.85x
-        # 3. Early take-profit if approaching daily target
-        # 4. Force sell after max hold time
-        should_sell = False
-        sell_reason = ""
-        
-        # 1. Primary goal: 2x target
-        if price_ratio >= SELL_PROFIT_TRIGGER:
-            should_sell = True
-            sell_reason = f"HIT 2X TARGET!!! ({price_ratio:.2f}x)"
-            
-        # 2. Stop loss
-        elif price_ratio <= STOP_LOSS_TRIGGER:
-            should_sell = True
-            sell_reason = f"stop loss triggered ({price_ratio:.2f}x)"
-            
-        # 3. If close to daily target, take profits earlier
-        elif daily_profit >= DAILY_PROFIT_TARGET * 0.8 and price_ratio >= 1.5:
-            should_sell = True
-            sell_reason = f"accelerating to daily target ({price_ratio:.2f}x)"
-            
-        # 4. Take profit based on holding time
-        elif minutes_since_buy >= 60 and price_ratio >= 1.5:
-            # If held over 1 hour with 1.5x, take profit
-            should_sell = True
-            sell_reason = f"time-based profit taking ({price_ratio:.2f}x after {minutes_since_buy:.1f}min)"
-            
-        # 5. Force sell after maximum hold time
-        elif minutes_since_buy >= FORCE_SELL_MINUTES:
-            should_sell = True
-            sell_reason = f"maximum hold time reached ({price_ratio:.2f}x after {minutes_since_buy:.1f}min)"
+                    await interaction.followup.send(f"✅ Sold {token_address} at ${current_price:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Transaction: https://solscan.io/tx/{sig}")
+                else:
+                    await interaction.followup.send(f"✅ Sold {token_address} (profit unknown)! Transaction: https://solscan.io/tx/{sig}")
                 
-        # Execute sell if conditions are met
-        if should_sell:
-            logging.info(f"🔄 Selling {token} - {sell_reason}")
-            
-            # Improved sell process with retry
-            sell_sig = real_sell_token(token)
-            
-            if sell_sig:
-                profit = ((price_now - initial_price) / initial_price) * buy_amount / 1_000_000_000
-                
-                log_trade({
-                    "type": "sell", 
-                    "token": token,
-                    "tx": sell_sig,
-                    "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
-                    "price": price_now,
-                    "profit": profit,
-                    "reason": sell_reason
-                })
-                
-                # Increment success counters
-                successful_sells_today += 1
-                if price_ratio >= 2.0:
-                    successful_2x_sells += 1
-                
-                # Notify in Discord
-                if DISCORD_NEWS_CHANNEL_ID:
-                    channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                    if channel:
-                        await channel.send(f"💰 Auto-sold {token} at ${price_now:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit) - {sell_reason}! https://solscan.io/tx/{sell_sig}")
-                
-                del bought_tokens[token]
-                
-                # Special notifications for 2x trades
-                if price_ratio >= 2.0:
-                    logging.info(f"💎 2X TARGET REACHED! {token} sold at {price_ratio:.2f}x return!")
-                    if DISCORD_NEWS_CHANNEL_ID:
-                        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                        if channel:
-                            await channel.send(f"💎 2X TARGET REACHED! {token} sold at {price_ratio:.2f}x return! Profit: ${profit:.2f}")
-                            
-                # Daily profit target notification
-                daily_profit_amount = summarize_daily_profit()
-                if daily_profit_amount >= DAILY_PROFIT_TARGET:
-                    logging.info(f"🎯 DAILY PROFIT TARGET REACHED! ${daily_profit_amount:.2f} / ${DAILY_PROFIT_TARGET:.2f}")
-                    if DISCORD_NEWS_CHANNEL_ID:
-                        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
-                        if channel:
-                            await channel.send(f"🎯 DAILY PROFIT TARGET REACHED! ${daily_profit_amount:.2f} / ${DAILY_PROFIT_TARGET:.2f}")
-    
+                # Remove from bought_tokens
+                if token_address in bought_tokens:
+                    del bought_tokens[token_address]
+            else:
+                await interaction.followup.send(f"✅ Sold {token_address}! Transaction: https://solscan.io/tx/{sig}")
+        else:
+            await interaction.followup.send(f"❌ Failed to sell {token_address}. Check logs for details.")
     except Exception as e:
-        logging.error(f"❌ Error checking token {token}: {str(e)[:150]}")
+        await interaction.followup.send(f"❌ Error: {str(e)}")
+
+@tree.command(name="chart", description="Generate a profit chart")
+async def chart_slash(interaction: discord.Interaction):
+    """Generate and display a profit chart"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # Extract profit data from trade log
+        if not trade_log:
+            await interaction.followup.send("No trade data available to create chart.")
+            return
+            
+        # Extract sell entries with profit data
+        profit_entries = [entry for entry in trade_log if entry.get("type") == "sell" and "profit" in entry]
+        
+        if not profit_entries:
+            await interaction.followup.send("No profit data available to create chart.")
+            return
+            
+        # Extract timestamps and profits
+        timestamps = []
+        profits = []
+        cumulative_profit = 0
+        
+        for entry in profit_entries:
+            # Convert timestamp string to datetime if needed
+            if isinstance(entry.get("timestamp"), str):
+                time_obj = datetime.strptime(entry.get("timestamp"), "%H:%M:%S")
+                # Use today's date with the time from the log
+                timestamp = datetime.now().replace(hour=time_obj.hour, minute=time_obj.minute, second=time_obj.second)
+            else:
+                timestamp = entry.get("timestamp", datetime.now())
+                
+            profit = entry.get("profit", 0)
+            cumulative_profit += profit
+            
+            timestamps.append(timestamp)
+            profits.append(cumulative_profit)
+            
+        # Create the chart
+        plt.figure(figsize=(10, 6))
+        plt.plot(timestamps, profits, marker='o', linestyle='-', color='green')
+        plt.axhline(y=0, color='r', linestyle='-', alpha=0.3)
+        plt.axhline(y=DAILY_PROFIT_TARGET, color='g', linestyle='--', alpha=0.5, label=f"${DAILY_PROFIT_TARGET} Target")
+        
+        plt.title('Cumulative Trading Profit')
+        plt.xlabel('Time')
+        plt.ylabel('Profit (USD)')
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        
+        # Format y-axis as dollars
+        plt.gca().yaxis.set_major_formatter('${x:.0f}')
+        
+        # Save chart to file
+        chart_path = "profit_chart.png"
+        plt.tight_layout()
+        plt.savefig(chart_path)
+        plt.close()
+        
+        # Send the chart as an attachment
+        await interaction.followup.send(file=discord.File(chart_path))
+        
+    except Exception as e:
+        logging.error(f"❌ Error generating chart: {e}")
+        await interaction.followup.send(f"❌ Error generating chart: {str(e)}")
+
+@tree.command(name="analyze", description="Get AI analysis of current market conditions")
+async def analyze_slash(interaction: discord.Interaction):
+    """Generate AI analysis of current market trends using GPT-4"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        # First, gather some data from our trading history
+        if not trade_log:
+            await interaction.followup.send("Not enough trading data for analysis.")
+            return
+        
+        # Count successful vs failed trades
+        sells = [entry for entry in trade_log if entry.get("type") == "sell"]
+        profitable_sells = [entry for entry in sells if entry.get("profit", 0) > 0]
+        successful_ratio = len(profitable_sells) / len(sells) if sells else 0
+        
+        # Get holding time stats
+        holding_times = []
+        for token, data in bought_tokens.items():
+            minutes_held = (datetime.utcnow() - data['buy_time']).total_seconds() / 60
+            holding_times.append(minutes_held)
+            
+        avg_hold_time = sum(holding_times) / len(holding_times) if holding_times else 0
+        
+        # Calculate average profit per trade
+        total_profit = sum(entry.get("profit", 0) for entry in sells)
+        avg_profit = total_profit / len(sells) if sells else 0
+        
+        # Gather tokens with the best performance
+        best_tokens = []
+        for entry in profitable_sells[-10:]:  # Look at recent profitable sells
+            if "token" in entry and "profit" in entry:
+                best_tokens.append((entry["token"], entry["profit"]))
+                
+        # Sort by profit
+        best_tokens.sort(key=lambda x: x[1], reverse=True)
+        
+        # Create prompt for GPT-4
+        system_prompt = "You are an expert crypto trading assistant. Analyze the provided trading data and give insights."
+        
+        user_prompt = f"""
+        Trading Data Summary:
+        - Total trades: {len(trade_log)}
+        - Successful trades ratio: {successful_ratio:.2f}
+        - Average profit per trade: ${avg_profit:.2f}
+        - Average holding time: {avg_hold_time:.1f} minutes
+        - Current tokens held: {len(bought_tokens)}
+        - Daily profit so far: ${daily_profit:.2f}
+        
+        Best performing tokens:
+        {best_tokens[:5]}
+        
+        Based on this data, provide a brief analysis of:
+        1. Current market conditions
+        2. Recommended strategy adjustments
+        3. Opportunities to watch for
+        
+        Keep the analysis under 400 words and focus on actionable insights.
+        """
+        
+        # Call GPT-4 for analysis
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            max_tokens=500,
+            temperature=0.7
+        )
+        
+        analysis = response.choices[0].message.content
+        
+        # Send the analysis
+        await interaction.followup.send(f"**📊 Market Analysis:**\n\n{analysis}")
+        
+    except Exception as e:
+        logging.error(f"❌ Error generating analysis: {e}")
+        await interaction.followup.send(f"❌ Error generating analysis: {str(e)}")
+
+@tree.command(name="newrpc", description="Test and switch to the fastest RPC endpoint")
+async def newrpc_slash(interaction: discord.Interaction):
+    """Test all RPC endpoints and switch to the fastest one"""
+    await interaction.response.defer(thinking=True)
+    
+    try:
+        old_rpc = solana_client.endpoint
+        best_rpc = get_best_rpc()
+        
+        if best_rpc:
+            global solana_client
+            solana_client = Client(best_rpc)
+            await interaction.followup.send(f"✅ Switched from {old_rpc} to faster RPC: {best_rpc}")
+        else:
+            await interaction.followup.send("❌ Failed to find a faster RPC endpoint.")
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error testing RPC endpoints: {str(e)}")
+
+# Add daily stats reset function
+async def reset_daily_stats():
+    """Reset daily stats at midnight UTC"""
+    global daily_profit, total_buys_today, successful_sells_today, successful_2x_sells
+    
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        now = datetime.utcnow()
+        # Calculate time until next midnight UTC
+        tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+        seconds_until_midnight = (tomorrow - now).total_seconds()
+        
+        # Sleep until midnight
+        await asyncio.sleep(seconds_until_midnight)
+        
+        # Reset daily stats
+        old_profit = daily_profit
+        daily_profit = 0
+        old_buys = total_buys_today
+        total_buys_today = 0
+        old_sells = successful_sells_today
+        successful_sells_today = 0
+        old_2x = successful_2x_sells
+        successful_2x_sells = 0
+        
+        # Log the reset
+        logging.info(f"🔄 Daily stats reset! Previous: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+        
+        # Notify in Discord
+        if DISCORD_NEWS_CHANNEL_ID:
+            channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+            if channel:
+                await channel.send(f"🔄 Daily stats reset! Previous day: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+
+@bot.event
+async def on_ready():
+    logging.info(f"Bot logged in as {bot.user}")
+    await tree.sync()
+    
+    # Load trade log if it exists
+    global trade_log
+    try:
+        if os.path.exists("trade_log.json"):
+            with open("trade_log.json", "r") as f:
+                trade_log = json.load(f)
+            logging.info(f"✅ Loaded {len(trade_log)} entries from trade log")
+    except Exception as e:
+        logging.error(f"❌ Error loading trade log: {e}")
+
+    # Start the auto-snipe task
+    bot.loop.create_task(auto_snipe())
+    
+    # Start the daily stats reset task
+    bot.loop.create_task(reset_daily_stats())
+    
+    # Log initial wallet balance
+    log_wallet_balance()
+
+def run_bot():
+    """Main function to run the bot"""
+    try:
+        if not DISCORD_TOKEN:
+            logging.error("❌ DISCORD_TOKEN not set in .env file")
+            return
+            
+        if not PHANTOM_SECRET_KEY:
+            logging.error("❌ PHANTOM_SECRET_KEY not set in .env file")
+            return
+            
+        # Test wallet connection
+        try:
+            kp = get_phantom_keypair()
+            pubkey = kp.pubkey()
+            logging.info(f"✅ Wallet loaded: {pubkey}")
+        except Exception as e:
+            logging.error(f"❌ Wallet setup failed: {e}")
+            return
+            
+        # Run the bot
+        logging.info("🚀 Starting bot...")
+        bot.run(DISCORD_TOKEN)
+    except Exception as e:
+        logging.error(f"❌ Bot run failed: {e}")
+
+if __name__ == "__main__":
+    run_bot()
