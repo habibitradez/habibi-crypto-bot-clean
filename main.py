@@ -575,7 +575,7 @@ async def profit_slash(interaction: discord.Interaction):
     else:
         eta_msg = "Insufficient data to estimate target ETA"
     
-    stats = f"""📊 **Profit Stats:**
+    stats = f""" **Profit Stats:**
 Today's profit: ${total_profit:.2f} / ${DAILY_PROFIT_TARGET:.2f} target ({(total_profit/DAILY_PROFIT_TARGET*100):.1f}%)
 
 📈 **Performance:**
