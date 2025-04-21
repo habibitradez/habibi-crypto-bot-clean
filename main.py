@@ -1,3 +1,38 @@
+@tree.command(name="profit", description="Check today's trading profit")
+async def profit_slash(interaction: discord.Interaction):
+    """Enhanced profit command with detailed stats"""
+    total_profit = summarize_daily_profit()
+    
+    # Calculate stats
+    conversion_rate = successful_sells_today / total_buys_today * 100 if total_buys_today > 0 else 0
+    x2_rate = successful_2x_sells / successful_sells_today * 100 if successful_sells_today > 0 else 0
+    avg_profit = total_profit / successful_sells_today if successful_sells_today > 0 else 0
+    
+    # Estimate time to target based on current rate
+    remaining_profit = max(0, DAILY_PROFIT_TARGET - total_profit)
+    hours_passed = datetime.utcnow().hour + datetime.utcnow().minute / 60
+    if hours_passed > 0 and total_profit > 0:
+        profit_per_hour = total_profit / hours_passed
+        hours_to_target = remaining_profit / profit_per_hour if profit_per_hour > 0 else 0
+        eta_msg = f"ETA to ${DAILY_PROFIT_TARGET:.0f} target: {hours_to_target:.1f} hours"
+    else:
+        eta_msg = "Insufficient data to estimate target ETA"
+    
+    stats = f"""📊 **Profit Stats:**
+Today's profit: ${total_profit:.2f} / ${DAILY_PROFIT_TARGET:.2f} target ({(total_profit/DAILY_PROFIT_TARGET*100):.1f}%)
+
+📈 **Performance:**
+- Buys: {total_buys_today}
+- Successful sells: {successful_sells_today} ({conversion_rate:.1f}% success rate)
+- 2x+ sells: {successful_2x_sells} ({x2_rate:.1f}% of sells)
+- Average profit: ${avg_profit:.2f} per successful trade
+
+🎯 {eta_msg}
+
+Current buy amount: {BUY_AMOUNT_LAMPORTS/1000000000:.3f} SOL
+"""
+    await interaction.response.send_message(stats)
+
 @tree.command(name="holdings", description="Check current token holdings")
 async def holdings_slash(interaction: discord.Interaction):
     """Enhanced holdings command with detailed metrics"""
