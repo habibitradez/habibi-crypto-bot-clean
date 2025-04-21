@@ -10,3 +10,4 @@ beautifulsoup4
 snscrape==0.7.0.20230622
 base58==2.1.1
 matplotlib==3.8.3
+jupiter-python-sdk==0.1.0
