@@ -970,14 +970,14 @@ async def analyze_slash(interaction: discord.Interaction):
 @tree.command(name="newrpc", description="Test and switch to the fastest RPC endpoint")
 async def newrpc_slash(interaction: discord.Interaction):
     """Test all RPC endpoints and switch to the fastest one"""
+    global solana_client
     await interaction.response.defer(thinking=True)
     
     try:
         old_rpc = solana_client.endpoint if solana_client else "Not connected"
         best_rpc = get_best_rpc()
         
-        # Initialize global client with the new RPC
-        global solana_client
+        # Initialize client with the new RPC
         solana_client = Client(best_rpc)
         
         if best_rpc and best_rpc != old_rpc:
