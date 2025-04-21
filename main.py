@@ -350,10 +350,10 @@ async def newrpc_slash(interaction: discord.Interaction):
         old_rpc = solana_client.endpoint
         best_rpc = get_best_rpc()
         
-        if best_rpc:
-            global solana_client
-            solana_client = Client(best_rpc)
+        if best_rpc and best_rpc != old_rpc:
             await interaction.followup.send(f"✅ Switched from {old_rpc} to faster RPC: {best_rpc}")
+        elif best_rpc == old_rpc:
+            await interaction.followup.send(f"✅ Current RPC endpoint ({old_rpc}) is already the fastest.")
         else:
             await interaction.followup.send("❌ Failed to find a faster RPC endpoint.")
     except Exception as e:
