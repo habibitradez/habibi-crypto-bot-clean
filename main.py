@@ -1,3 +1,12 @@
+import base58
+from solana.rpc.api import Client
+from solana.keypair import Keypair
+from solana.transaction import Transaction
+from solana.system_program import SYS_PROGRAM_ID, TransferParams
+import solana.publickey as sp
+from solana.rpc.types import TxOpts
+import requests
+import time
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -9,7 +18,11 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import openai
 from dotenv import load_dotenv
-
+ALCHEMY_API_KEY = os.getenv('ALCHEMY_API_KEY')
+rpc_endpoints = [
+    # Other endpoints
+    f"https://solana-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}"
+]
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
                    datefmt='%Y-%m-%d %H:%M:%S')
@@ -808,4 +821,6 @@ def run_bot():
         logging.error(f"❌ Bot run failed: {e}")
 
 if __name__ == "__main__":
+  # Initialize Solana client
+initialize_solana_client()
     run_bot()
