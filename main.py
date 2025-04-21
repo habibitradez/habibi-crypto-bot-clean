@@ -34,7 +34,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 tree = bot.tree  # This is the tree variable needed for slash commands
 
 # Constants
-DAILY_PROFIT_TARGET = 500.0  # Daily profit target in USD
+DAILY_PROFIT_TARGET = 1000.0  # Daily profit target in USD
 BUY_AMOUNT_LAMPORTS = 150_000_000  # Default buy amount (0.15 SOL)
 
 # Global variables
@@ -44,6 +44,9 @@ daily_profit = 0
 total_buys_today = 0
 successful_sells_today = 0
 successful_2x_sells = 0
+
+# Solana client (placeholder)
+solana_client = None
 
 @tree.command(name="profit", description="Check today's trading profit")
 async def profit_slash(interaction: discord.Interaction):
@@ -491,13 +494,234 @@ def get_best_rpc():
     # Implement with actual RPC testing logic
     return "https://api.mainnet-beta.solana.com"  # Placeholder
 
+# Function to find new promising tokens
+def find_new_promising_tokens(min_liquidity=2, max_results=3):
+    """
+    Find new promising tokens for sniping
+    Returns a list of token addresses
+    """
+    # This would be implemented according to your strategy:
+    # - Monitoring DEX listings
+    # - Looking at trending tokens on Jupiter, Birdeye, etc.
+    # - Scanning for new liquidity pools
+    # - Monitoring social signals
+    
+    # Placeholder implementation - would need to be replaced with actual logic
+    return []
+
+# Function to check if token is safe
+def is_token_safe(token_address):
+    """
+    Check if a token is safe to buy
+    Returns True if safe, False otherwise
+    """
+    # Implement safety checks:
+    # - Verify contract (not honeypot)
+    # - Check liquidity 
+    # - Check for locked liquidity
+    # - Check trading enabled
+    # - Check non-suspicious tokenomics
+    
+    # Placeholder implementation - would need to be replaced with actual logic
+    return True
+
+async def check_for_sell_opportunities():
+    """Check all held tokens for sell opportunities"""
+    global bought_tokens, daily_profit, successful_sells_today, successful_2x_sells
+    
+    tokens_to_check = list(bought_tokens.keys())
+    
+    for token_address in tokens_to_check:
+        try:
+            if token_address not in bought_tokens:
+                continue  # Skip if token was already sold
+                
+            data = bought_tokens[token_address]
+            initial_price = data.get('initial_price', 0)
+            buy_amount = data.get('buy_amount', BUY_AMOUNT_LAMPORTS)
+            current_price = get_token_price(token_address)
+            buy_time = data.get('buy_time', datetime.utcnow())
+            
+            # Handle string conversion
+            if isinstance(current_price, str):
+                try:
+                    current_price = float(current_price)
+                except:
+                    current_price = 0
+                    
+            if isinstance(initial_price, str):
+                try:
+                    initial_price = float(initial_price)
+                except:
+                    initial_price = 0
+            
+            # Skip if we don't have valid price data
+            if current_price <= 0 or initial_price <= 0:
+                continue
+                
+            # Calculate price ratio
+            price_ratio = current_price / initial_price
+            
+            # Auto-sell conditions:
+            # 1. Target achieved (2x)
+            # 2. Emergency stop-loss (e.g., -20%)
+            # 3. Time-based (e.g., held for 60+ minutes without reaching target)
+            
+            sell_reason = None
+            minutes_held = (datetime.utcnow() - buy_time).total_seconds() / 60
+            
+            if price_ratio >= 2.0:
+                sell_reason = "2x target reached"
+            elif price_ratio <= 0.8:
+                sell_reason = "stop loss triggered"
+            elif minutes_held > 60 and price_ratio < 1.2:
+                sell_reason = "time limit exceeded without significant gain"
+            
+            if sell_reason:
+                # Execute sell
+                sig = real_sell_token(token_address)
+                
+                if sig:
+                    profit = ((current_price - initial_price) / initial_price) * buy_amount / 1_000_000_000
+                    
+                    # Update stats
+                    daily_profit += profit
+                    successful_sells_today += 1
+                    if price_ratio >= 2.0:
+                        successful_2x_sells += 1
+                    
+                    log_trade({
+                        "type": "sell", 
+                        "token": token_address,
+                        "tx": sig,
+                        "timestamp": datetime.utcnow().strftime("%H:%M:%S"),
+                        "price": current_price,
+                        "profit": profit,
+                        "price_ratio": price_ratio,
+                        "reason": sell_reason,
+                        "manual": False
+                    })
+                    
+                    # Notify in Discord if channel is set
+                    if DISCORD_NEWS_CHANNEL_ID:
+                        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+                        if channel:
+                            await channel.send(f"🤖 Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Reason: {sell_reason}. Transaction: https://solscan.io/tx/{sig}")
+                    
+                    logging.info(f"✅ Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)")
+                    
+                    # Remove from bought_tokens
+                    if token_address in bought_tokens:
+                        del bought_tokens[token_address]
+        
+        except Exception as e:
+            logging.error(f"❌ Error checking sell opportunity for {token_address}: {e}")
+
 async def auto_snipe():
-    """Automatic token sniping function"""
-    global total_buys_today
+    """Automatic token sniping function - runs continuously in the background"""
+    global total_buys_today, daily_profit, successful_sells_today, successful_2x_sells, bought_tokens
+    
     await bot.wait_until_ready()
+    
+    # Config parameters for auto-sniping
+    MAX_CONCURRENT_TOKENS = 5  # Maximum number of tokens to hold at once
+    MIN_LIQUIDITY = 2  # Minimum liquidity in SOL to consider buying
+    BUY_COOLDOWN = 300  # Seconds between buys (5 minutes)
+    MAX_DAILY_BUYS = 50  # Safety limit for daily buys
+    last_buy_time = datetime.utcnow() - timedelta(hours=1)  # Initialize with time in the past
+    
+    logging.info("🤖 Auto-sniper started and running...")
+    
     while not bot.is_closed():
-        # Implement actual sniping logic
-        await asyncio.sleep(30)  # Check every 30 seconds
+        try:
+            # Skip if reached daily buy limit
+            if total_buys_today >= MAX_DAILY_BUYS:
+                logging.info(f"⚠️ Daily buy limit reached ({MAX_DAILY_BUYS}). Waiting until reset.")
+                await asyncio.sleep(60)
+                continue
+                
+            # Skip if we're holding max tokens already
+            if len(bought_tokens) >= MAX_CONCURRENT_TOKENS:
+                logging.info(f"⚠️ Max concurrent tokens reached ({MAX_CONCURRENT_TOKENS}). Waiting for sells.")
+                await asyncio.sleep(60)
+                continue
+                
+            # Enforce cooldown between buys
+            time_since_last_buy = (datetime.utcnow() - last_buy_time).total_seconds()
+            if time_since_last_buy < BUY_COOLDOWN:
+                await asyncio.sleep(10)  # Check frequently 
+                continue
+                
+            # 1. Find new tokens - implement your token discovery method here
+            # This could be monitoring DEX listings, mempool for new pairs, etc.
+            new_tokens = find_new_promising_tokens(min_liquidity=MIN_LIQUIDITY, max_results=3)
+            
+            if not new_tokens:
+                await asyncio.sleep(10)  # Check frequently for new opportunities
+                continue
+                
+            # 2. Pick the most promising token and buy it
+            for token_address in new_tokens:
+                # Skip if we already own this token
+                if token_address in bought_tokens:
+                    continue
+                    
+                # Check token metrics before buying
+                if not is_token_safe(token_address):
+                    logging.info(f"⚠️ Skipping token {token_address} - failed safety checks")
+                    continue
+                    
+                # Attempt to buy the token
+                sig = real_buy_token(token_address, BUY_AMOUNT_LAMPORTS)
+                
+                if sig:
+                    price = get_token_price(token_address)
+                    
+                    # Handle string price
+                    if isinstance(price, str):
+                        try:
+                            price = float(price)
+                        except:
+                            price = 0
+                            
+                    bought_tokens[token_address] = {
+                        'buy_sig': sig,
+                        'buy_time': datetime.utcnow(),
+                        'token': token_address,
+                        'initial_price': price,
+                        'buy_amount': BUY_AMOUNT_LAMPORTS
+                    }
+                    
+                    log_trade({
+                        "type": "buy", 
+                        "token": token_address, 
+                        "tx": sig, 
+                        "timestamp": datetime.utcnow().strftime("%H:%M:%S"), 
+                        "price": price,
+                        "amount_lamports": BUY_AMOUNT_LAMPORTS,
+                        "manual": False
+                    })
+                    
+                    total_buys_today += 1
+                    last_buy_time = datetime.utcnow()
+                    
+                    # Notify in Discord if channel is set
+                    if DISCORD_NEWS_CHANNEL_ID:
+                        channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
+                        if channel:
+                            await channel.send(f"🤖 Auto-bought {token_address} at ${price:.8f}! Transaction: https://solscan.io/tx/{sig}")
+                    
+                    logging.info(f"✅ Auto-bought {token_address} at ${price:.8f}")
+                    break  # Stop after buying one token
+            
+            # 3. Check existing tokens for sell opportunities (separate from buying logic)
+            await check_for_sell_opportunities()
+                
+        except Exception as e:
+            logging.error(f"❌ Error in auto_snipe: {e}")
+        
+        # Main loop pause
+        await asyncio.sleep(5)  # Check frequently
 
 # Add daily stats reset function
 async def reset_daily_stats():
@@ -527,7 +751,7 @@ async def reset_daily_stats():
         # Log the reset
         logging.info(f"🔄 Daily stats reset! Previous: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
         
-        # Notify in Discord
+        # Notify in Discord if channel is set
         if DISCORD_NEWS_CHANNEL_ID:
             channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
             if channel:
