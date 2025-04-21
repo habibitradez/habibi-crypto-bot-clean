@@ -20,7 +20,7 @@ try:
     from solana.rpc.async_api import AsyncClient
     JUPITER_AVAILABLE = True
 except ImportError:
-    logging.warning("⚠️ Jupiter SDK not available. Running in simulation mode.")
+    logging.warning("Jupiter SDK not available. Running in simulation mode.")
     JUPITER_AVAILABLE = False
 
 # Configure logging
@@ -71,7 +71,7 @@ async def initialize_jupiter():
     global jupiter_client, solana_endpoint
     
     if not JUPITER_AVAILABLE:
-        logging.warning("⚠️ Jupiter SDK not available. Cannot initialize client.")
+        logging.warning("Jupiter SDK not available. Cannot initialize client.")
         return None
     
     # List of Solana RPC endpoints to try
@@ -96,10 +96,10 @@ async def initialize_jupiter():
         # Create Jupiter client
         async_client = AsyncClient(best_rpc)
         jupiter = Jupiter(async_client=async_client, keypair=keypair)
-        logging.info(f"✅ Jupiter client initialized with wallet: {keypair.pubkey()}")
+        logging.info(f"Jupiter client initialized with wallet: {keypair.pubkey()}")
         return jupiter
     except Exception as e:
-        logging.error(f"❌ Error initializing Jupiter client: {e}")
+        logging.error(f"Error initializing Jupiter client: {e}")
         return None
 
 async def get_best_rpc(endpoints=None):
@@ -140,38 +140,6 @@ async def get_best_rpc(endpoints=None):
 
 async def get_token_price(token_address):
     """
-    Get current price of a token using Jupiter API or Birdeye
-    """
-    try:
-        # Try Jupiter API first
-        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
-        response = requests.get(jupiter_url, timeout=5)
-        data = response.json()
-        
-        if data.get('data') and token_address in data['data']:
-            token_data = data['data'][token_address]
-            if 'price' in token_data:
-                return float(token_data['price'])
-        
-        # Fallback to Birdeye API
-        if BIRDEYE_API_KEY:
-            birdeye_url = f"https://public-api.birdeye.so/public/price?address={token_address}"
-            headers = {"X-API-KEY": BIRDEYE_API_KEY}
-            response = requests.get(birdeye_url, headers=headers, timeout=5)
-            data = response.json()
-            
-            if data.get('data') and 'value' in data['data']:
-                return float(data['data']['value'])
-            
-        # If no price found
-        logging.warning(f"No price found for {token_address}")
-        return 0.0
-    except Exception as e:
-        logging.error(f"Error getting token price: {e}")
-        return 0.0
-
-async def get_token_price(token_address):
-    """
     Get current price of a token using alternative price APIs
     """
     try:
@@ -185,6 +153,18 @@ async def get_token_price(token_address):
             if data.get('data') and 'value' in data['data']:
                 price = float(data['data']['value'])
                 logging.info(f"Got price from Birdeye: ${price:.6f} for {token_address}")
+                return price
+        
+        # Try Jupiter API as backup
+        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+        response = requests.get(jupiter_url, timeout=5)
+        data = response.json()
+        
+        if data.get('data') and token_address in data['data']:
+            token_data = data['data'][token_address]
+            if 'price' in token_data:
+                price = float(token_data['price'])
+                logging.info(f"Got price from Jupiter: ${price:.6f} for {token_address}")
                 return price
                 
         # Try Coingecko as backup for SOL price
@@ -204,13 +184,16 @@ async def get_token_price(token_address):
     except Exception as e:
         logging.error(f"Error getting token price: {e}")
         return 0.0
+
+async def real_buy_token(token_address, amount_lamports):
+    """
     Execute actual token purchase using Jupiter
     """
     try:
         if not JUPITER_AVAILABLE or not jupiter_client:
             # Simulation mode
             tx_sig = f"sim_buy_{token_address[:8]}_{int(time.time())}"
-            logging.info(f"🔄 SIMULATION: Buy transaction created: {tx_sig}")
+            logging.info(f"SIMULATION: Buy transaction created: {tx_sig}")
             return tx_sig
             
         # Execute the real transaction with Jupiter
@@ -221,11 +204,11 @@ async def get_token_price(token_address):
             slippage_bps=100  # 1% slippage
         )
         
-        logging.info(f"✅ Real buy transaction created: {tx_sig}")
+        logging.info(f"Real buy transaction created: {tx_sig}")
         return tx_sig
         
     except Exception as e:
-        logging.error(f"❌ Error buying token: {e}")
+        logging.error(f"Error buying token: {e}")
         return None
 
 async def real_sell_token(token_address):
@@ -236,7 +219,7 @@ async def real_sell_token(token_address):
         if not JUPITER_AVAILABLE or not jupiter_client:
             # Simulation mode
             tx_sig = f"sim_sell_{token_address[:8]}_{int(time.time())}"
-            logging.info(f"🔄 SIMULATION: Sell transaction created: {tx_sig}")
+            logging.info(f"SIMULATION: Sell transaction created: {tx_sig}")
             return tx_sig
             
         # Get token balance - Need to implement this
@@ -251,11 +234,11 @@ async def real_sell_token(token_address):
             slippage_bps=100  # 1% slippage
         )
         
-        logging.info(f"✅ Real sell transaction created: {tx_sig}")
+        logging.info(f"Real sell transaction created: {tx_sig}")
         return tx_sig
         
     except Exception as e:
-        logging.error(f"❌ Error selling token: {e}")
+        logging.error(f"Error selling token: {e}")
         return None
 
 async def find_new_promising_tokens(min_liquidity=2, max_results=3):
@@ -356,7 +339,7 @@ def log_trade(trade_data):
         with open("trade_log.json", "w") as f:
             json.dump(trade_log, f)
     except Exception as e:
-        logging.error(f"❌ Error saving trade log: {e}")
+        logging.error(f"Error saving trade log: {e}")
 
 async def check_for_sell_opportunities():
     """Check all held tokens for sell opportunities"""
@@ -439,16 +422,16 @@ async def check_for_sell_opportunities():
                     if DISCORD_NEWS_CHANNEL_ID:
                         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
                         if channel:
-                            await channel.send(f"🤖 Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Reason: {sell_reason}. Transaction: https://solscan.io/tx/{sig}")
+                            await channel.send(f"Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Reason: {sell_reason}. Transaction: https://solscan.io/tx/{sig}")
                     
-                    logging.info(f"✅ Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)")
+                    logging.info(f"Auto-sold {token_address} at ${current_price:.8f} ({price_ratio:.2f}x, ${profit:.2f} profit)")
                     
                     # Remove from bought_tokens
                     if token_address in bought_tokens:
                         del bought_tokens[token_address]
         
         except Exception as e:
-            logging.error(f"❌ Error checking sell opportunity for {token_address}: {e}")
+            logging.error(f"Error checking sell opportunity for {token_address}: {e}")
 
 async def auto_snipe():
     """Automatic token sniping function - runs continuously in the background"""
@@ -463,19 +446,19 @@ async def auto_snipe():
     MAX_DAILY_BUYS = 50  # Safety limit for daily buys
     last_buy_time = datetime.utcnow() - timedelta(hours=1)  # Initialize with time in the past
     
-    logging.info("🤖 Auto-sniper started and running...")
+    logging.info("Auto-sniper started and running...")
     
     while not bot.is_closed():
         try:
             # Skip if reached daily buy limit
             if total_buys_today >= MAX_DAILY_BUYS:
-                logging.info(f"⚠️ Daily buy limit reached ({MAX_DAILY_BUYS}). Waiting until reset.")
+                logging.info(f"Daily buy limit reached ({MAX_DAILY_BUYS}). Waiting until reset.")
                 await asyncio.sleep(60)
                 continue
                 
             # Skip if we're holding max tokens already
             if len(bought_tokens) >= MAX_CONCURRENT_TOKENS:
-                logging.info(f"⚠️ Max concurrent tokens reached ({MAX_CONCURRENT_TOKENS}). Waiting for sells.")
+                logging.info(f"Max concurrent tokens reached ({MAX_CONCURRENT_TOKENS}). Waiting for sells.")
                 await asyncio.sleep(60)
                 continue
                 
@@ -500,7 +483,7 @@ async def auto_snipe():
                     
                 # Check token metrics before buying
                 if not await is_token_safe(token_address):
-                    logging.info(f"⚠️ Skipping token {token_address} - failed safety checks")
+                    logging.info(f"Skipping token {token_address} - failed safety checks")
                     continue
                     
                 # Attempt to buy the token
@@ -541,16 +524,16 @@ async def auto_snipe():
                     if DISCORD_NEWS_CHANNEL_ID:
                         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
                         if channel:
-                            await channel.send(f"🤖 Auto-bought {token_address} at ${price:.8f}! Transaction: https://solscan.io/tx/{sig}")
+                            await channel.send(f"Auto-bought {token_address} at ${price:.8f}! Transaction: https://solscan.io/tx/{sig}")
                     
-                    logging.info(f"✅ Auto-bought {token_address} at ${price:.8f}")
+                    logging.info(f"Auto-bought {token_address} at ${price:.8f}")
                     break  # Stop after buying one token
             
             # 3. Check existing tokens for sell opportunities (separate from buying logic)
             await check_for_sell_opportunities()
                 
         except Exception as e:
-            logging.error(f"❌ Error in auto_snipe: {e}")
+            logging.error(f"Error in auto_snipe: {e}")
         
         # Main loop pause
         await asyncio.sleep(5)  # Check frequently
@@ -575,19 +558,16 @@ async def profit_slash(interaction: discord.Interaction):
     else:
         eta_msg = "Insufficient data to estimate target ETA"
     
-    stats = f""" **Profit Stats:**
-Today's profit: ${total_profit:.2f} / ${DAILY_PROFIT_TARGET:.2f} target ({(total_profit/DAILY_PROFIT_TARGET*100):.1f}%)
-
-📈 **Performance:**
-- Buys: {total_buys_today}
-- Successful sells: {successful_sells_today} ({conversion_rate:.1f}% success rate)
-- 2x+ sells: {successful_2x_sells} ({x2_rate:.1f}% of sells)
-- Average profit: ${avg_profit:.2f} per successful trade
-
-🎯 {eta_msg}
-
-Current buy amount: {BUY_AMOUNT_LAMPORTS/1000000000:.3f} SOL
-"""
+    stats = (f"**Profit Stats:**\n"
+            f"Today's profit: ${total_profit:.2f} / ${DAILY_PROFIT_TARGET:.2f} target ({(total_profit/DAILY_PROFIT_TARGET*100):.1f}%)\n\n"
+            f"**Performance:**\n"
+            f"- Buys: {total_buys_today}\n"
+            f"- Successful sells: {successful_sells_today} ({conversion_rate:.1f}% success rate)\n"
+            f"- 2x+ sells: {successful_2x_sells} ({x2_rate:.1f}% of sells)\n"
+            f"- Average profit: ${avg_profit:.2f} per successful trade\n\n"
+            f"{eta_msg}\n\n"
+            f"Current buy amount: {BUY_AMOUNT_LAMPORTS/1000000000:.3f} SOL")
+    
     await interaction.response.send_message(stats)
 
 @tree.command(name="holdings", description="Check current token holdings")
@@ -639,21 +619,21 @@ async def holdings_slash(interaction: discord.Interaction):
             
             # Color coding based on performance
             if price_ratio >= 1.8:  # Almost 2x
-                emoji = "🔥"  # Fire for near target
+                emoji = "(HOT)"  # Fire for near target
             elif price_ratio >= 1.2:  # Good profit
-                emoji = "💰"  # Money bag for profit
+                emoji = "(PROFIT)"  # Money bag for profit
             elif price_ratio >= 0.9:  # Near break-even
-                emoji = "⚖️"  # Balance for near break-even
+                emoji = "(EVEN)"  # Balance for near break-even
             else:  # Loss
-                emoji = "📉"  # Chart down for loss
+                emoji = "(LOSS)"  # Chart down for loss
                 
             holdings_text += f"{emoji} {token}: {price_ratio:.2f}x ({profit_percent:.1f}%) - ${token_profit:.2f} profit - Held {minutes_held:.1f}min\n"
         else:
             tokens_without_prices += 1
             if initial_price > 0:
-                holdings_text += f"⏳ {token}: No current price (initial ${initial_price:.8f}) - Held {minutes_held:.1f}min\n"
+                holdings_text += f"(PENDING) {token}: No current price (initial ${initial_price:.8f}) - Held {minutes_held:.1f}min\n"
             else:
-                holdings_text += f"⏳ {token}: No price data yet - Held {minutes_held:.1f}min\n"
+                holdings_text += f"(PENDING) {token}: No price data yet - Held {minutes_held:.1f}min\n"
     
     # Summary stats
     holdings_text += f"\n**Summary:**\n"
@@ -683,7 +663,7 @@ async def buy_slash(interaction: discord.Interaction, token_address: str, amount
         # Cap the amount at 2 SOL for safety
         if amount_lamports > 2_000_000_000:
             amount_lamports = 2_000_000_000
-            await interaction.followup.send(f"⚠️ Amount capped at 2 SOL for safety.")
+            await interaction.followup.send(f"Amount capped at 2 SOL for safety.")
         
         # Validate token address format
         token_address = sanitize_token_address(token_address)
@@ -719,11 +699,11 @@ async def buy_slash(interaction: discord.Interaction, token_address: str, amount
                 "manual": True
             })
             
-            await interaction.followup.send(f"✅ Bought {token_address} with {amount_sol} SOL! Transaction: https://solscan.io/tx/{sig}")
+            await interaction.followup.send(f"Bought {token_address} with {amount_sol} SOL! Transaction: https://solscan.io/tx/{sig}")
         else:
-            await interaction.followup.send(f"❌ Failed to buy {token_address}. Check logs for details.")
+            await interaction.followup.send(f"Failed to buy {token_address}. Check logs for details.")
     except Exception as e:
-        await interaction.followup.send(f"❌ Error: {str(e)}")
+        await interaction.followup.send(f"Error: {str(e)}")
 
 @tree.command(name="sell", description="Sell a specific token")
 @app_commands.describe(token_address="Token mint address to sell")
@@ -773,19 +753,19 @@ async def sell_slash(interaction: discord.Interaction, token_address: str):
                         "manual": True
                     })
                     
-                    await interaction.followup.send(f"✅ Sold {token_address} at ${current_price:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Transaction: https://solscan.io/tx/{sig}")
+                    await interaction.followup.send(f"Sold {token_address} at ${current_price:.6f} ({price_ratio:.2f}x, ${profit:.2f} profit)! Transaction: https://solscan.io/tx/{sig}")
                 else:
-                    await interaction.followup.send(f"✅ Sold {token_address} (profit unknown)! Transaction: https://solscan.io/tx/{sig}")
+                    await interaction.followup.send(f"Sold {token_address} (profit unknown)! Transaction: https://solscan.io/tx/{sig}")
                 
                 # Remove from bought_tokens
                 if token_address in bought_tokens:
                     del bought_tokens[token_address]
             else:
-                await interaction.followup.send(f"✅ Sold {token_address}! Transaction: https://solscan.io/tx/{sig}")
+                await interaction.followup.send(f"Sold {token_address}! Transaction: https://solscan.io/tx/{sig}")
         else:
-            await interaction.followup.send(f"❌ Failed to sell {token_address}. Check logs for details.")
+            await interaction.followup.send(f"Failed to sell {token_address}. Check logs for details.")
     except Exception as e:
-        await interaction.followup.send(f"❌ Error: {str(e)}")
+        await interaction.followup.send(f"Error: {str(e)}")
 
 @tree.command(name="chart", description="Generate a profit chart")
 async def chart_slash(interaction: discord.Interaction):
@@ -850,8 +830,8 @@ async def chart_slash(interaction: discord.Interaction):
         await interaction.followup.send(file=discord.File(chart_path))
         
     except Exception as e:
-        logging.error(f"❌ Error generating chart: {e}")
-        await interaction.followup.send(f"❌ Error generating chart: {str(e)}")
+        logging.error(f"Error generating chart: {e}")
+        await interaction.followup.send(f"Error generating chart: {str(e)}")
 
 @tree.command(name="analyze", description="Get AI analysis of current market conditions")
 async def analyze_slash(interaction: discord.Interaction):
@@ -927,11 +907,11 @@ async def analyze_slash(interaction: discord.Interaction):
         analysis = response.choices[0].message.content
         
         # Send the analysis
-        await interaction.followup.send(f"**📊 Market Analysis:**\n\n{analysis}")
+        await interaction.followup.send(f"**Market Analysis:**\n\n{analysis}")
         
     except Exception as e:
-        logging.error(f"❌ Error generating analysis: {e}")
-        await interaction.followup.send(f"❌ Error generating analysis: {str(e)}")
+        logging.error(f"Error generating analysis: {e}")
+        await interaction.followup.send(f"Error generating analysis: {str(e)}")
 
 @tree.command(name="newrpc", description="Test and switch to the fastest RPC endpoint")
 async def newrpc_slash(interaction: discord.Interaction):
@@ -954,13 +934,13 @@ async def newrpc_slash(interaction: discord.Interaction):
             status = "without Jupiter (not available)"
         
         if best_rpc and best_rpc != old_rpc:
-            await interaction.followup.send(f"✅ Switched from {old_rpc} to faster RPC: {best_rpc} {status}")
+            await interaction.followup.send(f"Switched from {old_rpc} to faster RPC: {best_rpc} {status}")
         elif best_rpc == old_rpc:
-            await interaction.followup.send(f"✅ Current RPC endpoint ({old_rpc}) is already the fastest. {status}")
+            await interaction.followup.send(f"Current RPC endpoint ({old_rpc}) is already the fastest. {status}")
         else:
-            await interaction.followup.send(f"❌ Failed to find a faster RPC endpoint. {status}")
+            await interaction.followup.send(f"Failed to find a faster RPC endpoint. {status}")
     except Exception as e:
-        await interaction.followup.send(f"❌ Error testing RPC endpoints: {str(e)}")
+        await interaction.followup.send(f"Error testing RPC endpoints: {str(e)}")
 
 @tree.command(name="jupstatus", description="Check Jupiter SDK status")
 async def jup_status_slash(interaction: discord.Interaction):
@@ -971,13 +951,13 @@ async def jup_status_slash(interaction: discord.Interaction):
         if JUPITER_AVAILABLE and jupiter_client:
             # Test Jupiter by getting SOL price
             sol_price = await get_token_price(SOL_MINT)
-            await interaction.followup.send(f"✅ Jupiter SDK is available and working. SOL price: ${sol_price:.2f}")
+            await interaction.followup.send(f"Jupiter SDK is available and working. SOL price: ${sol_price:.2f}")
         elif JUPITER_AVAILABLE and not jupiter_client:
-            await interaction.followup.send(f"⚠️ Jupiter SDK is available but client is not initialized. Try running /newrpc to initialize.")
+            await interaction.followup.send(f"Jupiter SDK is available but client is not initialized. Try running /newrpc to initialize.")
         else:
-            await interaction.followup.send(f"❌ Jupiter SDK is not available. Please check installation (run: pip install jupiter-python-sdk).")
+            await interaction.followup.send(f"Jupiter SDK is not available. Please check installation (run: pip install jupiter-python-sdk).")
     except Exception as e:
-        await interaction.followup.send(f"❌ Error checking Jupiter status: {str(e)}")
+        await interaction.followup.send(f"Error checking Jupiter status: {str(e)}")
 
 # Add daily stats reset function
 async def reset_daily_stats():
@@ -1005,13 +985,13 @@ async def reset_daily_stats():
         successful_2x_sells = 0
         
         # Log the reset
-        logging.info(f"🔄 Daily stats reset! Previous: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+        logging.info(f"Daily stats reset! Previous: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
         
         # Notify in Discord if channel is set
         if DISCORD_NEWS_CHANNEL_ID:
             channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
             if channel:
-                await channel.send(f"🔄 Daily stats reset! Previous day: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+                await channel.send(f"Daily stats reset! Previous day: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
 
 @bot.event
 async def on_ready():
@@ -1024,9 +1004,9 @@ async def on_ready():
         logging.info("Initializing Jupiter client...")
         jupiter_client = await initialize_jupiter()
         if jupiter_client:
-            logging.info("✅ Jupiter client initialized")
+            logging.info("Jupiter client initialized")
         else:
-            logging.warning("⚠️ Failed to initialize Jupiter client")
+            logging.warning("Failed to initialize Jupiter client")
     
     # Sync slash commands
     await tree.sync()
@@ -1037,9 +1017,9 @@ async def on_ready():
         if os.path.exists("trade_log.json"):
             with open("trade_log.json", "r") as f:
                 trade_log = json.load(f)
-            logging.info(f"✅ Loaded {len(trade_log)} entries from trade log")
+            logging.info(f"Loaded {len(trade_log)} entries from trade log")
     except Exception as e:
-        logging.error(f"❌ Error loading trade log: {e}")
+        logging.error(f"Error loading trade log: {e}")
 
     # Start the auto-snipe task
     bot.loop.create_task(auto_snipe())
@@ -1051,18 +1031,18 @@ async def main():
     """Async main function"""
     try:
         if not DISCORD_TOKEN:
-            logging.error("❌ DISCORD_TOKEN not set in .env file")
+            logging.error("DISCORD_TOKEN not set in .env file")
             return
             
         if not PHANTOM_SECRET_KEY:
-            logging.error("❌ PHANTOM_SECRET_KEY not set in .env file")
+            logging.error("PHANTOM_SECRET_KEY not set in .env file")
             return
         
         # Run the bot
-        logging.info("🚀 Starting bot...")
+        logging.info("Starting bot...")
         await bot.start(DISCORD_TOKEN)
     except Exception as e:
-        logging.error(f"❌ Bot run failed: {e}")
+        logging.error(f"Bot run failed: {e}")
 
 if __name__ == "__main__":
     # Run the bot
