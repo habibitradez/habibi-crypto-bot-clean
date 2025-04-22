@@ -87,78 +87,103 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Error saving trade log: {e}")
     
-async def get_token_price(self, token_address):
-    """Get token price with caching using QuickNode RPC properly"""
-    global price_cache
-    
-    # Check cache first
-    current_time = time.time() * 1000  # Convert to milliseconds
-    if token_address in price_cache:
-        cache_time, price = price_cache[token_address]
-        if current_time - cache_time < CONFIG["CACHE_DURATION_MS"]:
-            logging.info(f"Using cached price for {token_address}: ${price:.6f}")
-            return price
-    
-    try:
-        # Use QuickNode's Standard JSON-RPC format instead of REST API
-        headers = {
-            "Content-Type": "application/json"
-        }
+    async def get_token_price(self, token_address):
+        """Get token price with caching using QuickNode RPC properly"""
+        global price_cache
         
-        # First approach: Using getTokenSupply and SOL price to estimate token price
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTokenSupply",
-            "params": [token_address]
-        }
+        # Check cache first
+        current_time = time.time() * 1000  # Convert to milliseconds
+        if token_address in price_cache:
+            cache_time, price = price_cache[token_address]
+            if current_time - cache_time < CONFIG["CACHE_DURATION_MS"]:
+                logging.info(f"Using cached price for {token_address}: ${price:.6f}")
+                return price
         
         try:
-            response = requests.post(CONFIG["SOLANA_RPC_URL"], json=payload, headers=headers, timeout=10)
-            logging.info(f"Token supply API response status: {response.status_code}")
+            # Use QuickNode's Standard JSON-RPC format instead of REST API
+            headers = {
+                "Content-Type": "application/json"
+            }
             
-            if response.status_code == 200:
-                # This is just a check that we can connect to the RPC
-                logging.info("Successfully connected to QuickNode RPC")
+            # First approach: Using getTokenSupply and SOL price to estimate token price
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenSupply",
+                "params": [token_address]
+            }
+            
+            try:
+                response = requests.post(CONFIG["SOLANA_RPC_URL"], json=payload, headers=headers, timeout=10)
+                logging.info(f"Token supply API response status: {response.status_code}")
                 
-                # For real token price checking, we'd need to implement a DEX liquidity check
-                # This is just a placeholder for now
+                if response.status_code == 200:
+                    # This is just a check that we can connect to the RPC
+                    logging.info("Successfully connected to QuickNode RPC")
+                    
+                    # For real token price checking, we'd need to implement a DEX liquidity check
+                    # This is just a placeholder for now
+                    
+                    # For tokens we've already bought, use the initial price
+                    if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
+                        price = bought_tokens[token_address]['initial_price']
+                        logging.info(f"Using known price (${price:.6f}) for {token_address}")
+                        return price
+                    
+                    # For known tokens, return hardcoded prices
+                    fallback_prices = {
+                        SOL_MINT: 150.0,  # Example SOL price
+                        USDC_MINT: 1.0,   # USDC is pegged to USD
+                        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": 0.000014,  # BONK
+                        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": 0.42,       # JUP
+                        "7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx": 0.75,      # GMT
+                    }
+                    
+                    if token_address in fallback_prices:
+                        price = fallback_prices[token_address]
+                        logging.info(f"Using hardcoded price (${price:.6f}) for {token_address}")
+                        price_cache[token_address] = (current_time, price)
+                        return price
+                    
+                    # If we don't have a price, return a small default price
+                    logging.warning(f"No price information for {token_address}, using default")
+                    return 0.0001
+                    
+                else:
+                    logging.warning(f"QuickNode RPC returned status {response.status_code}")
+                    
+                    # If API fails, try fallback pricing
+                    if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
+                        price = bought_tokens[token_address]['initial_price']
+                        logging.warning(f"Using last known price (${price:.6f}) for {token_address} as fallback")
+                        return price
+                    
+                    # For known tokens, use hardcoded fallback prices
+                    fallback_prices = {
+                        SOL_MINT: 150.0,  # Example SOL price
+                        USDC_MINT: 1.0,   # USDC is pegged to USD
+                        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": 0.000014,  # BONK
+                        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": 0.42,       # JUP
+                        "7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx": 0.75,      # GMT
+                    }
+                    
+                    if token_address in fallback_prices:
+                        price = fallback_prices[token_address]
+                        logging.warning(f"Using hardcoded fallback price for {token_address}: ${price:.6f}")
+                        return price
+                    
+                    return 0.0001  # Default small value
+                    
+            except Exception as e:
+                logging.warning(f"Error querying RPC: {str(e)}")
                 
-                # For tokens we've already bought, use the initial price
-                if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
-                    price = bought_tokens[token_address]['initial_price']
-                    logging.info(f"Using known price (${price:.6f}) for {token_address}")
-                    return price
-                
-                # For known tokens, return hardcoded prices
-                fallback_prices = {
-                    SOL_MINT: 150.0,  # Example SOL price
-                    USDC_MINT: 1.0,   # USDC is pegged to USD
-                    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": 0.000014,  # BONK
-                    "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": 0.42,       # JUP
-                    "7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx": 0.75,      # GMT
-                }
-                
-                if token_address in fallback_prices:
-                    price = fallback_prices[token_address]
-                    logging.info(f"Using hardcoded price (${price:.6f}) for {token_address}")
-                    price_cache[token_address] = (current_time, price)
-                    return price
-                
-                # If we don't have a price, return a small default price
-                logging.warning(f"No price information for {token_address}, using default")
-                return 0.0001
-                
-            else:
-                logging.warning(f"QuickNode RPC returned status {response.status_code}")
-                
-                # If API fails, try fallback pricing
+                # Use fallback prices if API fails
                 if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
                     price = bought_tokens[token_address]['initial_price']
                     logging.warning(f"Using last known price (${price:.6f}) for {token_address} as fallback")
                     return price
-                
-                # For known tokens, use hardcoded fallback prices
+                    
+                # Hardcoded fallbacks for common tokens
                 fallback_prices = {
                     SOL_MINT: 150.0,  # Example SOL price
                     USDC_MINT: 1.0,   # USDC is pegged to USD
@@ -172,37 +197,13 @@ async def get_token_price(self, token_address):
                     logging.warning(f"Using hardcoded fallback price for {token_address}: ${price:.6f}")
                     return price
                 
-                return 0.0001  # Default small value
-                
+            # Default fallback
+            return 0.0001
+        
         except Exception as e:
-            logging.warning(f"Error querying RPC: {str(e)}")
-            
-            # Use fallback prices if API fails
-            if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
-                price = bought_tokens[token_address]['initial_price']
-                logging.warning(f"Using last known price (${price:.6f}) for {token_address} as fallback")
-                return price
-                
-            # Hardcoded fallbacks for common tokens
-            fallback_prices = {
-                SOL_MINT: 150.0,  # Example SOL price
-                USDC_MINT: 1.0,   # USDC is pegged to USD
-                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263": 0.000014,  # BONK
-                "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN": 0.42,       # JUP
-                "7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx": 0.75,      # GMT
-            }
-            
-            if token_address in fallback_prices:
-                price = fallback_prices[token_address]
-                logging.warning(f"Using hardcoded fallback price for {token_address}: ${price:.6f}")
-                return price
-            
-        # Default fallback
-        return 0.0001
-    
-    except Exception as e:
-        logging.error(f"Error getting token price: {e}")
-        return 0.0001  # Default small value
+            logging.error(f"Error getting token price: {e}")
+            return 0.0001  # Default small value
+
     async def get_token_liquidity(self, token_address):
         """Get token liquidity information using QuickNode"""
         try:
