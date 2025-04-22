@@ -140,10 +140,10 @@ async def get_best_rpc(endpoints=None):
 
 async def get_token_price(token_address):
     """
-    Get current price of a token using alternative price APIs
+    Get current price of a token prioritizing Birdeye API
     """
     try:
-        # Try Birdeye API first if available
+        # Try Birdeye API first (primary source)
         if BIRDEYE_API_KEY:
             birdeye_url = f"https://public-api.birdeye.so/public/price?address={token_address}"
             headers = {"X-API-KEY": BIRDEYE_API_KEY}
@@ -155,29 +155,42 @@ async def get_token_price(token_address):
                 logging.info(f"Got price from Birdeye: ${price:.6f} for {token_address}")
                 return price
         
-        # Try Jupiter API as backup
-        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
-        response = requests.get(jupiter_url, timeout=5)
-        data = response.json()
-        
-        if data.get('data') and token_address in data['data']:
-            token_data = data['data'][token_address]
-            if 'price' in token_data:
-                price = float(token_data['price'])
-                logging.info(f"Got price from Jupiter: ${price:.6f} for {token_address}")
-                return price
+        # Only try Jupiter if Birdeye fails and it's a fallback
+        try:
+            jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+            response = requests.get(jupiter_url, timeout=3)  # shorter timeout
+            data = response.json()
+            
+            if data.get('data') and token_address in data['data']:
+                token_data = data['data'][token_address]
+                if 'price' in token_data:
+                    price = float(token_data['price'])
+                    logging.info(f"Got price from Jupiter: ${price:.6f} for {token_address}")
+                    return price
+        except Exception as e:
+            logging.warning(f"Jupiter price API failed, using alternatives: {str(e)}")
                 
         # Try Coingecko as backup for SOL price
         if token_address == SOL_MINT:
-            coingecko_url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
-            response = requests.get(coingecko_url, timeout=5)
-            data = response.json()
-            
-            if 'solana' in data and 'usd' in data['solana']:
-                price = float(data['solana']['usd'])
-                logging.info(f"Got SOL price from Coingecko: ${price:.2f}")
-                return price
+            try:
+                coingecko_url = "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd"
+                response = requests.get(coingecko_url, timeout=5)
+                data = response.json()
+                
+                if 'solana' in data and 'usd' in data['solana']:
+                    price = float(data['solana']['usd'])
+                    logging.info(f"Got SOL price from Coingecko: ${price:.2f}")
+                    return price
+            except Exception as e:
+                logging.warning(f"Coingecko API failed: {str(e)}")
         
+        # If all APIs fail, try an estimation approach for tokens we already know
+        if token_address in bought_tokens and bought_tokens[token_address].get('initial_price', 0) > 0:
+            # Return the last known price as a fallback
+            price = bought_tokens[token_address].get('initial_price', 0)
+            logging.warning(f"Using last known price (${price:.6f}) for {token_address} as fallback")
+            return price
+            
         # If no price found
         logging.warning(f"No price found for {token_address}")
         return 0.0
@@ -247,27 +260,76 @@ async def find_new_promising_tokens(min_liquidity=2, max_results=3):
     Returns a list of token addresses
     """
     try:
+        tokens = []
+        
         # Use Birdeye API to find trending tokens
         if BIRDEYE_API_KEY:
-            trending_url = "https://public-api.birdeye.so/public/tokenlist/trending"
-            headers = {"X-API-KEY": BIRDEYE_API_KEY}
-            response = requests.get(trending_url, headers=headers, timeout=5)
-            
-            if response.status_code == 200:
-                data = response.json()
-                tokens = []
+            # Try trending tokens first
+            try:
+                trending_url = "https://public-api.birdeye.so/public/tokenlist/trending"
+                headers = {"X-API-KEY": BIRDEYE_API_KEY}
+                response = requests.get(trending_url, headers=headers, timeout=5)
                 
-                if 'data' in data and 'tokens' in data['data']:
-                    # Filter tokens based on liquidity
-                    for token in data['data']['tokens']:
-                        if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000:  # Convert SOL to lamports
-                            tokens.append(token['address'])
+                if response.status_code == 200:
+                    data = response.json()
                     
-                    logging.info(f"Found {len(tokens)} tokens with sufficient liquidity")
-                    return tokens[:max_results]
+                    if 'data' in data and 'tokens' in data['data']:
+                        # Filter tokens based on liquidity
+                        for token in data['data']['tokens']:
+                            if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000:  # Convert SOL to lamports
+                                tokens.append(token['address'])
+                        
+                        logging.info(f"Found {len(tokens)} trending tokens with sufficient liquidity")
+            except Exception as e:
+                logging.error(f"Error fetching trending tokens: {e}")
+            
+            # Also try recently listed tokens if we don't have enough
+            if len(tokens) < max_results:
+                try:
+                    latest_url = "https://public-api.birdeye.so/public/tokenlist/latest"
+                    headers = {"X-API-KEY": BIRDEYE_API_KEY}
+                    response = requests.get(latest_url, headers=headers, timeout=5)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        if 'data' in data and 'tokens' in data['data']:
+                            # Filter tokens based on liquidity
+                            for token in data['data']['tokens']:
+                                if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000 and token['address'] not in tokens:
+                                    tokens.append(token['address'])
+                            
+                            logging.info(f"Found {len(tokens)} total tokens after adding latest listings")
+                except Exception as e:
+                    logging.error(f"Error fetching latest tokens: {e}")
+            
+            # Check for gainers as another source
+            if len(tokens) < max_results:
+                try:
+                    gainers_url = "https://public-api.birdeye.so/public/tokenlist/gainers?timeframe=1H"
+                    headers = {"X-API-KEY": BIRDEYE_API_KEY}
+                    response = requests.get(gainers_url, headers=headers, timeout=5)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        if 'data' in data and 'tokens' in data['data']:
+                            # Filter tokens based on liquidity and not already in our list
+                            for token in data['data']['tokens']:
+                                if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000 and token['address'] not in tokens:
+                                    tokens.append(token['address'])
+                            
+                            logging.info(f"Found {len(tokens)} total tokens after adding gainers")
+                except Exception as e:
+                    logging.error(f"Error fetching gainer tokens: {e}")
         
         # If we couldn't find tokens or don't have Birdeye API key, return empty list
-        return []
+        if not tokens:
+            logging.warning("No promising tokens found")
+            return []
+        
+        # Return the top tokens based on max_results
+        return tokens[:max_results]
         
     except Exception as e:
         logging.error(f"Error finding new tokens: {e}")
@@ -292,25 +354,67 @@ async def is_token_safe(token_address):
                 if 'data' in data:
                     token_data = data['data']
                     
-                    # Check liquidity
-                    if token_data.get('liquidity', 0) < 2_000_000_000:  # 2 SOL minimum
+                    # Check liquidity (minimum 2 SOL)
+                    liquidity = token_data.get('liquidity', 0)
+                    if liquidity < 2_000_000_000:  # 2 SOL in lamports
+                        logging.info(f"Token {token_address} has insufficient liquidity: {liquidity/1e9:.2f} SOL")
                         return False
                     
                     # Check if trading enabled
                     if not token_data.get('tradable', False):
+                        logging.info(f"Token {token_address} is not tradable")
                         return False
                     
                     # Check for suspicious supply
                     total_supply = token_data.get('totalSupply', 0)
                     if total_supply <= 0:
+                        logging.info(f"Token {token_address} has suspicious supply: {total_supply}")
                         return False
                     
-                    # Token passed basic checks
+                    # Check market cap if available (minimum 1000 USD)
+                    market_cap = token_data.get('mc', 0)
+                    if market_cap < 1000:
+                        logging.info(f"Token {token_address} has low market cap: ${market_cap}")
+                        return False
+                    
+                    # Check if we already traded this token recently (within 24 hours)
+                    for trade in trade_log:
+                        if trade.get('token') == token_address:
+                            # Calculate how long ago this trade happened
+                            if 'timestamp' in trade:
+                                try:
+                                    trade_time = datetime.strptime(trade['timestamp'], "%H:%M:%S")
+                                    trade_time = trade_time.replace(
+                                        year=datetime.utcnow().year,
+                                        month=datetime.utcnow().month,
+                                        day=datetime.utcnow().day
+                                    )
+                                    # If trade was yesterday, adjust the day
+                                    if trade_time > datetime.utcnow():
+                                        trade_time = trade_time.replace(day=trade_time.day - 1)
+                                    
+                                    hours_since_trade = (datetime.utcnow() - trade_time).total_seconds() / 3600
+                                    
+                                    if hours_since_trade < 24:
+                                        logging.info(f"Token {token_address} was traded {hours_since_trade:.1f} hours ago, skipping")
+                                        return False
+                                except:
+                                    # If there's an error parsing the timestamp, be safe and assume recent
+                                    logging.info(f"Token {token_address} was traded recently, skipping")
+                                    return False
+                    
+                    logging.info(f"Token {token_address} passed safety checks: {liquidity/1e9:.2f} SOL liquidity, ${market_cap} market cap")
                     return True
+                else:
+                    logging.warning(f"No data found for token {token_address}")
+                    return False
+            else:
+                logging.warning(f"Invalid response for token {token_address}")
+                return False
         
-        # If we don't have API or can't check, default to safe (but log warning)
-        logging.warning(f"Couldn't verify safety of token {token_address}, proceeding with caution")
-        return True
+        # If we couldn't verify, be cautious
+        logging.warning(f"Couldn't verify safety for token {token_address}")
+        return False
         
     except Exception as e:
         logging.error(f"Error checking token safety: {e}")
@@ -373,6 +477,7 @@ async def check_for_sell_opportunities():
             
             # Skip if we don't have valid price data
             if current_price <= 0 or initial_price <= 0:
+                logging.info(f"Skipping sell check for {token_address} - missing price data")
                 continue
                 
             # Calculate price ratio
@@ -388,13 +493,17 @@ async def check_for_sell_opportunities():
             
             if price_ratio >= 2.0:
                 sell_reason = "2x target reached"
+                logging.info(f"Token {token_address} reached 2x target ({price_ratio:.2f}x)")
             elif price_ratio <= 0.8:
                 sell_reason = "stop loss triggered"
+                logging.info(f"Token {token_address} triggered stop loss ({price_ratio:.2f}x)")
             elif minutes_held > 60 and price_ratio < 1.2:
                 sell_reason = "time limit exceeded without significant gain"
+                logging.info(f"Token {token_address} exceeded time limit: held for {minutes_held:.1f} min with {price_ratio:.2f}x")
             
             if sell_reason:
                 # Execute sell
+                logging.info(f"Selling token {token_address} - Reason: {sell_reason}")
                 sig = await real_sell_token(token_address)
                 
                 if sig:
@@ -429,6 +538,10 @@ async def check_for_sell_opportunities():
                     # Remove from bought_tokens
                     if token_address in bought_tokens:
                         del bought_tokens[token_address]
+                else:
+                    logging.error(f"Failed to sell token {token_address}")
+            else:
+                logging.info(f"Holding token {token_address}: current ratio {price_ratio:.2f}x, held for {minutes_held:.1f} min")
         
         except Exception as e:
             logging.error(f"Error checking sell opportunity for {token_address}: {e}")
@@ -465,31 +578,45 @@ async def auto_snipe():
             # Enforce cooldown between buys
             time_since_last_buy = (datetime.utcnow() - last_buy_time).total_seconds()
             if time_since_last_buy < BUY_COOLDOWN:
+                # Not logging this to avoid spam
                 await asyncio.sleep(10)  # Check frequently 
                 continue
                 
-            # 1. Find new tokens - implement your token discovery method here
+            # 1. Find new promising tokens
+            logging.info("Looking for promising tokens...")
             new_tokens = await find_new_promising_tokens(min_liquidity=MIN_LIQUIDITY, max_results=3)
             
             if not new_tokens:
-                await asyncio.sleep(10)  # Check frequently for new opportunities
+                logging.info("No promising tokens found. Waiting to try again...")
+                await asyncio.sleep(30)  # Wait longer before trying again
                 continue
+            else:
+                logging.info(f"Found {len(new_tokens)} potential tokens: {new_tokens}")
                 
             # 2. Pick the most promising token and buy it
             for token_address in new_tokens:
                 # Skip if we already own this token
                 if token_address in bought_tokens:
+                    logging.info(f"Token {token_address} already in portfolio, skipping")
                     continue
                     
                 # Check token metrics before buying
-                if not await is_token_safe(token_address):
+                logging.info(f"Checking safety of token {token_address}...")
+                is_safe = await is_token_safe(token_address)
+                
+                if not is_safe:
                     logging.info(f"Skipping token {token_address} - failed safety checks")
                     continue
+                else:
+                    logging.info(f"Token {token_address} passed safety checks")
                     
                 # Attempt to buy the token
+                logging.info(f"Buying token {token_address} with {BUY_AMOUNT_LAMPORTS/1_000_000_000} SOL...")
                 sig = await real_buy_token(token_address, BUY_AMOUNT_LAMPORTS)
                 
                 if sig:
+                    logging.info(f"Successfully created buy transaction: {sig}")
+                    # Get initial price
                     price = await get_token_price(token_address)
                     
                     # Handle string price
@@ -499,11 +626,14 @@ async def auto_snipe():
                         except:
                             price = 0
                             
+                    if price <= 0:
+                        logging.warning(f"Couldn't get initial price for {token_address}, using placeholder")
+                        
                     bought_tokens[token_address] = {
                         'buy_sig': sig,
                         'buy_time': datetime.utcnow(),
                         'token': token_address,
-                        'initial_price': price,
+                        'initial_price': price if price > 0 else 0.00000001,  # Default tiny price if we can't get one
                         'buy_amount': BUY_AMOUNT_LAMPORTS
                     }
                     
@@ -524,16 +654,22 @@ async def auto_snipe():
                     if DISCORD_NEWS_CHANNEL_ID:
                         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
                         if channel:
-                            await channel.send(f"Auto-bought {token_address} at ${price:.8f}! Transaction: https://solscan.io/tx/{sig}")
+                            await channel.send(f"Auto-bought {token_address} at ${price:.8f if price > 0 else 'unknown price'}! Transaction: https://solscan.io/tx/{sig}")
                     
-                    logging.info(f"Auto-bought {token_address} at ${price:.8f}")
+                    logging.info(f"Auto-bought {token_address} at ${price:.8f if price > 0 else 'unknown price'}")
                     break  # Stop after buying one token
+                else:
+                    logging.error(f"Failed to buy token {token_address}")
             
             # 3. Check existing tokens for sell opportunities (separate from buying logic)
-            await check_for_sell_opportunities()
+            if bought_tokens:
+                logging.info(f"Checking sell opportunities for {len(bought_tokens)} held tokens...")
+                await check_for_sell_opportunities()
                 
         except Exception as e:
             logging.error(f"Error in auto_snipe: {e}")
+            # Add a delay on error to prevent spamming logs
+            await asyncio.sleep(30)
         
         # Main loop pause
         await asyncio.sleep(5)  # Check frequently
