@@ -71,8 +71,10 @@ daily_profit = 0
 total_buys_today = 0
 successful_sells_today = 0
 successful_2x_sells = 0
-
+price_cache = {}
+CACHE_DURATION = 300  # Cache prices for 5 minutes
 # Jupiter and Solana client
+
 jupiter_client = None
 solana_endpoint = "https://api.mainnet-beta.solana.com"  # Default RPC endpoint
 wss_endpoint = "wss://api.mainnet-beta.solana.com"  # Default WebSocket endpoint
@@ -158,47 +160,53 @@ async def get_best_rpc(endpoints=None):
     
     return fastest_endpoint or "https://api.mainnet-beta.solana.com"  # Default fallback
 
+# Add this to your global variables
+price_cache = {}
+CACHE_DURATION = 300  # Cache prices for 5 minutes
+
 async def get_token_price(token_address):
     """
-    Get current price of a token prioritizing Birdeye API
+    Get current price of a token with caching to reduce API calls
     """
+    global price_cache
+    
+    # Check cache first
+    current_time = time.time()
+    if token_address in price_cache:
+        cache_time, price = price_cache[token_address]
+        if current_time - cache_time < CACHE_DURATION:
+            logging.info(f"Using cached price for {token_address}: ${price:.6f}")
+            return price
+    
     try:
         # Try Birdeye API first (primary source)
         if BIRDEYE_API_KEY:
-            birdeye_url = f"https://public-api.birdeye.so/defi/price"
-            params = {
-                "address": token_address,
-                "check_liquidity": "1000.25",
-                "include_liquidity": "true"
-            }
-            headers = {
-                "accept": "application/json", 
-                "x-chain": "solana", 
-                "X-API-KEY": BIRDEYE_API_KEY
-            }
-            response = requests.get(birdeye_url, params=params, headers=headers, timeout=5)
-            data = response.json()
-            
-            if data.get('success') and data.get('data') and 'value' in data['data']:
-                price = float(data['data']['value'])
-                logging.info(f"Got price from Birdeye: ${price:.6f} for {token_address}")
-                return price
-        
-        # Only try Jupiter if Birdeye fails and it's a fallback
-        try:
-            jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
-            response = requests.get(jupiter_url, timeout=3)  # shorter timeout
-            data = response.json()
-            
-            if data.get('data') and token_address in data['data']:
-                token_data = data['data'][token_address]
-                if 'price' in token_data:
-                    price = float(token_data['price'])
-                    logging.info(f"Got price from Jupiter: ${price:.6f} for {token_address}")
-                    return price
-        except Exception as e:
-            logging.warning(f"Jupiter price API failed, using alternatives: {str(e)}")
+            try:
+                birdeye_url = f"https://public-api.birdeye.so/defi/price"
+                params = {
+                    "address": token_address,
+                    "check_liquidity": "1000.25",
+                    "include_liquidity": "true"
+                }
+                headers = {
+                    "accept": "application/json", 
+                    "x-chain": "solana", 
+                    "X-API-KEY": BIRDEYE_API_KEY
+                }
+                response = requests.get(birdeye_url, params=params, headers=headers, timeout=5)
+                data = response.json()
                 
+                if data.get('success') and data.get('data') and 'value' in data['data']:
+                    price = float(data['data']['value'])
+                    logging.info(f"Got price from Birdeye: ${price:.6f} for {token_address}")
+                    # Cache the price
+                    price_cache[token_address] = (current_time, price)
+                    return price
+            except Exception as e:
+                logging.warning(f"Birdeye API failed: {str(e)}")
+        
+        # Skip Jupiter if DNS is failing
+        
         # Try Coingecko as backup for SOL price
         if token_address == SOL_MINT:
             try:
@@ -209,6 +217,8 @@ async def get_token_price(token_address):
                 if 'solana' in data and 'usd' in data['solana']:
                     price = float(data['solana']['usd'])
                     logging.info(f"Got SOL price from Coingecko: ${price:.2f}")
+                    # Cache the price
+                    price_cache[token_address] = (current_time, price)
                     return price
             except Exception as e:
                 logging.warning(f"Coingecko API failed: {str(e)}")
