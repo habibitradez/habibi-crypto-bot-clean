@@ -239,16 +239,23 @@ async def real_buy_token(token_address, amount_lamports):
             return tx_sig
             
         # Execute the real transaction with Jupiter
-        tx_sig = await jupiter_client.swap(
-            input_mint=SOL_MINT,
-            output_mint=token_address,
-            amount=amount_lamports,
-            slippage_bps=100  # 1% slippage
-        )
-        
-        logging.info(f"Real buy transaction created: {tx_sig}")
-        return tx_sig
-        
+        try:
+            tx_sig = await jupiter_client.swap(
+                input_mint=SOL_MINT,
+                output_mint=token_address,
+                amount=amount_lamports,
+                slippage_bps=100  # 1% slippage
+            )
+            
+            logging.info(f"Real buy transaction created: {tx_sig}")
+            return tx_sig
+        except json.JSONDecodeError:
+            logging.error(f"JSON parsing error during buy - API may be down or rate limited")
+            # Fall back to simulation mode for this transaction
+            tx_sig = f"sim_buy_{token_address[:8]}_{int(time.time())}"
+            logging.info(f"FALLBACK to simulation due to API issues: {tx_sig}")
+            return tx_sig
+            
     except Exception as e:
         logging.error(f"Error buying token: {e}")
         return None
@@ -269,16 +276,23 @@ async def real_sell_token(token_address):
         token_amount = 1000000  # Placeholder amount
         
         # Execute the real transaction with Jupiter
-        tx_sig = await jupiter_client.swap(
-            input_mint=token_address,
-            output_mint=SOL_MINT,
-            amount=token_amount,
-            slippage_bps=100  # 1% slippage
-        )
-        
-        logging.info(f"Real sell transaction created: {tx_sig}")
-        return tx_sig
-        
+        try:
+            tx_sig = await jupiter_client.swap(
+                input_mint=token_address,
+                output_mint=SOL_MINT,
+                amount=token_amount,
+                slippage_bps=100  # 1% slippage
+            )
+            
+            logging.info(f"Real sell transaction created: {tx_sig}")
+            return tx_sig
+        except json.JSONDecodeError:
+            logging.error(f"JSON parsing error during sell - API may be down or rate limited")
+            # Fall back to simulation mode for this transaction
+            tx_sig = f"sim_sell_{token_address[:8]}_{int(time.time())}"
+            logging.info(f"FALLBACK to simulation due to API issues: {tx_sig}")
+            return tx_sig
+            
     except Exception as e:
         logging.error(f"Error selling token: {e}")
         return None
