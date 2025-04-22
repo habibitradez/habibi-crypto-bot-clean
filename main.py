@@ -845,9 +845,13 @@ async def auto_snipe():
                     if DISCORD_NEWS_CHANNEL_ID:
                         channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
                         if channel:
-                            await channel.send(f"Auto-bought {token_address} at ${price:.8f if price > 0 else 'unknown price'}! Transaction: https://solscan.io/tx/{sig}")
+                            # FIX: Properly format the price display
+                            price_display = f"${price:.8f}" if price > 0 else "unknown price"
+                            await channel.send(f"Auto-bought {token_address} at {price_display}! Transaction: https://solscan.io/tx/{sig}")
                     
-                    logging.info(f"Auto-bought {token_address} at ${price:.8f if price > 0 else 'unknown price'}")
+                    # FIX: Also fix the logging statement
+                    price_display = f"${price:.8f}" if price > 0 else "unknown price"
+                    logging.info(f"Auto-bought {token_address} at {price_display}")
                     break  # Stop after buying one token
                 else:
                     logging.error(f"Failed to buy token {token_address}")
