@@ -254,7 +254,7 @@ async def real_sell_token(token_address):
         logging.error(f"Error selling token: {e}")
         return None
 
-async def find_new_promising_tokens(min_liquidity=2, max_results=3):
+async def find_new_promising_tokens(min_liquidity=0.5, max_results=3):  # Reduced min_liquidity from 2 to 0.5 SOL
     """
     Find new promising tokens for sniping by monitoring DEX listings
     Returns a list of token addresses
@@ -270,16 +270,36 @@ async def find_new_promising_tokens(min_liquidity=2, max_results=3):
                 headers = {"X-API-KEY": BIRDEYE_API_KEY}
                 response = requests.get(trending_url, headers=headers, timeout=5)
                 
+                logging.info(f"Birdeye trending API response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
                     
+                    # Log the actual API response for debugging
                     if 'data' in data and 'tokens' in data['data']:
+                        tokens_count = len(data['data']['tokens'])
+                        logging.info(f"Received {tokens_count} trending tokens from Birdeye API")
+                        
+                        # Log a sample of token data for debugging
+                        if tokens_count > 0:
+                            sample_token = data['data']['tokens'][0]
+                            logging.info(f"Sample token data: {sample_token}")
+                        
                         # Filter tokens based on liquidity
                         for token in data['data']['tokens']:
-                            if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000:  # Convert SOL to lamports
+                            liquidity = token.get('liquidity', 0)
+                            min_liquidity_lamports = min_liquidity * 1_000_000_000  # Convert SOL to lamports
+                            
+                            if liquidity >= min_liquidity_lamports:
                                 tokens.append(token['address'])
+                                logging.info(f"Found trending token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
                         
-                        logging.info(f"Found {len(tokens)} trending tokens with sufficient liquidity")
+                        # If we found no tokens with our liquidity threshold, log the maximum liquidity found
+                        if not tokens and tokens_count > 0:
+                            max_liquidity = max([t.get('liquidity', 0) for t in data['data']['tokens']])
+                            logging.info(f"No trending tokens met liquidity threshold. Max liquidity found: {max_liquidity/1e9:.2f} SOL")
+                    else:
+                        logging.warning(f"Unexpected Birdeye API response format: {data}")
             except Exception as e:
                 logging.error(f"Error fetching trending tokens: {e}")
             
@@ -290,16 +310,23 @@ async def find_new_promising_tokens(min_liquidity=2, max_results=3):
                     headers = {"X-API-KEY": BIRDEYE_API_KEY}
                     response = requests.get(latest_url, headers=headers, timeout=5)
                     
+                    logging.info(f"Birdeye latest API response status: {response.status_code}")
+                    
                     if response.status_code == 200:
                         data = response.json()
                         
                         if 'data' in data and 'tokens' in data['data']:
+                            tokens_count = len(data['data']['tokens'])
+                            logging.info(f"Received {tokens_count} latest tokens from Birdeye API")
+                            
                             # Filter tokens based on liquidity
                             for token in data['data']['tokens']:
-                                if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000 and token['address'] not in tokens:
+                                liquidity = token.get('liquidity', 0)
+                                min_liquidity_lamports = min_liquidity * 1_000_000_000
+                                
+                                if liquidity >= min_liquidity_lamports and token['address'] not in tokens:
                                     tokens.append(token['address'])
-                            
-                            logging.info(f"Found {len(tokens)} total tokens after adding latest listings")
+                                    logging.info(f"Found latest token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
                 except Exception as e:
                     logging.error(f"Error fetching latest tokens: {e}")
             
@@ -310,16 +337,23 @@ async def find_new_promising_tokens(min_liquidity=2, max_results=3):
                     headers = {"X-API-KEY": BIRDEYE_API_KEY}
                     response = requests.get(gainers_url, headers=headers, timeout=5)
                     
+                    logging.info(f"Birdeye gainers API response status: {response.status_code}")
+                    
                     if response.status_code == 200:
                         data = response.json()
                         
                         if 'data' in data and 'tokens' in data['data']:
+                            tokens_count = len(data['data']['tokens'])
+                            logging.info(f"Received {tokens_count} gainer tokens from Birdeye API")
+                            
                             # Filter tokens based on liquidity and not already in our list
                             for token in data['data']['tokens']:
-                                if token.get('liquidity', 0) >= min_liquidity * 1_000_000_000 and token['address'] not in tokens:
+                                liquidity = token.get('liquidity', 0)
+                                min_liquidity_lamports = min_liquidity * 1_000_000_000
+                                
+                                if liquidity >= min_liquidity_lamports and token['address'] not in tokens:
                                     tokens.append(token['address'])
-                            
-                            logging.info(f"Found {len(tokens)} total tokens after adding gainers")
+                                    logging.info(f"Found gainer token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
                 except Exception as e:
                     logging.error(f"Error fetching gainer tokens: {e}")
         
@@ -327,6 +361,9 @@ async def find_new_promising_tokens(min_liquidity=2, max_results=3):
         if not tokens:
             logging.warning("No promising tokens found")
             return []
+        
+        # Log the final list of tokens
+        logging.info(f"Final list of promising tokens: {tokens}")
         
         # Return the top tokens based on max_results
         return tokens[:max_results]
