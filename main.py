@@ -262,12 +262,17 @@ async def find_new_promising_tokens(min_liquidity=0.5, max_results=3):  # Reduce
     try:
         tokens = []
         
-        # Use Birdeye API to find trending tokens
+        # Use Birdeye API to find tokens
         if BIRDEYE_API_KEY:
             # Try trending tokens first
             try:
-                trending_url = "https://public-api.birdeye.so/public/tokenlist/trending"
-                headers = {"X-API-KEY": BIRDEYE_API_KEY}
+                # Updated endpoint to V2 format
+                trending_url = "https://public-api.birdeye.so/defi/v2/tokens/trending"
+                headers = {
+                    "accept": "application/json", 
+                    "x-chain": "solana", 
+                    "X-API-KEY": BIRDEYE_API_KEY
+                }
                 response = requests.get(trending_url, headers=headers, timeout=5)
                 
                 logging.info(f"Birdeye trending API response status: {response.status_code}")
@@ -276,17 +281,17 @@ async def find_new_promising_tokens(min_liquidity=0.5, max_results=3):  # Reduce
                     data = response.json()
                     
                     # Log the actual API response for debugging
-                    if 'data' in data and 'tokens' in data['data']:
-                        tokens_count = len(data['data']['tokens'])
+                    if 'data' in data and 'items' in data['data']:
+                        tokens_count = len(data['data']['items'])
                         logging.info(f"Received {tokens_count} trending tokens from Birdeye API")
                         
                         # Log a sample of token data for debugging
                         if tokens_count > 0:
-                            sample_token = data['data']['tokens'][0]
+                            sample_token = data['data']['items'][0]
                             logging.info(f"Sample token data: {sample_token}")
                         
                         # Filter tokens based on liquidity
-                        for token in data['data']['tokens']:
+                        for token in data['data']['items']:
                             liquidity = token.get('liquidity', 0)
                             min_liquidity_lamports = min_liquidity * 1_000_000_000  # Convert SOL to lamports
                             
@@ -296,66 +301,99 @@ async def find_new_promising_tokens(min_liquidity=0.5, max_results=3):  # Reduce
                         
                         # If we found no tokens with our liquidity threshold, log the maximum liquidity found
                         if not tokens and tokens_count > 0:
-                            max_liquidity = max([t.get('liquidity', 0) for t in data['data']['tokens']])
+                            max_liquidity = max([t.get('liquidity', 0) for t in data['data']['items']])
                             logging.info(f"No trending tokens met liquidity threshold. Max liquidity found: {max_liquidity/1e9:.2f} SOL")
                     else:
-                        logging.warning(f"Unexpected Birdeye API response format: {data}")
+                        logging.info(f"Unexpected Birdeye API trending response format: {data}")
+                else:
+                    logging.info(f"Birdeye trending API response body: {response.text}")
             except Exception as e:
                 logging.error(f"Error fetching trending tokens: {e}")
             
-            # Also try recently listed tokens if we don't have enough
+            # Try newly listed tokens if we don't have enough
             if len(tokens) < max_results:
                 try:
-                    latest_url = "https://public-api.birdeye.so/public/tokenlist/latest"
-                    headers = {"X-API-KEY": BIRDEYE_API_KEY}
-                    response = requests.get(latest_url, headers=headers, timeout=5)
+                    new_listing_url = "https://public-api.birdeye.so/defi/v2/tokens/new_listing"
+                    params = {
+                        "time_to": int(time.time()),
+                        "limit": 10,
+                        "meme_platform_enabled": "true"
+                    }
+                    headers = {
+                        "accept": "application/json", 
+                        "x-chain": "solana", 
+                        "X-API-KEY": BIRDEYE_API_KEY
+                    }
+                    response = requests.get(new_listing_url, params=params, headers=headers, timeout=5)
                     
-                    logging.info(f"Birdeye latest API response status: {response.status_code}")
+                    logging.info(f"Birdeye new listing API response status: {response.status_code}")
                     
                     if response.status_code == 200:
                         data = response.json()
                         
-                        if 'data' in data and 'tokens' in data['data']:
-                            tokens_count = len(data['data']['tokens'])
-                            logging.info(f"Received {tokens_count} latest tokens from Birdeye API")
+                        if 'data' in data and 'items' in data['data']:
+                            tokens_count = len(data['data']['items'])
+                            logging.info(f"Received {tokens_count} new listing tokens from Birdeye API")
                             
                             # Filter tokens based on liquidity
-                            for token in data['data']['tokens']:
+                            for token in data['data']['items']:
                                 liquidity = token.get('liquidity', 0)
                                 min_liquidity_lamports = min_liquidity * 1_000_000_000
                                 
                                 if liquidity >= min_liquidity_lamports and token['address'] not in tokens:
                                     tokens.append(token['address'])
-                                    logging.info(f"Found latest token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
+                                    logging.info(f"Found new listing token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
+                        else:
+                            logging.info(f"Unexpected Birdeye API new listing response format: {data}")
+                    else:
+                        logging.info(f"Birdeye new listing API response body: {response.text}")
                 except Exception as e:
-                    logging.error(f"Error fetching latest tokens: {e}")
+                    logging.error(f"Error fetching new listing tokens: {e}")
             
-            # Check for gainers as another source
+            # Try standard token list API if we still don't have enough
             if len(tokens) < max_results:
                 try:
-                    gainers_url = "https://public-api.birdeye.so/public/tokenlist/gainers?timeframe=1H"
-                    headers = {"X-API-KEY": BIRDEYE_API_KEY}
-                    response = requests.get(gainers_url, headers=headers, timeout=5)
+                    tokenlist_url = "https://public-api.birdeye.so/defi/tokenlist"
+                    params = {
+                        "sort_by": "v24hUSD",
+                        "sort_type": "desc",
+                        "offset": 0,
+                        "limit": 50,
+                        "min_liquidity": min_liquidity * 1_000_000_000
+                    }
+                    headers = {
+                        "accept": "application/json", 
+                        "x-chain": "solana", 
+                        "X-API-KEY": BIRDEYE_API_KEY
+                    }
+                    response = requests.get(tokenlist_url, params=params, headers=headers, timeout=5)
                     
-                    logging.info(f"Birdeye gainers API response status: {response.status_code}")
+                    logging.info(f"Birdeye tokenlist API response status: {response.status_code}")
                     
                     if response.status_code == 200:
                         data = response.json()
                         
-                        if 'data' in data and 'tokens' in data['data']:
-                            tokens_count = len(data['data']['tokens'])
-                            logging.info(f"Received {tokens_count} gainer tokens from Birdeye API")
+                        if 'data' in data and isinstance(data['data'], list):
+                            tokens_count = len(data['data'])
+                            logging.info(f"Received {tokens_count} tokens from tokenlist API")
                             
-                            # Filter tokens based on liquidity and not already in our list
-                            for token in data['data']['tokens']:
-                                liquidity = token.get('liquidity', 0)
-                                min_liquidity_lamports = min_liquidity * 1_000_000_000
-                                
-                                if liquidity >= min_liquidity_lamports and token['address'] not in tokens:
+                            for token in data['data']:
+                                if 'address' in token and token['address'] not in tokens:
                                     tokens.append(token['address'])
-                                    logging.info(f"Found gainer token with sufficient liquidity: {token['address']} - {liquidity/1e9:.2f} SOL")
+                                    if 'liquidity' in token:
+                                        logging.info(f"Found token with sufficient liquidity: {token['address']} - {token.get('liquidity',0)/1e9:.2f} SOL")
+                                    else:
+                                        logging.info(f"Found token without liquidity info: {token['address']}")
+                                    
+                                    # Stop when we have enough tokens
+                                    if len(tokens) >= max_results:
+                                        break
+                        else:
+                            logging.info(f"Unexpected Birdeye tokenlist API response format: {data}")
+                    else:
+                        logging.info(f"Birdeye tokenlist API response body: {response.text}")
                 except Exception as e:
-                    logging.error(f"Error fetching gainer tokens: {e}")
+                    logging.error(f"Error fetching token list: {e}")
         
         # If we couldn't find tokens or don't have Birdeye API key, return empty list
         if not tokens:
@@ -371,7 +409,6 @@ async def find_new_promising_tokens(min_liquidity=0.5, max_results=3):  # Reduce
     except Exception as e:
         logging.error(f"Error finding new tokens: {e}")
         return []
-
 async def is_token_safe(token_address):
     """
     Check if a token is safe to buy by validating:
