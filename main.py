@@ -1,57 +1,4 @@
-@bot.event
-async def on_ready():
-    """Called when the bot is ready"""
-    global jupiter_client
-    logging.info(f"Bot logged in as {bot.user}")
-    
-    # Initialize Jupiter if SDK is available
-    if JUPITER_AVAILABLE:
-        logging.info("Initializing Jupiter client...")
-        jupiter_client = await initialize_jupiter()
-        if jupiter_client:
-            logging.info("Jupiter client initialized")
-        else:
-            logging.warning("Failed to initialize Jupiter client")
-    
-    # Sync slash commands
-    await tree.sync()
-    
-    # Load trade log if it exists
-    global trade_log
-    try:
-        if os.path.exists("trade_log.json"):
-            with open("trade_log.json", "r") as f:
-                trade_log = json.load(f)
-            logging.info(f"Loaded {len(trade_log)} entries from trade log")
-    except Exception as e:
-        logging.error(f"Error loading trade log: {e}")
-
-    # Start the auto-snipe task
-    bot.loop.create_task(auto_snipe())
-    
-    # Start the daily stats reset task
-    bot.loop.create_task(reset_daily_stats())
-
-async def main():
-    """Async main function"""
-    try:
-        if not DISCORD_TOKEN:
-            logging.error("DISCORD_TOKEN not set in .env file")
-            return
-            
-        if not PHANTOM_SECRET_KEY:
-            logging.error("PHANTOM_SECRET_KEY not set in .env file")
-            return
-        
-        # Run the bot
-        logging.info("Starting bot...")
-        await bot.start(DISCORD_TOKEN)
-    except Exception as e:
-        logging.error(f"Bot run failed: {e}")
-
-if __name__ == "__main__":
-    # Run the bot
-    asyncio.run(main())import base58
+import base58
 import requests
 import time
 import discord
@@ -68,7 +15,6 @@ from dotenv import load_dotenv
 import websockets
 import base64
 from solana.publickey import PublicKey
-import json
 
 # Import Jupiter SDK
 try:
@@ -1202,6 +1148,58 @@ async def reset_daily_stats():
             channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
             if channel:
                 await channel.send(f"Daily stats reset! Previous day: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+
+@bot.event
+async def on_ready():
+    """Called when the bot is ready"""
+    global jupiter_client
+    logging.info(f"Bot logged in as {bot.user}")
+    
+    # Initialize Jupiter if SDK is available
+    if JUPITER_AVAILABLE:
+        logging.info("Initializing Jupiter client...")
+        jupiter_client = await initialize_jupiter()
+        if jupiter_client:
+            logging.info("Jupiter client initialized")
+        else:
+            logging.warning("Failed to initialize Jupiter client")
+    
+    # Sync slash commands
+    await tree.sync()
+    
+    # Load trade log if it exists
+    global trade_log
+    try:
+        if os.path.exists("trade_log.json"):
+            with open("trade_log.json", "r") as f:
+                trade_log = json.load(f)
+            logging.info(f"Loaded {len(trade_log)} entries from trade log")
+    except Exception as e:
+        logging.error(f"Error loading trade log: {e}")
+
+    # Start the auto-snipe task
+    bot.loop.create_task(auto_snipe())
+    
+    # Start the daily stats reset task
+    bot.loop.create_task(reset_daily_stats())
+
+async def main():
+    """Async main function"""
+    try:
+        if not DISCORD_TOKEN:
+            logging.error("DISCORD_TOKEN not set in .env file")
+            return
+            
+        if not PHANTOM_SECRET_KEY:
+            logging.error("PHANTOM_SECRET_KEY not set in .env file")
+            return
+        
+        # Run the bot
+        logging.info("Starting bot...")
+        await bot.start(DISCORD_TOKEN)
+    except Exception as e:
+        logging.error(f"Bot run failed: {e}")
+
 if __name__ == "__main__":
     # Run the bot
     asyncio.run(main())
