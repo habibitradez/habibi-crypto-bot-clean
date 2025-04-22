@@ -14,9 +14,17 @@ import openai
 from dotenv import load_dotenv
 import websockets
 import base64
-from solana.publickey import PublicKey
+
+# Handle all Solana-related imports with try/except
+SOLANA_AVAILABLE = False
+try:
+    from solana.publickey import PublicKey
+    SOLANA_AVAILABLE = True
+except ImportError:
+    logging.warning("Solana libraries not available. Some functionality will be limited.")
 
 # Import Jupiter SDK
+JUPITER_AVAILABLE = False
 try:
     from jupiter_python_sdk.jupiter import Jupiter
     from solders.keypair import Keypair
@@ -24,7 +32,6 @@ try:
     JUPITER_AVAILABLE = True
 except ImportError:
     logging.warning("Jupiter SDK not available. Running in simulation mode.")
-    JUPITER_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s',
@@ -282,6 +289,10 @@ async def monitor_pump_fun_launches():
     """
     global wss_endpoint
 
+    if not SOLANA_AVAILABLE:
+        logging.warning("Solana libraries not available. Using fallback method for finding tokens.")
+        return []
+
     subscription_id = None
 
     # Set up the filter for logs from the pump.fun program
@@ -404,17 +415,21 @@ async def find_new_promising_tokens(min_liquidity=0.25, max_results=3):
     Returns a list of token addresses
     """
     try:
-        # Use the direct monitoring method to find new pump.fun tokens
-        new_tokens = await monitor_pump_fun_launches()
+        # Only use direct monitoring if Solana libraries are available
+        if SOLANA_AVAILABLE:
+            # Use the direct monitoring method to find new pump.fun tokens
+            new_tokens = await monitor_pump_fun_launches()
+            
+            # Extract just the mint addresses
+            token_addresses = [token["mint_address"] for token in new_tokens if "mint_address" in token]
+            
+            if token_addresses:
+                logging.info(f"Found {len(token_addresses)} new pump.fun tokens: {token_addresses}")
+                return token_addresses[:max_results]
+        else:
+            logging.info("Skipping direct monitoring since Solana libraries are not available")
         
-        # Extract just the mint addresses
-        token_addresses = [token["mint_address"] for token in new_tokens if "mint_address" in token]
-        
-        if token_addresses:
-            logging.info(f"Found {len(token_addresses)} new pump.fun tokens: {token_addresses}")
-            return token_addresses[:max_results]
-        
-        # If no tokens found through monitoring, use API fallback
+        # If no tokens found through monitoring or Solana not available, use API fallback
         if BIRDEYE_API_KEY:
             try:
                 # Use the new listing endpoint which is designed specifically for finding new tokens
@@ -1096,6 +1111,12 @@ async def monitor_slash(interaction: discord.Interaction):
 async def monitor_and_notify(channel_id):
     """Monitor for new tokens and notify in the specified channel"""
     try:
+        if not SOLANA_AVAILABLE:
+            channel = bot.get_channel(channel_id)
+            if channel:
+                await channel.send("Cannot monitor pump.fun directly as Solana libraries are not installed. Using Birdeye API instead.")
+            return await find_new_promising_tokens()
+        
         tokens = await monitor_pump_fun_launches()
         
         if tokens:
