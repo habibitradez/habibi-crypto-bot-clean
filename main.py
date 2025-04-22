@@ -1202,3 +1202,6 @@ async def reset_daily_stats():
             channel = bot.get_channel(int(DISCORD_NEWS_CHANNEL_ID))
             if channel:
                 await channel.send(f"Daily stats reset! Previous day: ${old_profit:.2f} profit | {old_buys} buys | {old_sells} sells | {old_2x} 2x+ sells")
+if __name__ == "__main__":
+    # Run the bot
+    asyncio.run(main())
