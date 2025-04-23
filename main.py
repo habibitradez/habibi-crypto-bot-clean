@@ -1263,7 +1263,10 @@ class TradingBot:
                     logging.warning(f"Warning: Could not connect to QuickNode Solana RPC. Error: {e}")
                     logging.info("Bot will continue in simulation mode for trading")
                     CONFIG
-CONFIG["SIMULATION_MODE"] = True
+except Exception as e:
+                    logging.warning(f"Warning: Could not connect to QuickNode Solana RPC. Error: {e}")
+                    logging.info("Bot will continue in simulation mode for trading")
+                    CONFIG["SIMULATION_MODE"] = True
             
             # Test Jupiter API connection
             if not CONFIG["JUPITER_API_URL"]:
@@ -1298,15 +1301,3 @@ CONFIG["SIMULATION_MODE"] = True
         except Exception as e:
             logging.error(f"Initialization error: {e}")
             raise
-
-async def main():
-    bot = TradingBot()
-    await bot.initialize()
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("Bot stopped by user")
-    except Exception as e:
-        logging.error(f"Fatal error: {e}")
