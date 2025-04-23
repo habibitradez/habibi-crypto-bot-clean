@@ -1215,7 +1215,7 @@ class TradingBot:
             "simulation_mode": CONFIG["SIMULATION_MODE"]
         }
     
-    async def initialize(self):
+  async def initialize(self):
         """Initialize the bot"""
         try:
             global bot_start_time
@@ -1260,10 +1260,6 @@ class TradingBot:
                         if response.status_code == 401:
                             logging.error("Authentication error - check your QuickNode URL")
                 except Exception as e:
-                    logging.warning(f"Warning: Could not connect to QuickNode Solana RPC. Error: {e}")
-                    logging.info("Bot will continue in simulation mode for trading")
-                    CONFIG
-except Exception as e:
                     logging.warning(f"Warning: Could not connect to QuickNode Solana RPC. Error: {e}")
                     logging.info("Bot will continue in simulation mode for trading")
                     CONFIG["SIMULATION_MODE"] = True
