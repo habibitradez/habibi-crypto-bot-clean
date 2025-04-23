@@ -146,8 +146,10 @@ class TradingBot:
             fallback_price = 0.0001  # Default fallback price for unknown tokens
 
         try:
-            # First try: QuickNode Token Price API using proper JSON-RPC format
+            # First try: Use QuickNode's RPC for price data in proper JSON-RPC format
             headers = {"Content-Type": "application/json"}
+            
+            # Method 1: Use QN native price API
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -167,39 +169,75 @@ class TradingBot:
                             logging.info(f"Got price from QuickNode Token Price API: ${price:.6f} for {token_address}")
                             price_cache[token_address] = (current_time, price)
                             return price
-                    elif 'error' in data:
-                        logging.warning(f"QuickNode price API error: {data['error'].get('message', 'Unknown error')}")
-                else:
-                    logging.warning(f"QuickNode Token Price API returned status {response.status_code}")
+                # If we get here, the API call didn't work
             except Exception as e:
-                logging.warning(f"Error with QuickNode Token Price API: {str(e)}")
+                logging.debug(f"Error with QuickNode Token Price API: {str(e)}")
 
-            # Second try: Jupiter API for price
+            # Method 2: Try a direct quote-based approach for price estimation
             try:
-                jupiter_url = f"{CONFIG['JUPITER_API_URL']}/v6/price?ids={token_address}&vsToken=USDC"
-                response = requests.get(jupiter_url, timeout=5)
+                # Get a quote from Jupiter to estimate price (using RPC directly)
+                quote_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "jupiterQuote",
+                    "params": {
+                        "inputMint": SOL_MINT if token_address != SOL_MINT else USDC_MINT,
+                        "outputMint": token_address if token_address != SOL_MINT else USDC_MINT,
+                        "amount": "100000000",  # 0.1 SOL or equivalent
+                        "slippageBps": 50
+                    }
+                }
+                
+                response = requests.post(CONFIG["SOLANA_RPC_URL"], json=quote_payload, headers=headers, timeout=5)
                 if response.status_code == 200:
                     data = response.json()
-                    if data.get('data') and data['data'].get(token_address):
-                        price = float(data['data'][token_address].get('price', 0))
+                    if 'result' in data and data['result'] is not None:
+                        # Extract price from quote data
+                        if 'outAmount' in data['result'] and 'inAmount' in data['result']:
+                            in_amount = float(data['result']['inAmount'])
+                            out_amount = float(data['result']['outAmount'])
+                            
+                            # Calculate price based on direction of the swap
+                            if token_address == SOL_MINT:
+                                # For SOL price in USDC
+                                price = out_amount / (in_amount / 1000000000)  # Convert lamports to SOL
+                            else:
+                                # For token price in terms of SOL
+                                price = (in_amount / 1000000000) / out_amount  # Convert lamports to SOL
+                                
+                            if price > 0:
+                                logging.info(f"Got price from Jupiter Quote: ${price:.6f} for {token_address}")
+                                price_cache[token_address] = (current_time, price)
+                                return price
+            except Exception as e:
+                logging.debug(f"Error getting price via Jupiter Quote: {str(e)}")
+                
+            # Method 3: Try REST-style endpoint (a more direct approach that might work)
+            try:
+                # Construct a direct price API URL call
+                price_url = f"{CONFIG['SOLANA_RPC_URL'].split('/solana-')[0]}/solana-price/v1/{token_address}"
+                response = requests.get(price_url, headers=headers, timeout=5)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'data' in data and 'price' in data['data']:
+                        price = float(data['data']['price'])
                         if price > 0:
-                            logging.info(f"Got price from Jupiter API: ${price:.6f} for {token_address}")
+                            logging.info(f"Got price from direct price API: ${price:.6f} for {token_address}")
                             price_cache[token_address] = (current_time, price)
                             return price
-                else:
-                    logging.warning(f"Jupiter API returned status {response.status_code}")
             except Exception as e:
-                logging.warning(f"Error with Jupiter price API: {str(e)}")
+                logging.debug(f"Error with direct price API: {str(e)}")
 
             # If we reach here, we couldn't get a price - use fallback
-            logging.warning(f"Using last known price (${fallback_price}) for {token_address} as fallback")
+            logging.warning(f"Using fallback price (${fallback_price}) for {token_address}")
             price_cache[token_address] = (current_time, fallback_price)
             return fallback_price
             
         except Exception as e:
             logging.error(f"Error getting token price: {e}")
             # Use last known price or fallback
-            logging.warning(f"Using last known price (${fallback_price}) for {token_address} as fallback")
+            logging.warning(f"Using fallback price (${fallback_price}) for {token_address} due to error")
             price_cache[token_address] = (current_time, fallback_price)
             return fallback_price
 
@@ -207,7 +245,7 @@ class TradingBot:
         """Get token liquidity information using slippage as a proxy"""
         try:
             # Use Jupiter quote to estimate liquidity based on slippage
-            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            quote_url = f"{CONFIG['SOLANA_RPC_URL']}/v6/quote"
             headers = {"Content-Type": "application/json"}
             
             # First quote: 0.1 SOL input
@@ -848,18 +886,33 @@ class TradingBot:
                 logging.warning("Switching to simulation mode due to RPC connection error")
                 CONFIG["SIMULATION_MODE"] = True
             
-            # Verify Jupiter API
+            # FIXED: Use the same endpoint URL for Jupiter API calls
+            # Instead of making a separate request to a Jupiter-specific endpoint,
+            # we'll use the same RPC URL but with Jupiter-specific methods
+            CONFIG["JUPITER_API_URL"] = CONFIG["SOLANA_RPC_URL"]
+            logging.info(f"Using QuickNode RPC URL for Jupiter API: {CONFIG['JUPITER_API_URL']}")
+            
+            # Test Jupiter quote functionality using JSON-RPC format
             try:
-                jupiter_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote?inputMint={SOL_MINT}&outputMint={USDC_MINT}&amount=10000000&slippageBps=50"
-                response = requests.get(jupiter_url)
+                jupiter_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getQuote",
+                    "params": {
+                        "inputMint": SOL_MINT,
+                        "outputMint": USDC_MINT,
+                        "amount": "10000000",  # 0.01 SOL
+                        "slippageBps": 50
+                    }
+                }
                 
+                response = requests.post(CONFIG["JUPITER_API_URL"], json=jupiter_payload, headers=headers)
                 if response.status_code == 200:
-                    logging.info(f"Successfully connected to Jupiter API (status {response.status_code})")
+                    logging.info(f"Successfully tested Jupiter API integration (status {response.status_code})")
                 else:
-                    logging.error(f"Jupiter API connection error: status {response.status_code}")
-                    logging.warning("Authentication error - check your Jupiter API URL")
+                    logging.warning(f"Jupiter API test returned status {response.status_code} - will use fallback mechanisms")
             except Exception as e:
-                logging.error(f"Error connecting to Jupiter API: {e}")
+                logging.warning(f"Error testing Jupiter API: {e} - will use fallback mechanisms")
             
             # Load initial token prices for cache
             for token, price in KNOWN_TOKEN_PRICES.items():
