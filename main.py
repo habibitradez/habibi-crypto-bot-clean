@@ -1,5 +1,5 @@
 # File: trading_bot.py
-# Description: A reliable trading bot for Solana using QuickNode APIs for crypto sniping
+# Description: A reliable trading bot for Solana specifically optimized for sniping new meme coins
 
 import os
 import base58
@@ -31,23 +31,24 @@ WRAPPED_SOL = "So11111111111111111111111111111111111111112"
 # Global price cache
 price_cache = {}
 
-# Configuration from environment variables
+# Configuration from environment variables - OPTIMIZED FOR MEME COIN SNIPING
 CONFIG = {
     "SOLANA_RPC_URL": os.getenv("SOLANA_RPC_URL"),
-    "JUPITER_API_URL": os.getenv("JUPITER_API_URL"),
+    "JUPITER_API_URL": os.getenv("JUPITER_API_URL"),  # Will be set to same as SOLANA_RPC_URL during init
     "BOT_PRIVATE_KEY": os.getenv("BOT_PRIVATE_KEY"),
     "PROFIT_TARGET_PERCENT": float(os.getenv("PROFIT_TARGET_PERCENT", "100")),  # 100% = 2x
-    "PARTIAL_PROFIT_PERCENT": float(os.getenv("PARTIAL_PROFIT_PERCENT", "50")),  # Take partial profit at 50%
-    "STOP_LOSS_PERCENT": float(os.getenv("STOP_LOSS_PERCENT", "20")),  # 20% loss
-    "TIME_LIMIT_MINUTES": int(os.getenv("TIME_LIMIT_MINUTES", "60")),
+    "PARTIAL_PROFIT_PERCENT": float(os.getenv("PARTIAL_PROFIT_PERCENT", "40")),  # Take partial profit at 40%
+    "STOP_LOSS_PERCENT": float(os.getenv("STOP_LOSS_PERCENT", "15")),  # 15% loss - tighter for meme coins
+    "TIME_LIMIT_MINUTES": int(os.getenv("TIME_LIMIT_MINUTES", "30")),  # Faster exit for meme coins
     "BUY_AMOUNT_SOL": float(os.getenv("BUY_AMOUNT_SOL", "0.15")),
-    "BUY_COOLDOWN_MINUTES": int(os.getenv("BUY_COOLDOWN_MINUTES", "5")),
+    "BUY_COOLDOWN_MINUTES": int(os.getenv("BUY_COOLDOWN_MINUTES", "2")),  # Faster buying for meme coins
     "SIMULATION_MODE": os.getenv("SIMULATION_MODE", "true").lower() == "true",
     "MAX_CONCURRENT_TOKENS": int(os.getenv("MAX_CONCURRENT_TOKENS", "15")),
-    "TOKEN_SCAN_LIMIT": int(os.getenv("TOKEN_SCAN_LIMIT", "100")),  # Number of transactions to scan for new tokens
-    "CACHE_DURATION_MS": 60 * 1000,  # 1 minute cache for prices
-    "CHECK_INTERVAL_MS": 3000,  # Check for opportunities every 3 seconds
+    "TOKEN_SCAN_LIMIT": int(os.getenv("TOKEN_SCAN_LIMIT", "200")),  # Scan more transactions for new tokens
+    "CACHE_DURATION_MS": 30 * 1000,  # 30 seconds cache for prices (faster updates for volatile tokens)
+    "CHECK_INTERVAL_MS": 1500,  # Check for opportunities every 1.5 seconds (faster for sniping)
     "TRANSACTION_TIMEOUT_SEC": 30,  # Timeout for transactions
+    "USE_PUMP_FUN_API": True,  # Enable pump.fun API integration
 }
 
 # Known token addresses and their fallback prices
@@ -65,6 +66,7 @@ class TradingBot:
     def __init__(self):
         self.wallet_address = self._get_wallet_address()
         self.load_trade_log()
+        self.recently_checked_tokens = set()  # Track recently checked tokens to avoid duplicates
         
     def _get_wallet_address(self):
         """Get wallet address from private key"""
@@ -211,23 +213,35 @@ class TradingBot:
                                 return price
             except Exception as e:
                 logging.debug(f"Error getting price via Jupiter Quote: {str(e)}")
-                
-            # Method 3: Try REST-style endpoint (a more direct approach that might work)
-            try:
-                # Construct a direct price API URL call
-                price_url = f"{CONFIG['SOLANA_RPC_URL'].split('/solana-')[0]}/solana-price/v1/{token_address}"
-                response = requests.get(price_url, headers=headers, timeout=5)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'data' in data and 'price' in data['data']:
-                        price = float(data['data']['price'])
-                        if price > 0:
-                            logging.info(f"Got price from direct price API: ${price:.6f} for {token_address}")
-                            price_cache[token_address] = (current_time, price)
-                            return price
-            except Exception as e:
-                logging.debug(f"Error with direct price API: {str(e)}")
+            
+            # Method 3: Try pump.fun API if applicable and enabled
+            if CONFIG["USE_PUMP_FUN_API"]:
+                try:
+                    # Check if this might be a pump.fun token and try to get quote
+                    pump_url = f"{CONFIG['SOLANA_RPC_URL']}/pump-fun/quote"
+                    pump_params = {
+                        "mint": token_address,
+                        "type": "BUY",
+                        "amount": "100000000"  # 0.1 SOL worth
+                    }
+                    
+                    pump_response = requests.get(pump_url, params=pump_params, timeout=5)
+                    if pump_response.status_code == 200:
+                        pump_data = pump_response.json()
+                        if 'outAmount' in pump_data and 'inAmount' in pump_data:
+                            # Calculate price from pump.fun quote
+                            pump_in_amount = float(pump_data['inAmount'])
+                            pump_out_amount = float(pump_data['outAmount'])
+                            
+                            # Calculate price (SOL per token)
+                            pump_price = (pump_in_amount / 1000000000) / pump_out_amount
+                            
+                            if pump_price > 0:
+                                logging.info(f"Got price from pump.fun API: ${pump_price:.6f} for {token_address}")
+                                price_cache[token_address] = (current_time, pump_price)
+                                return pump_price
+                except Exception as e:
+                    logging.debug(f"Error getting price via pump.fun API: {str(e)}")
 
             # If we reach here, we couldn't get a price - use fallback
             logging.warning(f"Using fallback price (${fallback_price}) for {token_address}")
@@ -307,7 +321,33 @@ class TradingBot:
             except Exception as e:
                 logging.warning(f"Error checking liquidity via Jupiter: {str(e)}")
             
-            # If we reach here, try a simpler approach - just check if we can get a quote at all
+            # If the first method fails, try using the pump.fun API for liquidity check
+            if CONFIG["USE_PUMP_FUN_API"]:
+                try:
+                    # Try to get a pump.fun quote to check if there's liquidity
+                    pump_url = f"{CONFIG['SOLANA_RPC_URL']}/pump-fun/quote"
+                    pump_params = {
+                        "mint": token_address,
+                        "type": "BUY",
+                        "amount": "100000000"  # 0.1 SOL worth
+                    }
+                    
+                    pump_response = requests.get(pump_url, params=pump_params, timeout=5)
+                    if pump_response.status_code == 200:
+                        pump_data = pump_response.json()
+                        if 'outAmount' in pump_data and 'inAmount' in pump_data:
+                            # If we can get a quote, there's liquidity
+                            logging.info(f"Token {token_address} has liquidity on pump.fun")
+                            return {
+                                "has_liquidity": True,
+                                "price_impact_pct": 5.0,  # Conservative estimate
+                                "liquidity_level": "medium",
+                                "platform": "pump.fun"
+                            }
+                except Exception as e:
+                    logging.debug(f"Error checking pump.fun liquidity: {str(e)}")
+            
+            # If we reach here, try a simpler approach - just check if we can get a price at all
             try:
                 price = await self.get_token_price(token_address)
                 if price > 0:
@@ -333,10 +373,120 @@ class TradingBot:
             logging.error(f"Error checking token liquidity: {e}")
             return {"has_liquidity": False, "error": str(e)}
 
+    async def check_pump_fun_new_tokens(self, max_results=3):
+        """Check for new tokens on pump.fun platform"""
+        if not CONFIG["USE_PUMP_FUN_API"]:
+            return []
+            
+        try:
+            logging.info("Checking for new tokens on pump.fun...")
+            # This endpoint might not be directly available, but we'll try a method to discover new tokens
+            
+            # First approach: Try to get recent pools if available
+            try:
+                new_pools_url = f"{CONFIG['SOLANA_RPC_URL']}/pump-fun/new-pools"
+                response = requests.get(new_pools_url, timeout=8)
+                
+                if response.status_code == 200:
+                    pools_data = response.json()
+                    if 'pools' in pools_data and isinstance(pools_data['pools'], list):
+                        # Extract token addresses from pools
+                        tokens = []
+                        for pool in pools_data['pools']:
+                            if 'tokenAddress' in pool and pool['tokenAddress'] not in self.recently_checked_tokens:
+                                tokens.append(pool['tokenAddress'])
+                                self.recently_checked_tokens.add(pool['tokenAddress'])
+                                if len(self.recently_checked_tokens) > 1000:  # Limit cache size
+                                    self.recently_checked_tokens.clear()
+                        
+                        if tokens:
+                            logging.info(f"Found {len(tokens)} new tokens on pump.fun")
+                            # Return a subset of found tokens
+                            return tokens[:max_results]
+            except Exception as e:
+                logging.debug(f"Error checking pump.fun new pools: {str(e)}")
+            
+            # Second approach: If the above doesn't work, we'll try a more general approach
+            # using some known pump.fun tokens and check for similar patterns
+            
+            # A list of sample pump.fun token suffixes to look for
+            pump_fun_suffixes = ["pump", "PUMP", "pUmP", "Pump"]
+            
+            # Query recent program transactions for token programs
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [
+                    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token program
+                    {"limit": CONFIG["TOKEN_SCAN_LIMIT"]}  # Check most recent transactions
+                ]
+            }
+            
+            response = requests.post(CONFIG["SOLANA_RPC_URL"], json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                signatures = [item.get('signature') for item in data.get('result', [])]
+                
+                # Process a subset of recent transactions to look for pump.fun tokens
+                new_tokens = []
+                for sig in signatures[:40]:  # Focus on the most recent transactions
+                    tx_payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
+                    }
+                    
+                    tx_response = requests.post(CONFIG["SOLANA_RPC_URL"], json=tx_payload, headers=headers, timeout=10)
+                    if tx_response.status_code == 200:
+                        tx_data = tx_response.json().get('result', {})
+                        
+                        # Skip failed transactions
+                        if not tx_data or tx_data.get('meta', {}).get('err') is not None:
+                            continue
+                        
+                        # Check account keys for potential pump.fun tokens
+                        account_keys = tx_data.get('transaction', {}).get('message', {}).get('accountKeys', [])
+                        
+                        for acc in account_keys:
+                            # Check if the address might be a pump.fun token (based on suffix)
+                            acc_address = acc if isinstance(acc, str) else acc.get('pubkey', '')
+                            
+                            # Check if this looks like a pump.fun token
+                            is_potential_pump = any(acc_address.endswith(suffix) for suffix in pump_fun_suffixes)
+                            
+                            if is_potential_pump and acc_address not in self.recently_checked_tokens:
+                                # Add to our tokens to check
+                                new_tokens.append(acc_address)
+                                self.recently_checked_tokens.add(acc_address)
+                                if len(self.recently_checked_tokens) > 1000:  # Limit cache size
+                                    self.recently_checked_tokens.clear()
+                
+                if new_tokens:
+                    logging.info(f"Found {len(new_tokens)} potential pump.fun tokens")
+                    # Return a subset of found tokens
+                    return new_tokens[:max_results]
+            
+            # If no tokens found, return empty list
+            return []
+            
+        except Exception as e:
+            logging.error(f"Error checking pump.fun tokens: {e}")
+            return []
+
     async def find_promising_tokens(self, max_results=3):
-        """Find newly launched tokens using QuickNode"""
+        """Find newly launched tokens using QuickNode - enhanced for meme coins"""
         try:
             logging.info("Looking for newly created tokens...")
+            
+            # First try to get new tokens from pump.fun if enabled
+            if CONFIG["USE_PUMP_FUN_API"]:
+                pump_fun_tokens = await self.check_pump_fun_new_tokens(max_results)
+                if pump_fun_tokens:
+                    return pump_fun_tokens
             
             # Query recent program transactions for token programs
             headers = {"Content-Type": "application/json"}
@@ -471,13 +621,21 @@ class TradingBot:
                 logging.info(f"Token {token_address} passed basic safety checks in simulation mode")
                 return True
                 
-            # Additional checks for production mode
-            # These would include more sophisticated checks for:
-            # - Token metadata analysis
-            # - Contract security analysis
-            # - Liquidity lock verification
-            # - Trading volume analysis
+            # Check if this appears to be a pump.fun token, which are generally okay to trade
+            is_pump_fun = False
+            pump_fun_suffixes = ["pump", "PUMP", "pUmP", "Pump"]
+            if any(token_address.endswith(suffix) for suffix in pump_fun_suffixes):
+                is_pump_fun = True
+                logging.info(f"Token {token_address} appears to be a pump.fun token")
             
+            # For meme coins, we're being a bit more permissive about safety checks
+            # since we want to catch new launches quickly. This is a tradeoff between
+            # safety and opportunity.
+            if is_pump_fun or "platform" in liquidity_info and liquidity_info["platform"] == "pump.fun":
+                # For pump.fun tokens, we'll be more permissive
+                logging.info(f"Token {token_address} is a pump.fun token, considering safe for trading")
+                return True
+                
             # For now, assume it's safe if it has liquidity and price
             logging.info(f"Token {token_address} passed basic safety checks")
             return True
@@ -487,7 +645,7 @@ class TradingBot:
             return False
 
     async def buy_token(self, token_address, amount_in_sol):
-        """Buy token with SOL using Jupiter API"""
+        """Buy token with SOL using Jupiter API or pump.fun API"""
         try:
             # Mark buy time even in simulation mode
             buy_time = time.time() * 1000
@@ -496,9 +654,17 @@ class TradingBot:
             # Get current price for tracking
             price = await self.get_token_price(token_address)
             
+            # Check if this is a pump.fun token
+            is_pump_fun = False
+            pump_fun_suffixes = ["pump", "PUMP", "pUmP", "Pump"]
+            if any(token_address.endswith(suffix) for suffix in pump_fun_suffixes):
+                is_pump_fun = True
+                logging.info(f"Detected {token_address} as a pump.fun token for buying")
+            
             # In simulation mode, just record the transaction
             if CONFIG["SIMULATION_MODE"]:
-                logging.info(f"[SIMULATION] Auto-bought {token_address} with {amount_in_sol} SOL at ${price}")
+                platform = "pump.fun" if is_pump_fun else "Jupiter"
+                logging.info(f"[SIMULATION] Auto-bought {token_address} with {amount_in_sol} SOL at ${price} via {platform}")
                 
                 # Record the simulated buy
                 self.trade_log["transactions"].append({
@@ -507,6 +673,7 @@ class TradingBot:
                     "amount_in": amount_in_sol,
                     "price": price,
                     "timestamp": buy_time,
+                    "platform": platform,
                     "simulation": True
                 })
                 
@@ -520,19 +687,26 @@ class TradingBot:
                 return True
                 
             else:
-                # Real trade implementation would go here for production mode
-                # This would use Jupiter API to execute the actual swap
-                
-                # For now, just log that we would make the trade
-                logging.info(f"Would buy {token_address} with {amount_in_sol} SOL at ${price}")
+                # Production trading logic would go here
+                # We'd use either Jupiter or pump.fun API based on the token
+                if is_pump_fun and CONFIG["USE_PUMP_FUN_API"]:
+                    # Use pump.fun API for pump.fun tokens
+                    logging.info(f"Would buy {token_address} with {amount_in_sol} SOL at ${price} via pump.fun API")
+                    # Real implementation would call the pump.fun swap API
+                else:
+                    # Use Jupiter for regular tokens
+                    logging.info(f"Would buy {token_address} with {amount_in_sol} SOL at ${price} via Jupiter API")
+                    # Real implementation would call the Jupiter swap API
                 
                 # Record as if we made the buy
+                platform = "pump.fun" if is_pump_fun else "Jupiter"
                 self.trade_log["transactions"].append({
                     "type": "buy",
                     "token": token_address,
                     "amount_in": amount_in_sol,
                     "price": price,
                     "timestamp": buy_time,
+                    "platform": platform,
                     "simulation": CONFIG["SIMULATION_MODE"]
                 })
                 
@@ -550,7 +724,7 @@ class TradingBot:
             return False
 
     async def sell_token(self, token_address, partial=False):
-        """Sell token for SOL using Jupiter API"""
+        """Sell token for SOL using Jupiter API or pump.fun API"""
         try:
             # Get current price
             current_price = await self.get_token_price(token_address)
@@ -570,10 +744,18 @@ class TradingBot:
             # Determine sell amount based on partial flag
             sell_amount = "50%" if partial else "100%"
             
+            # Check if this is a pump.fun token
+            is_pump_fun = False
+            pump_fun_suffixes = ["pump", "PUMP", "pUmP", "Pump"]
+            if any(token_address.endswith(suffix) for suffix in pump_fun_suffixes):
+                is_pump_fun = True
+                logging.info(f"Detected {token_address} as a pump.fun token for selling")
+            
             # In simulation mode, just record the transaction
             if CONFIG["SIMULATION_MODE"]:
+                platform = "pump.fun" if is_pump_fun else "Jupiter"
                 logging.info(f"[SIMULATION] Sold {sell_amount} of {token_address} at ${current_price} " +
-                             f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
+                             f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes via {platform}")
                 
                 # Record the simulated sell
                 self.trade_log["transactions"].append({
@@ -585,6 +767,7 @@ class TradingBot:
                     "hold_duration_min": hold_duration_min,
                     "timestamp": time.time() * 1000,
                     "partial": partial,
+                    "platform": platform,
                     "simulation": True
                 })
                 
@@ -612,14 +795,21 @@ class TradingBot:
                 return True
                 
             else:
-                # Real trade implementation would go here for production mode
-                # This would use Jupiter API to execute the actual swap
-                
-                # For now, just log that we would make the trade
-                logging.info(f"Would sell {sell_amount} of {token_address} at ${current_price} " +
-                             f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
+                # Production trading logic would go here
+                # We'd use either Jupiter or pump.fun API based on the token
+                if is_pump_fun and CONFIG["USE_PUMP_FUN_API"]:
+                    # Use pump.fun API for pump.fun tokens
+                    logging.info(f"Would sell {sell_amount} of {token_address} at ${current_price} " +
+                                f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes via pump.fun API")
+                    # Real implementation would call the pump.fun swap API
+                else:
+                    # Use Jupiter for regular tokens
+                    logging.info(f"Would sell {sell_amount} of {token_address} at ${current_price} " +
+                                f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes via Jupiter API")
+                    # Real implementation would call the Jupiter swap API
                 
                 # Record as if we made the sell
+                platform = "pump.fun" if is_pump_fun else "Jupiter"
                 self.trade_log["transactions"].append({
                     "type": "sell",
                     "token": token_address,
@@ -629,6 +819,7 @@ class TradingBot:
                     "hold_duration_min": hold_duration_min,
                     "timestamp": time.time() * 1000,
                     "partial": partial,
+                    "platform": platform,
                     "simulation": CONFIG["SIMULATION_MODE"]
                 })
                 
@@ -665,9 +856,9 @@ class TradingBot:
         MAX_CONCURRENT_TOKENS = CONFIG["MAX_CONCURRENT_TOKENS"]  # Maximum number of tokens to hold at once
         BUY_COOLDOWN_MS = CONFIG["BUY_COOLDOWN_MINUTES"] * 60 * 1000  # Cooldown between buys
         PROFIT_TARGET = CONFIG["PROFIT_TARGET_PERCENT"] / 100  # 100% = 2x
-        PARTIAL_PROFIT = CONFIG["PARTIAL_PROFIT_PERCENT"] / 100  # 50% = 1.5x
-        STOP_LOSS = CONFIG["STOP_LOSS_PERCENT"] / 100  # 20% = 0.8x
-        TIME_LIMIT_MS = CONFIG["TIME_LIMIT_MINUTES"] * 60 * 1000  # 60 minutes
+        PARTIAL_PROFIT = CONFIG["PARTIAL_PROFIT_PERCENT"] / 100  # 40% = 1.4x
+        STOP_LOSS = CONFIG["STOP_LOSS_PERCENT"] / 100  # 15% = 0.85x
+        TIME_LIMIT_MS = CONFIG["TIME_LIMIT_MINUTES"] * 60 * 1000  # 30 minutes
         
         logging.info(f"Starting trading loop with parameters:")
         logging.info(f"  Mode: {'SIMULATION' if CONFIG['SIMULATION_MODE'] else 'PRODUCTION'}")
@@ -678,6 +869,8 @@ class TradingBot:
         logging.info(f"  Partial profit target: {CONFIG['PARTIAL_PROFIT_PERCENT']}%")
         logging.info(f"  Stop loss: {CONFIG['STOP_LOSS_PERCENT']}%")
         logging.info(f"  Time limit: {CONFIG['TIME_LIMIT_MINUTES']} minutes")
+        logging.info(f"  Check interval: {CONFIG['CHECK_INTERVAL_MS']} ms")
+        logging.info(f"  Pump.fun API enabled: {CONFIG['USE_PUMP_FUN_API']}")
         
         while True:
             try:
@@ -769,19 +962,19 @@ class TradingBot:
                     await self.sell_token(token, partial=False)
                     continue
                 
-                # 2. Check for partial profit opportunity (50% profit)
+                # 2. Check for partial profit opportunity (40% profit)
                 if price_ratio >= (1 + partial_profit) and token not in self.trade_log["partial_sold"]:
                     logging.info(f"📈 Partial profit opportunity for {token}: {price_ratio:.2f}x (target: {1 + partial_profit:.2f}x)")
                     await self.sell_token(token, partial=True)
                     continue
                 
-                # 3. Check for stop loss (-20%)
+                # 3. Check for stop loss (-15%)
                 if price_ratio <= (1 - stop_loss):
                     logging.info(f"🛑 Stop loss triggered for {token}: {price_ratio:.2f}x (threshold: {1 - stop_loss:.2f}x)")
                     await self.sell_token(token, partial=False)
                     continue
                 
-                # 4. Check for time limit with minimal profit (1 hour hold time, price > 1.2x)
+                # 4. Check for time limit with minimal profit (half hour hold time, price > 1.2x)
                 min_profit_for_time_limit = 0.2  # 20% profit minimum for time-based exit
                 if hold_duration_ms >= time_limit_ms and price_ratio >= (1 + min_profit_for_time_limit):
                     logging.info(f"⏰ Time limit reached with profit for {token}: held for {hold_duration_min:.1f} min, {price_ratio:.2f}x profit")
@@ -913,6 +1106,26 @@ class TradingBot:
                     logging.warning(f"Jupiter API test returned status {response.status_code} - will use fallback mechanisms")
             except Exception as e:
                 logging.warning(f"Error testing Jupiter API: {e} - will use fallback mechanisms")
+            
+            # If pump.fun API is enabled, test it
+            if CONFIG["USE_PUMP_FUN_API"]:
+                try:
+                    # Try to access a pump.fun endpoint
+                    test_token = "HHMF7hd3FDfA8iAH3h8F0ppOUV9jkoviETYyCwUDpump"  # Example pump.fun token
+                    pump_url = f"{CONFIG['SOLANA_RPC_URL']}/pump-fun/quote"
+                    pump_params = {
+                        "mint": test_token,
+                        "type": "BUY",
+                        "amount": "100000000"  # 0.1 SOL worth
+                    }
+                    
+                    pump_response = requests.get(pump_url, params=pump_params, timeout=5)
+                    if pump_response.status_code == 200:
+                        logging.info(f"Successfully tested pump.fun API integration (status {pump_response.status_code})")
+                    else:
+                        logging.warning(f"pump.fun API test returned status {pump_response.status_code} - some features may be limited")
+                except Exception as e:
+                    logging.warning(f"Error testing pump.fun API: {e} - some features may be limited")
             
             # Load initial token prices for cache
             for token, price in KNOWN_TOKEN_PRICES.items():
