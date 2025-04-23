@@ -536,64 +536,68 @@ class TradingBot:
                 logging.error(f"Error checking sell opportunity for {token_address}: {e}")
     
     async def find_promising_tokens(self, max_results=3):
-    """Find newly launched tokens using QuickNode"""
-    try:
-        logging.info("Looking for newly launched tokens...")
-        
-        # Query recent program transactions for token programs
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getSignaturesForAddress",
-            "params": [
-                "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token program
-                {"limit": 30}  # Check most recent 30 transactions
-            ]
-        }
-        
-        response = requests.post(CONFIG["SOLANA_RPC_URL"], json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            data = response.json()
-            signatures = [item.get('signature') for item in data.get('result', [])]
+        """Find newly launched tokens using QuickNode"""
+        try:
+            logging.info("Looking for newly launched tokens...")
             
-            # Get transaction details
-            new_tokens = []
-            
-            for sig in signatures:
-                # Get transaction details to find new token mints
-                tx_payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
-                }
-                
-                tx_response = requests.post(CONFIG["SOLANA_RPC_URL"], json=tx_payload, headers=headers, timeout=10)
-                
-                if tx_response.status_code == 200:
-                    tx_data = tx_response.json().get('result', {})
-                    # Extract token creation events (simplified - would need more parsing)
-                    # This would require more detailed implementation to identify new tokens
-                    
-                    # For now, just use test tokens
-            
-            # If no new tokens found, use test tokens
-            if not new_tokens:
-                test_tokens = [
-                    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-                    "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  # JUP
-                    # Add more test tokens
+            # Query recent program transactions for token programs
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [
+                    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token program
+                    {"limit": 30}  # Check most recent 30 transactions
                 ]
-                random.shuffle(test_tokens)
-                selected = test_tokens[:max_results]
-                return selected
+            }
             
-            return new_tokens[:max_results]
-    except Exception as e:
-        logging.error(f"Error finding promising tokens: {e}")
-        return []
+            response = requests.post(CONFIG["SOLANA_RPC_URL"], json=payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                signatures = [item.get('signature') for item in data.get('result', [])]
+                
+                # Get transaction details
+                new_tokens = []
+                
+                for sig in signatures:
+                    # Get transaction details to find new token mints
+                    tx_payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [sig, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
+                    }
+                    
+                    tx_response = requests.post(CONFIG["SOLANA_RPC_URL"], json=tx_payload, headers=headers, timeout=10)
+                    
+                    if tx_response.status_code == 200:
+                        tx_data = tx_response.json().get('result', {})
+                        # Extract token creation events (simplified - would need more parsing)
+                        # This would require more detailed implementation to identify new tokens
+                        
+                        # For now, just use test tokens
+                
+                # If no new tokens found, use test tokens
+                if not new_tokens:
+                    test_tokens = [
+                        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+                        "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",  # JUP
+                        "5JnZ8ZUXZRuHt6rkWFSAPQVEJ3dTADgpNMGYMRvGLhT",  # HADES
+                        "7i5KKsX2weiTkry7jA4ZwSuXGhs5eJBEjY8vVxR4pfRx",  # GMT
+                        "BERTvZDDguQJXeN9qjwwpM2QHEgMTQ5RbzuJMuX4sKTQ",  # BERT
+                        "M1nec3zsQAR3be1JbATuYqaXZHB2ZBpUJXUeDWGz9tQ",  # MINEC
+                        "MNDEFzGvMt87ueuHvVU9VcTqsAP5b3fTGPsHuuPA5ey",  # MANDE
+                    ]
+                    random.shuffle(test_tokens)
+                    selected = test_tokens[:max_results]
+                    return selected
+                
+                return new_tokens[:max_results]
+        except Exception as e:
+            logging.error(f"Error finding promising tokens: {e}")
+            return []
     
     async def is_token_safe(self, token_address):
         """Check if a token is safe to buy using QuickNode token data"""
