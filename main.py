@@ -1215,7 +1215,7 @@ class TradingBot:
             "simulation_mode": CONFIG["SIMULATION_MODE"]
         }
     
-  async def initialize(self):
+    async def initialize(self):
         """Initialize the bot"""
         try:
             global bot_start_time
@@ -1263,8 +1263,7 @@ class TradingBot:
                     logging.warning(f"Warning: Could not connect to QuickNode Solana RPC. Error: {e}")
                     logging.info("Bot will continue in simulation mode for trading")
                     CONFIG["SIMULATION_MODE"] = True
-            
-            # Test Jupiter API connection
+                  # Test Jupiter API connection
             if not CONFIG["JUPITER_API_URL"]:
                 logging.error("JUPITER_API_URL environment variable is not set!")
                 logging.info("Bot will run in simulation mode with limited functionality")
@@ -1297,3 +1296,15 @@ class TradingBot:
         except Exception as e:
             logging.error(f"Initialization error: {e}")
             raise
+
+async def main():
+    bot = TradingBot()
+    await bot.initialize()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Bot stopped by user")
+    except Exception as e:
+        logging.error(f"Fatal error: {e}")
