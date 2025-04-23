@@ -226,16 +226,19 @@ class TradingBot:
             # Method 2: Try Jupiter's quote API
             await self.rate_limit_api_call()
             try:
-                # Use v6 quote API for price estimation
-                quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-                params = {
+                # Use v4 quote API for price estimation
+                quote_url = f"{CONFIG['JUPITER_API_URL']}/v4/quote"
+                
+                # Format request as JSON
+                headers = {"Content-Type": "application/json"}
+                quote_data = {
                     "inputMint": SOL_MINT,
                     "outputMint": token_address,
                     "amount": "100000000",  # 0.1 SOL
                     "slippageBps": 50
                 }
                 
-                response = requests.get(quote_url, params=params, timeout=5)
+                response = requests.post(quote_url, json=quote_data, headers=headers, timeout=5)
                 if response.status_code == 200:
                     quote_data = response.json()
                     if 'outAmount' in quote_data and quote_data['outAmount']:
@@ -297,11 +300,12 @@ class TradingBot:
             await self.rate_limit_api_call()
             
             # Use Jupiter quote to estimate liquidity based on slippage
-            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v4/quote"
+            headers = {"Content-Type": "application/json"}
             
             # First quote: 0.1 SOL input
             amount_in_small = 100000000  # 0.1 SOL in lamports
-            small_params = {
+            small_data = {
                 "inputMint": SOL_MINT,
                 "outputMint": token_address,
                 "amount": str(amount_in_small),
@@ -309,7 +313,7 @@ class TradingBot:
             }
             
             try:
-                small_response = requests.get(quote_url, params=small_params, timeout=5)
+                small_response = requests.post(quote_url, json=small_data, headers=headers, timeout=5)
                 if small_response.status_code == 200:
                     small_data = small_response.json()
                     
@@ -317,14 +321,14 @@ class TradingBot:
                     
                     # Now get quote for larger amount: 1 SOL input
                     amount_in_large = 1000000000  # 1 SOL in lamports
-                    large_params = {
+                    large_data = {
                         "inputMint": SOL_MINT,
                         "outputMint": token_address,
                         "amount": str(amount_in_large),
                         "slippageBps": 50  # 0.5% slippage
                     }
                     
-                    large_response = requests.get(quote_url, params=large_params, timeout=5)
+                    large_response = requests.post(quote_url, json=large_data, headers=headers, timeout=5)
                     if large_response.status_code == 200:
                         large_data = large_response.json()
                         
@@ -597,7 +601,7 @@ class TradingBot:
             return False
 
     async def buy_token(self, token_address, amount_in_sol):
-        """Buy token with SOL using Jupiter API"""
+        """Buy token with SOL using Jupiter API - fixed for proper quote format"""
         try:
             # Mark buy time even in simulation mode
             buy_time = time.time() * 1000
@@ -638,53 +642,92 @@ class TradingBot:
                 # For real trading, get the swap quote and transaction data from Jupiter
                 await self.rate_limit_api_call()
                 try:
-                    # First, get a quote
+                    # First, get a quote using Jupiter's v4 API format
                     logging.info(f"Getting quote to buy {token_address}")
                     amount_in_lamports = int(amount_in_sol * 1000000000)  # Convert SOL to lamports
                     
-                    quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+                    # Jupiter v4 quote URL format - this works more reliably
+                    quote_url = "https://quote-api.jup.ag/v4/quote"
                     quote_params = {
                         "inputMint": SOL_MINT,
                         "outputMint": token_address,
-                        "amount": str(amount_in_lamports),
-                        "slippageBps": 100  # 1% slippage
+                        "amount": amount_in_lamports,
+                        "slippageBps": 100,  # 1% slippage
+                        "onlyDirectRoutes": False,
+                        "asLegacyTransaction": False
                     }
                     
-                    quote_response = requests.get(quote_url, params=quote_params, timeout=10)
+                    # Make sure to format the request as JSON for Jupiter v4 API
+                    headers = {"Content-Type": "application/json"}
+                    quote_response = requests.post(quote_url, json=quote_params, headers=headers, timeout=10)
                     
                     if quote_response.status_code == 200:
                         quote_data = quote_response.json()
                         logging.info(f"Successfully obtained quote for {token_address}")
                         
-                        # In a real implementation, we would now:
-                        # 1. Use the quote to get a swap transaction
-                        # 2. Sign the transaction with the private key
-                        # 3. Submit the transaction to the network
+                        # Now get the swap instructions
+                        await self.rate_limit_api_call()
                         
-                        # But for now, just log that we'd make the trade
-                        logging.info(f"Would buy {token_address} ({token_type}) with {amount_in_sol} SOL at ${price}")
+                        # Use the data from the quote to prepare the swap request
+                        swap_url = "https://quote-api.jup.ag/v4/swap"
+                        swap_params = {
+                            "userPublicKey": self.wallet_address,
+                            "quoteResponse": quote_data,
+                            "prioritizationFeeLamports": "auto",  # Auto-set priority fee
+                            "wrapUnwrapSOL": True  # Auto-wrap/unwrap SOL
+                        }
                         
-                        # Record as if we made the buy
-                        self.trade_log["transactions"].append({
-                            "type": "buy",
-                            "token": token_address,
-                            "token_type": token_type,
-                            "amount_in": amount_in_sol,
-                            "price": price,
-                            "timestamp": buy_time,
-                            "simulation": False
-                        })
+                        # Make the swap request
+                        swap_response = requests.post(swap_url, json=swap_params, headers=headers, timeout=10)
                         
-                        # Track buy time and price for calculating profit
-                        self.trade_log["buy_times"][token_address] = buy_time
-                        self.trade_log["buy_prices"][token_address] = price
-                        self.trade_log["held_tokens"].add(token_address)
-                        
-                        # Save updated log
-                        self.save_trade_log()
-                        return True
+                        if swap_response.status_code == 200:
+                            swap_data = swap_response.json()
+                            logging.info(f"Successfully obtained swap instructions for {token_address}")
+                            
+                            # In a real implementation, we would now:
+                            # 1. Use the instructions to create a transaction
+                            # 2. Sign the transaction with the private key
+                            # 3. Submit the transaction to the network
+                            
+                            # For now, just log that we have the instructions
+                            logging.info(f"Would buy {token_address} ({token_type}) with {amount_in_sol} SOL at ${price}")
+                            
+                            # Record as if we made the buy
+                            self.trade_log["transactions"].append({
+                                "type": "buy",
+                                "token": token_address,
+                                "token_type": token_type,
+                                "amount_in": amount_in_sol,
+                                "price": price,
+                                "timestamp": buy_time,
+                                "simulation": False
+                            })
+                            
+                            # Track buy time and price for calculating profit
+                            self.trade_log["buy_times"][token_address] = buy_time
+                            self.trade_log["buy_prices"][token_address] = price
+                            self.trade_log["held_tokens"].add(token_address)
+                            
+                            # Save updated log
+                            self.save_trade_log()
+                            return True
+                        else:
+                            logging.error(f"Failed to get swap instructions: {swap_response.status_code}")
+                            if swap_response.status_code == 400:
+                                try:
+                                    error_data = swap_response.json()
+                                    logging.error(f"Swap error details: {error_data}")
+                                except:
+                                    pass
+                            return False
                     else:
                         logging.error(f"Failed to get quote: {quote_response.status_code}")
+                        if quote_response.status_code == 400:
+                            try:
+                                error_data = quote_response.json()
+                                logging.error(f"Quote error details: {error_data}")
+                            except:
+                                pass
                         return False
                         
                 except Exception as e:
@@ -696,7 +739,7 @@ class TradingBot:
             return False
 
     async def sell_token(self, token_address, partial=False):
-        """Sell token for SOL using Jupiter API"""
+        """Sell token for SOL using Jupiter API - fixed to work with Jupiter v4 API"""
         try:
             # Get current price
             current_price = await self.get_token_price(token_address)
@@ -714,7 +757,7 @@ class TradingBot:
             hold_duration_min = hold_duration_ms / (60 * 1000)
             
             # Determine sell amount based on partial flag
-            sell_amount = "50%" if partial else "100%"
+            sell_amount_text = "50%" if partial else "100%"
             
             # Check if this is a meme token
             is_meme = self.is_meme_token(token_address)
@@ -722,8 +765,8 @@ class TradingBot:
             
             # In simulation mode, just record the transaction
             if CONFIG["SIMULATION_MODE"]:
-                logging.info(f"[SIMULATION] Sold {sell_amount} of {token_address} ({token_type}) at ${current_price} " +
-                             f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
+                logging.info(f"[SIMULATION] Sold {sell_amount_text} of {token_address} ({token_type}) at ${current_price} " +
+                            f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
                 
                 # Record the simulated sell
                 self.trade_log["transactions"].append({
@@ -767,75 +810,120 @@ class TradingBot:
                 await self.rate_limit_api_call()
                 try:
                     # Since we're selling the token, we need to know how many tokens we have
-                    # This would normally involve checking our token balance
+                    # In a real implementation, we would query the token balance
+                    
                     # For now, we'll estimate based on the buy amount
-                    estimated_tokens = (CONFIG["BUY_AMOUNT_SOL"] / buy_price) * (0.5 if partial else 1.0)
-                    estimated_tokens_int = int(estimated_tokens * 1000000)  # Assuming 6 decimals, adjust as needed
+                    buy_amount_sol = CONFIG["BUY_AMOUNT_SOL"]
+                    estimated_token_amount = buy_amount_sol / buy_price
                     
-                    # First, get a quote for the sell
-                    logging.info(f"Getting quote to sell {sell_amount} of {token_address}")
+                    # If partial sell, adjust the amount
+                    if partial:
+                        estimated_token_amount = estimated_token_amount * 0.5
                     
-                    quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+                    # Convert to token decimal format (assuming 6 decimals, adjust as needed)
+                    token_decimals = 6  # This should be dynamically determined
+                    token_amount_raw = int(estimated_token_amount * (10 ** token_decimals))
+                    
+                    # First, get a quote using Jupiter's v4 API
+                    logging.info(f"Getting quote to sell {sell_amount_text} of {token_address}")
+                    
+                    # Jupiter v4 quote API format
+                    quote_url = "https://quote-api.jup.ag/v4/quote"
                     quote_params = {
                         "inputMint": token_address,
                         "outputMint": SOL_MINT,
-                        "amount": str(estimated_tokens_int),
-                        "slippageBps": 100  # 1% slippage
+                        "amount": token_amount_raw,
+                        "slippageBps": 100,  # 1% slippage
+                        "onlyDirectRoutes": False,
+                        "asLegacyTransaction": False
                     }
                     
-                    quote_response = requests.get(quote_url, params=quote_params, timeout=10)
+                    headers = {"Content-Type": "application/json"}
+                    quote_response = requests.post(quote_url, json=quote_params, headers=headers, timeout=10)
                     
                     if quote_response.status_code == 200:
                         quote_data = quote_response.json()
                         logging.info(f"Successfully obtained quote to sell {token_address}")
                         
-                        # In a real implementation, we would now:
-                        # 1. Use the quote to get a swap transaction
-                        # 2. Sign the transaction with the private key
-                        # 3. Submit the transaction to the network
+                        # Get the swap instructions
+                        await self.rate_limit_api_call()
                         
-                        # But for now, just log that we'd make the trade
-                        logging.info(f"Would sell {sell_amount} of {token_address} ({token_type}) at ${current_price} " +
-                                    f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
+                        swap_url = "https://quote-api.jup.ag/v4/swap"
+                        swap_params = {
+                            "userPublicKey": self.wallet_address,
+                            "quoteResponse": quote_data,
+                            "prioritizationFeeLamports": "auto",  # Auto-set priority fee
+                            "wrapUnwrapSOL": True  # Auto-wrap/unwrap SOL
+                        }
                         
-                        # Record as if we made the sell
-                        self.trade_log["transactions"].append({
-                            "type": "sell",
-                            "token": token_address,
-                            "token_type": token_type,
-                            "sell_price": current_price,
-                            "buy_price": buy_price,
-                            "profit_percent": profit_percent,
-                            "hold_duration_min": hold_duration_min,
-                            "timestamp": time.time() * 1000,
-                            "partial": partial,
-                            "simulation": False
-                        })
+                        swap_response = requests.post(swap_url, json=swap_params, headers=headers, timeout=10)
                         
-                        # Update held tokens list
-                        if not partial:
-                            if token_address in self.trade_log["held_tokens"]:
-                                self.trade_log["held_tokens"].remove(token_address)
-                            if token_address in self.trade_log["partial_sold"]:
-                                self.trade_log["partial_sold"].remove(token_address)
-                        else:
-                            # Mark as partially sold
-                            self.trade_log["partial_sold"].add(token_address)
-                        
-                        # Track daily profit
-                        today = datetime.now().strftime("%Y-%m-%d")
-                        profit_amount = (CONFIG["BUY_AMOUNT_SOL"] * (profit_percent / 100)) * (0.5 if partial else 1.0)
-                        
-                        if today not in self.trade_log["daily_profits"]:
-                            self.trade_log["daily_profits"][today] = 0
+                        if swap_response.status_code == 200:
+                            swap_data = swap_response.json()
+                            logging.info(f"Successfully obtained swap instructions to sell {token_address}")
                             
-                        self.trade_log["daily_profits"][today] += profit_amount
-                        
-                        # Save updated log
-                        self.save_trade_log()
-                        return True
+                            # In a real implementation, we would now:
+                            # 1. Use the swap instructions to create a transaction
+                            # 2. Sign the transaction with the private key
+                            # 3. Submit the transaction to the network
+                            
+                            # For now, just log that we have the instructions
+                            logging.info(f"Would sell {sell_amount_text} of {token_address} ({token_type}) at ${current_price} " +
+                                        f"for {profit_percent:.2f}% profit after {hold_duration_min:.1f} minutes")
+                            
+                            # Record as if we made the sell
+                            self.trade_log["transactions"].append({
+                                "type": "sell",
+                                "token": token_address,
+                                "token_type": token_type,
+                                "sell_price": current_price,
+                                "buy_price": buy_price,
+                                "profit_percent": profit_percent,
+                                "hold_duration_min": hold_duration_min,
+                                "timestamp": time.time() * 1000,
+                                "partial": partial,
+                                "simulation": False
+                            })
+                            
+                            # Update held tokens list
+                            if not partial:
+                                if token_address in self.trade_log["held_tokens"]:
+                                    self.trade_log["held_tokens"].remove(token_address)
+                                if token_address in self.trade_log["partial_sold"]:
+                                    self.trade_log["partial_sold"].remove(token_address)
+                            else:
+                                # Mark as partially sold
+                                self.trade_log["partial_sold"].add(token_address)
+                            
+                            # Track daily profit
+                            today = datetime.now().strftime("%Y-%m-%d")
+                            profit_amount = (CONFIG["BUY_AMOUNT_SOL"] * (profit_percent / 100)) * (0.5 if partial else 1.0)
+                            
+                            if today not in self.trade_log["daily_profits"]:
+                                self.trade_log["daily_profits"][today] = 0
+                                
+                            self.trade_log["daily_profits"][today] += profit_amount
+                            
+                            # Save updated log
+                            self.save_trade_log()
+                            return True
+                        else:
+                            logging.error(f"Failed to get swap instructions: {swap_response.status_code}")
+                            if swap_response.status_code == 400:
+                                try:
+                                    error_data = swap_response.json()
+                                    logging.error(f"Swap error details: {error_data}")
+                                except:
+                                    pass
+                            return False
                     else:
                         logging.error(f"Failed to get quote for sell: {quote_response.status_code}")
+                        if quote_response.status_code == 400:
+                            try:
+                                error_data = quote_response.json()
+                                logging.error(f"Quote error details: {error_data}")
+                            except:
+                                pass
                         return False
                         
                 except Exception as e:
@@ -1084,9 +1172,17 @@ class TradingBot:
             
             # Test public Jupiter API connection
             try:
-                # Test Jupiter public API
-                jupiter_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote?inputMint={SOL_MINT}&outputMint={USDC_MINT}&amount=10000000&slippageBps=50"
-                response = requests.get(jupiter_url, timeout=5)
+                # Test Jupiter public API - use v4 API with POST
+                quote_url = f"{CONFIG['JUPITER_API_URL']}/v4/quote"
+                headers = {"Content-Type": "application/json"}
+                quote_data = {
+                    "inputMint": SOL_MINT,
+                    "outputMint": USDC_MINT,
+                    "amount": "10000000",  # 0.01 SOL
+                    "slippageBps": 50
+                }
+                
+                response = requests.post(quote_url, json=quote_data, headers=headers, timeout=5)
                 if response.status_code == 200:
                     logging.info(f"Successfully connected to public Jupiter API (status {response.status_code})")
                 else:
