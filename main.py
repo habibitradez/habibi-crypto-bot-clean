@@ -6,9 +6,18 @@ import logging
 import datetime
 import requests
 import base64
+import base58
 from typing import Dict, List, Tuple, Optional, Any
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# Solana imports
+from solana.keypair import Keypair
+from solana.publickey import PublicKey
+from solana.rpc.api import Client
+from solana.rpc.types import TxOpts
+from solana.transaction import Transaction
+from solana.rpc.commitment import Confirmed
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +31,7 @@ CONFIG = {
     'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
     'JUPITER_API_URL': 'https://quote-api.jup.ag/v6',  # Updated to v6 API
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
+    'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
@@ -83,14 +93,240 @@ KNOWN_TOKENS = [
     {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF"}
 ]
 
+class SolanaWallet:
+    """Solana wallet implementation for the trading bot."""
+    
+    def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
+        """Initialize a Solana wallet.
+        
+        Args:
+            private_key: Base58 encoded private key string
+            rpc_url: URL for the Solana RPC endpoint
+        """
+        self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
+        self.client = Client(endpoint=self.rpc_url, commitment=Confirmed)
+        
+        # Initialize the keypair
+        if private_key:
+            self.keypair = self._create_keypair_from_private_key(private_key)
+        else:
+            # Get private key from environment or config
+            private_key_env = CONFIG['WALLET_PRIVATE_KEY']
+            if private_key_env:
+                self.keypair = self._create_keypair_from_private_key(private_key_env)
+            else:
+                raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
+        
+        self.public_key = self.keypair.public_key
+        
+    def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
+        """Create a Solana keypair from a base58 encoded private key string."""
+        decoded_key = base58.b58decode(private_key)
+        return Keypair.from_secret_key(decoded_key)
+    
+    def get_balance(self) -> float:
+        """Get the SOL balance of the wallet in SOL units."""
+        try:
+            response = self.client.get_balance(self.public_key)
+            if 'result' in response and 'value' in response['result']:
+                # Convert lamports to SOL (1 SOL = 10^9 lamports)
+                return response['result']['value'] / 1_000_000_000
+            return 0.0
+        except Exception as e:
+            logging.error(f"Error getting wallet balance: {str(e)}")
+            return 0.0
+    
+    def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
+        """Sign and submit a transaction to the Solana blockchain.
+        
+        Args:
+            transaction: The transaction to sign and submit
+            
+        Returns:
+            The transaction signature if successful, None otherwise
+        """
+        try:
+            # Submit the transaction to the network
+            response = self.client.send_transaction(
+                transaction, 
+                self.keypair,
+                opts=TxOpts(skip_confirmation=False, preflight_commitment=Confirmed)
+            )
+            
+            if 'result' in response:
+                signature = response['result']
+                logging.info(f"Transaction submitted successfully: {signature}")
+                return signature
+            else:
+                logging.error(f"Failed to submit transaction: {response}")
+                return None
+        except Exception as e:
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            return None
+    
+    def get_token_accounts(self, token_address: str) -> List[dict]:
+        """Get token accounts owned by this wallet for a specific token.
+        
+        Args:
+            token_address: The token mint address
+            
+        Returns:
+            List of token accounts
+        """
+        try:
+            token_pubkey = PublicKey(token_address)
+            response = self.client.get_token_accounts_by_owner(
+                self.public_key,
+                {'mint': token_pubkey}
+            )
+            
+            if 'result' in response and 'value' in response['result']:
+                return response['result']['value']
+            return []
+        except Exception as e:
+            logging.error(f"Error getting token accounts: {str(e)}")
+            return []
+
+class JupiterSwapHandler:
+    """Handler for Jupiter API swap transactions."""
+    
+    def __init__(self, jupiter_api_url: str):
+        """Initialize the Jupiter swap handler.
+        
+        Args:
+            jupiter_api_url: The URL for the Jupiter API
+        """
+        self.api_url = jupiter_api_url
+    
+    def get_quote(self, input_mint: str, output_mint: str, amount: str, slippage_bps: str = "100") -> Optional[Dict]:
+        """Get a swap quote from Jupiter API.
+        
+        Args:
+            input_mint: The mint address of the input token
+            output_mint: The mint address of the output token
+            amount: The amount to swap in lamports/smallest decimal unit
+            slippage_bps: The slippage tolerance in basis points (1% = 100 bps)
+            
+        Returns:
+            The quote response data if successful, None otherwise
+        """
+        try:
+            params = {
+                "inputMint": input_mint,
+                "outputMint": output_mint,
+                "amount": amount,
+                "slippageBps": slippage_bps,
+                "onlyDirectRoutes": "false"
+            }
+            
+            response = requests.get(f"{self.api_url}/quote", params=params)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data:
+                    return data["data"]
+            
+            logging.warning(f"Failed to get quote: {response.status_code} - {response.text}")
+            return None
+        except Exception as e:
+            logging.error(f"Error getting quote: {str(e)}")
+            return None
+    
+    def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
+        """Prepare a swap transaction using the quote data.
+        
+        Args:
+            quote_data: The quote data from get_quote
+            user_public_key: The public key of the user's wallet
+            
+        Returns:
+            The swap transaction data if successful, None otherwise
+        """
+        try:
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": user_public_key,
+                "wrapUnwrapSOL": True
+            }
+            
+            response = requests.post(
+                f"{self.api_url}/swap",
+                json=payload,
+                headers={"Content-Type": "application/json"}
+            )
+            
+            if response.status_code == 200:
+                return response.json()
+            
+            logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text}")
+            return None
+        except Exception as e:
+            logging.error(f"Error preparing swap transaction: {str(e)}")
+            return None
+    
+    def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction]:
+        """Deserialize a transaction from Jupiter API.
+        
+        Args:
+            transaction_data: The transaction data from prepare_swap_transaction
+            
+        Returns:
+            A Solana transaction object if successful, None otherwise
+        """
+        try:
+            # Extract the serialized transaction
+            if "swapTransaction" in transaction_data:
+                serialized_tx = transaction_data["swapTransaction"]
+                
+                # Decode the base64 transaction data
+                tx_bytes = base64.b64decode(serialized_tx)
+                
+                # Create a transaction from the bytes
+                transaction = Transaction.deserialize(tx_bytes)
+                return transaction
+            else:
+                logging.warning("No swapTransaction found in transaction data")
+                return None
+        except Exception as e:
+            logging.error(f"Error deserializing transaction: {str(e)}")
+            return None
+
+# Initialize global wallet and Jupiter swap handler
+wallet = None
+jupiter_handler = None
+
 def initialize():
     """Initialize the bot and verify connectivity."""
+    global wallet, jupiter_handler
+    
     logging.info(f"Starting bot initialization...")
     
     if CONFIG['SIMULATION_MODE']:
         logging.info("Running in SIMULATION mode")
     else:
         logging.info("Running in PRODUCTION mode")
+        
+        # Initialize wallet if not in simulation mode
+        try:
+            wallet = SolanaWallet(
+                private_key=CONFIG['WALLET_PRIVATE_KEY'],
+                rpc_url=CONFIG['SOLANA_RPC_URL']
+            )
+            
+            # Check wallet balance
+            balance = wallet.get_balance()
+            logging.info(f"Wallet connected: {wallet.public_key}")
+            logging.info(f"Wallet balance: {balance} SOL")
+            
+            if balance < CONFIG['BUY_AMOUNT_SOL']:
+                logging.warning(f"Wallet balance is lower than buy amount ({CONFIG['BUY_AMOUNT_SOL']} SOL)")
+                logging.warning("Trades may fail due to insufficient funds")
+        except Exception as e:
+            logging.error(f"Failed to initialize wallet: {str(e)}")
+            return False
+    
+    # Initialize Jupiter handler
+    jupiter_handler = JupiterSwapHandler(CONFIG['JUPITER_API_URL'])
     
     # Display configured parameters
     logging.info(f"Profit target: {CONFIG['PROFIT_TARGET_PERCENT']}%")
@@ -441,59 +677,54 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     
     # Real trading logic for production mode
     try:
+        global wallet, jupiter_handler
+        
+        if wallet is None or jupiter_handler is None:
+            logging.error("Wallet or Jupiter handler not initialized")
+            return False
+            
         # Step 1: Get a quote
         amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
         
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": "100",
-            "onlyDirectRoutes": "false"
-        }
-        
-        quote_response = requests.get(
-            f"{CONFIG['JUPITER_API_URL']}/quote",
-            params=quote_params
+        quote_data = jupiter_handler.get_quote(
+            input_mint=SOL_TOKEN_ADDRESS,
+            output_mint=token_address,
+            amount=str(amount_lamports),
+            slippage_bps="100"
         )
         
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get quote for buying {token_address}: {quote_response.status_code} - {quote_response.text}")
+        if quote_data is None:
+            logging.error(f"Failed to get quote for buying {token_address}")
             return False
-            
-        quote_data = quote_response.json()
         
-        # Step 2: Get swap transaction
-        swap_payload = {
-            "quoteResponse": quote_data["data"],
-            "userPublicKey": CONFIG['WALLET_ADDRESS'],
-            "wrapUnwrapSOL": True
-        }
-        
-        swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/swap",
-            json=swap_payload,
-            headers={"Content-Type": "application/json"}
+        # Step 2: Prepare swap transaction
+        swap_data = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote_data,
+            user_public_key=str(wallet.public_key)
         )
         
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to get swap instructions for {token_address}: {swap_response.status_code} - {swap_response.text}")
+        if swap_data is None:
+            logging.error(f"Failed to prepare swap transaction for {token_address}")
             return False
-            
-        swap_data = swap_response.json()
         
-        # In a real implementation, you would now:
-        # 1. Use the swap instructions to create a transaction
-        # 2. Sign the transaction with your wallet's private key
-        # 3. Submit the signed transaction to the blockchain
+        # Step 3: Deserialize the transaction
+        transaction = jupiter_handler.deserialize_transaction(swap_data)
         
-        # Since we don't have wallet integration in this code, we'll log the details
-        logging.info(f"Successfully prepared swap to buy {token_address} for {amount_sol} SOL")
-        logging.info(f"Transaction would need to be signed and submitted with proper wallet integration")
+        if transaction is None:
+            logging.error(f"Failed to deserialize transaction for {token_address}")
+            return False
         
-        # Record buy timestamp
-        token_buy_timestamps[token_address] = time.time()
-        return True
+        # Step 4: Sign and submit the transaction
+        signature = wallet.sign_and_submit_transaction(transaction)
+        
+        if signature:
+            logging.info(f"Successfully bought {token_address} for {amount_sol} SOL - Signature: {signature}")
+            # Record buy timestamp
+            token_buy_timestamps[token_address] = time.time()
+            return True
+        else:
+            logging.error(f"Failed to submit transaction for buying {token_address}")
+            return False
         
     except Exception as e:
         logging.error(f"Error buying {token_address}: {str(e)}")
@@ -521,75 +752,82 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
     
     # Real trading logic for production mode
     try:
-        # In a real implementation, you would:
-        # 1. Get the token balance from your wallet
-        # 2. Calculate the amount to sell based on the percentage
-        # 3. Get a quote for selling that amount
-        # 4. Get swap instructions
-        # 5. Sign and submit the transaction
+        global wallet, jupiter_handler
         
-        # Since we don't have full wallet integration, we'll use a simplified approach
-        
-        # Step 1: Calculate estimated token balance (this would be different in production)
-        token_price = get_token_price(token_address)
-        if not token_price:
-            logging.error(f"Failed to get price for {token_address} during sell")
+        if wallet is None or jupiter_handler is None:
+            logging.error("Wallet or Jupiter handler not initialized")
             return False
-            
-        estimated_tokens = CONFIG['BUY_AMOUNT_SOL'] / token_price
-        tokens_to_sell = estimated_tokens * (percentage / 100)
+        
+        # Step 1: Find token account
+        token_accounts = wallet.get_token_accounts(token_address)
+        if not token_accounts:
+            logging.error(f"No token account found for {token_address}")
+            return False
+        
+        # For simplicity, use the first token account
+        token_account = token_accounts[0]
+        token_amount = None
+        
+        # Extract token amount from account data
+        if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
+            parsed_data = token_account['account']['data']['parsed']
+            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                token_amount_info = parsed_data['info']['tokenAmount']
+                if 'amount' in token_amount_info:
+                    token_amount = token_amount_info['amount']
+        
+        if token_amount is None:
+            logging.error(f"Could not determine token amount for {token_address}")
+            return False
+        
+        # Calculate amount to sell based on percentage
+        amount_to_sell = int(int(token_amount) * percentage / 100)
+        
+        if amount_to_sell <= 0:
+            logging.error(f"Invalid amount to sell for {token_address}: {amount_to_sell}")
+            return False
         
         # Step 2: Get a quote
-        token_mint_decimals = 9  # Most tokens use 9 decimals, this would be retrieved in production
-        token_amount = int(tokens_to_sell * (10 ** token_mint_decimals))
-        
-        quote_params = {
-            "inputMint": token_address,
-            "outputMint": SOL_TOKEN_ADDRESS,
-            "amount": str(token_amount),
-            "slippageBps": "100",
-            "onlyDirectRoutes": "false"
-        }
-        
-        quote_response = requests.get(
-            f"{CONFIG['JUPITER_API_URL']}/quote",
-            params=quote_params
+        quote_data = jupiter_handler.get_quote(
+            input_mint=token_address,
+            output_mint=SOL_TOKEN_ADDRESS,
+            amount=str(amount_to_sell),
+            slippage_bps="100"
         )
         
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get quote for selling {token_address}: {quote_response.status_code} - {quote_response.text}")
+        if quote_data is None:
+            logging.error(f"Failed to get quote for selling {token_address}")
             return False
-            
-        quote_data = quote_response.json()
         
-        # Step 3: Get swap transaction
-        swap_payload = {
-            "quoteResponse": quote_data["data"],
-            "userPublicKey": CONFIG['WALLET_ADDRESS'],
-            "wrapUnwrapSOL": True
-        }
-        
-        swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/swap",
-            json=swap_payload,
-            headers={"Content-Type": "application/json"}
+        # Step 3: Prepare swap transaction
+        swap_data = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote_data,
+            user_public_key=str(wallet.public_key)
         )
         
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to get swap instructions for selling {token_address}: {swap_response.status_code} - {swap_response.text}")
+        if swap_data is None:
+            logging.error(f"Failed to prepare swap transaction for selling {token_address}")
             return False
-            
-        swap_data = swap_response.json()
         
-        # Log the details since we don't have wallet integration
-        if percentage == 100:
-            logging.info(f"Successfully prepared swap to sell 100% of {token_address}")
+        # Step 4: Deserialize the transaction
+        transaction = jupiter_handler.deserialize_transaction(swap_data)
+        
+        if transaction is None:
+            logging.error(f"Failed to deserialize transaction for selling {token_address}")
+            return False
+        
+        # Step 5: Sign and submit the transaction
+        signature = wallet.sign_and_submit_transaction(transaction)
+        
+        if signature:
+            if percentage == 100:
+                logging.info(f"Successfully sold 100% of {token_address} - Signature: {signature}")
+            else:
+                logging.info(f"Successfully sold {percentage}% of {token_address} - Signature: {signature}")
+            return True
         else:
-            logging.info(f"Successfully prepared swap to sell {percentage}% of {token_address}")
-            
-        logging.info(f"Transaction would need to be signed and submitted with proper wallet integration")
-        
-        return True
+            logging.error(f"Failed to submit transaction for selling {token_address}")
+            return False
         
     except Exception as e:
         logging.error(f"Error selling {token_address}: {str(e)}")
