@@ -20,7 +20,7 @@ logging.basicConfig(
 # Configuration from environment variables with fallbacks
 CONFIG = {
     'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
-    'JUPITER_API_URL': 'https://quote-api.jup.ag',  # Direct Jupiter API URL
+    'JUPITER_API_URL': 'https://quote-api.jup.ag/v6',  # Updated to v6 API
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),
@@ -34,13 +34,30 @@ CONFIG = {
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '200'))
 }
 
-# Meme token pattern detection
+# Meme token pattern detection - Enhanced with latest trends
 MEME_TOKEN_PATTERNS = [
+    # Classic meme terms
     "pump", "moon", "pepe", "doge", "shib", "inu", "cat", "elon", "musk", 
-    "trump", "biden", "wojak", "chad", "pepe", "frog", "dog", "puppy", 
-    "kitty", "meme", "coin", "stonk", "ape", "rocket", "moon", "mars", 
-    "lambo", "diamond", "hand", "hodl", "rich", "poor", "trader", "wojak",
-    "crypto", "token", "bonk", "wow", "fun", "magic", "lucky", "marmot"
+    "trump", "biden", "wojak", "chad", "frog", "dog", "puppy", "kitty", 
+    "meme", "coin", "stonk", "ape", "rocket", "mars", "lambo", "diamond", 
+    "hand", "hodl", "rich", "poor", "trader", "crypto", "token", 
+    
+    # Popular Solana meme coins
+    "bonk", "wif", "dogwifhat", "popcat", "pnut", "peanut", "slerf",
+    "myro", "giga", "gigachad", "moodeng", "pengu", "pudgy", "would",
+    
+    # Animal themes
+    "bull", "bear", "hippo", "squirrel", "cat", "doge", "shiba", 
+    "monkey", "ape", "panda", "fox", "bird", "eagle", "penguin",
+    
+    # Internet culture
+    "viral", "trend", "hype", "fomo", "mochi", "michi", "ai", "gpt",
+    "official", "og", "based", "alpha", "shill", "gem", "baby", "daddy",
+    "mini", "mega", "super", "hyper", "ultra", "king", "queen", "lord",
+    
+    # Solana specific
+    "sol", "solana", "solaxy", "solama", "moonlana", "soldoge", "fronk",
+    "smog", "sunny", "saga", "spx", "degods", "wepe", "bab"
 ]
 
 # Track tokens we're monitoring
@@ -57,7 +74,13 @@ KNOWN_TOKENS = [
     {"symbol": "SOL", "address": SOL_TOKEN_ADDRESS},
     {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"},
     {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"},
-    {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi"}
+    {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi"},
+    {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA"},
+    {"symbol": "GIGA", "address": "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT"},
+    {"symbol": "PNUT", "address": "PNUtFk6iQhs2VXiCMQpzGM81PdE7yGL5Y4fo9mFfb7o"},
+    {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW"},
+    {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ"},
+    {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF"}
 ]
 
 def initialize():
@@ -97,8 +120,14 @@ def initialize():
     
     # Test Jupiter API connection
     try:
-        jupiter_test_url = f"{CONFIG['JUPITER_API_URL']}/v4/indexed-route-map"
-        jupiter_response = requests.get(jupiter_test_url)
+        jupiter_test_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        test_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+            "amount": "100000000",  # 0.1 SOL in lamports
+            "slippageBps": "100"
+        }
+        jupiter_response = requests.get(jupiter_test_url, params=test_params)
         
         if jupiter_response.status_code == 200:
             logging.info(f"Successfully tested Jupiter API integration (status {jupiter_response.status_code})")
@@ -135,10 +164,21 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
             if pattern.lower() in token_info:
                 return True
     
-    # Special case for tokens with "pump" in address (high probability meme tokens)
-    if "pump" in token_address_lower:
+    # Special case for tokens with high potential meme indicators
+    high_potential_indicators = ["pump", "moon", "pepe", "doge", "wif", "bonk", "cat", "inu"]
+    for indicator in high_potential_indicators:
+        if indicator in token_address_lower:
+            logging.info(f"High potential meme token detected: {token_address} (contains '{indicator}')")
+            return True
+            
+    # Check for numeric patterns that might indicate a meme (like 420, 69, etc.)
+    if "420" in token_address_lower or "69" in token_address_lower or "1337" in token_address_lower:
+        logging.info(f"Meme number pattern detected in token: {token_address}")
         return True
         
+    # If token was created very recently (within last few hours)
+    # This requires transaction analysis which we're already doing in scan_for_new_tokens
+    
     return False
 
 def get_token_price(token_address: str) -> Optional[float]:
@@ -154,22 +194,22 @@ def get_token_price(token_address: str) -> Optional[float]:
     
     # For other tokens, try Jupiter API
     try:
-        # Method 1: Try Jupiter v4 price API
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v4/quote"
+        # Use Jupiter v6 quote API
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
-            "amount": 1000000000,  # 1 SOL in lamports
-            "slippageBps": 100
+            "amount": "1000000000",  # 1 SOL in lamports
+            "slippageBps": "100"
         }
         
         response = requests.get(quote_url, params=params)
         
         if response.status_code == 200:
             data = response.json()
-            if "outAmount" in data:
+            if "data" in data and "outAmount" in data["data"]:
                 # Calculate price as 1 SOL / outAmount (in token's smallest unit)
-                token_price = 1.0 / (int(data["outAmount"]) / 1000000000)
+                token_price = 1.0 / (int(data["data"]["outAmount"]) / 1000000000)
                 
                 # Update cache
                 price_cache[token_address] = token_price
@@ -177,18 +217,20 @@ def get_token_price(token_address: str) -> Optional[float]:
                 
                 return token_price
         
-        # Method 2: Try price API directly
-        price_url = f"{CONFIG['JUPITER_API_URL']}/v4/price"
-        params = {
-            "ids": token_address,
-            "vsToken": SOL_TOKEN_ADDRESS
+        # Method 2: Try reverse direction (token to SOL)
+        reverse_params = {
+            "inputMint": token_address,
+            "outputMint": SOL_TOKEN_ADDRESS,
+            "amount": "1000000000",  # 1 unit of token in lamports (adjust if needed)
+            "slippageBps": "100"
         }
         
-        response = requests.get(price_url, params=params)
+        response = requests.get(quote_url, params=reverse_params)
         if response.status_code == 200:
             data = response.json()
-            if token_address in data and "price" in data[token_address]:
-                token_price = float(data[token_address]["price"])
+            if "data" in data and "outAmount" in data["data"]:
+                # Calculate price directly from the quote
+                token_price = int(data["data"]["outAmount"]) / 1000000000
                 
                 # Update cache
                 price_cache[token_address] = token_price
@@ -223,12 +265,12 @@ def check_token_liquidity(token_address: str) -> bool:
     """Check if a token has sufficient liquidity."""
     try:
         # Try to get a quote for a small amount to check liquidity
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v4/quote"
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
-            "amount": 100000000,  # 0.1 SOL in lamports
-            "slippageBps": 100
+            "amount": "100000000",  # 0.1 SOL in lamports
+            "slippageBps": "100"
         }
         
         response = requests.get(quote_url, params=params)
@@ -236,7 +278,7 @@ def check_token_liquidity(token_address: str) -> bool:
         if response.status_code == 200:
             data = response.json()
             # If we got a valid quote, token has liquidity
-            if "outAmount" in data and int(data["outAmount"]) > 0:
+            if "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 return True
         
         # If Jupiter API fails, assume no liquidity to be safe
@@ -332,10 +374,12 @@ def analyze_transaction(signature: str) -> List[str]:
         logging.error(f"Error analyzing transaction {signature}: {str(e)}")
         return []
 
+# Monitor token sniping strategy
 def scan_for_new_tokens() -> List[str]:
-    """Scan blockchain for new token addresses."""
+    """Scan blockchain for new token addresses with enhanced detection for promising meme tokens."""
     logging.info(f"Scanning for new tokens (limit: {CONFIG['TOKEN_SCAN_LIMIT']})")
     potential_tokens = []
+    promising_meme_tokens = []
     
     # Get recent transactions involving token program
     recent_txs = get_recent_transactions(CONFIG['TOKEN_SCAN_LIMIT'])
@@ -348,7 +392,18 @@ def scan_for_new_tokens() -> List[str]:
             for token_address in token_addresses:
                 if token_address not in potential_tokens:
                     potential_tokens.append(token_address)
+                    
+                    # Immediately check if it's likely a meme token
+                    if is_meme_token(token_address):
+                        promising_meme_tokens.append(token_address)
     
+    # First check and log if we found promising meme tokens
+    if promising_meme_tokens:
+        logging.info(f"Found {len(promising_meme_tokens)} promising meme tokens out of {len(potential_tokens)} total potential tokens")
+        # Return the promising meme tokens first for faster processing
+        return promising_meme_tokens
+    
+    # If no promising meme tokens, return all potential tokens
     logging.info(f"Found {len(potential_tokens)} potential new tokens")
     return potential_tokens
 
@@ -389,18 +444,17 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 1: Get a quote
         amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
         
-        quote_payload = {
+        quote_params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
             "amount": str(amount_lamports),
-            "slippageBps": 100,
-            "onlyDirectRoutes": False
+            "slippageBps": "100",
+            "onlyDirectRoutes": "false"
         }
         
-        quote_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v4/quote",
-            json=quote_payload,
-            headers={"Content-Type": "application/json"}
+        quote_response = requests.get(
+            f"{CONFIG['JUPITER_API_URL']}/quote",
+            params=quote_params
         )
         
         if quote_response.status_code != 200:
@@ -409,15 +463,15 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         quote_data = quote_response.json()
         
-        # Step 2: Get swap instructions
+        # Step 2: Get swap transaction
         swap_payload = {
-            "quoteResponse": quote_data,
+            "quoteResponse": quote_data["data"],
             "userPublicKey": CONFIG['WALLET_ADDRESS'],
             "wrapUnwrapSOL": True
         }
         
         swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v4/swap",
+            f"{CONFIG['JUPITER_API_URL']}/swap",
             json=swap_payload,
             headers={"Content-Type": "application/json"}
         )
@@ -489,18 +543,17 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
         token_mint_decimals = 9  # Most tokens use 9 decimals, this would be retrieved in production
         token_amount = int(tokens_to_sell * (10 ** token_mint_decimals))
         
-        quote_payload = {
+        quote_params = {
             "inputMint": token_address,
             "outputMint": SOL_TOKEN_ADDRESS,
             "amount": str(token_amount),
-            "slippageBps": 100,
-            "onlyDirectRoutes": False
+            "slippageBps": "100",
+            "onlyDirectRoutes": "false"
         }
         
-        quote_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v4/quote",
-            json=quote_payload,
-            headers={"Content-Type": "application/json"}
+        quote_response = requests.get(
+            f"{CONFIG['JUPITER_API_URL']}/quote",
+            params=quote_params
         )
         
         if quote_response.status_code != 200:
@@ -509,15 +562,15 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             
         quote_data = quote_response.json()
         
-        # Step 3: Get swap instructions
+        # Step 3: Get swap transaction
         swap_payload = {
-            "quoteResponse": quote_data,
+            "quoteResponse": quote_data["data"],
             "userPublicKey": CONFIG['WALLET_ADDRESS'],
             "wrapUnwrapSOL": True
         }
         
         swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v4/swap",
+            f"{CONFIG['JUPITER_API_URL']}/swap",
             json=swap_payload,
             headers={"Content-Type": "application/json"}
         )
@@ -645,22 +698,68 @@ def trading_loop():
                 
                 # Filter for potentially profitable tokens (especially meme tokens)
                 profitable_tokens = []
-                for token_address in potential_tokens:
-                    if token_address not in monitored_tokens and is_meme_token(token_address):
-                        if verify_token(token_address):
-                            profitable_tokens.append(token_address)
                 
-                # If any profitable tokens found, buy the first one
+                # Process tokens in batches for efficiency
+                token_batch_size = min(10, len(potential_tokens))  # Process up to 10 tokens at once
+                
+                # First pass: Quick check for obvious meme tokens
+                for token_address in potential_tokens[:token_batch_size]:
+                    if token_address not in monitored_tokens and is_meme_token(token_address):
+                        # Quick check for liquidity before full verification
+                        if check_token_liquidity(token_address):
+                            profitable_tokens.append({
+                                'address': token_address,
+                                'is_meme': True,
+                                'priority': 1  # High priority for obvious meme tokens
+                            })
+                
+                # If we found high priority tokens, process them first
                 if profitable_tokens:
-                    token_to_buy = profitable_tokens[0]
-                    logging.info(f"Found new meme token: {token_to_buy}")
-                    if buy_token(token_to_buy, CONFIG['BUY_AMOUNT_SOL']):
-                        monitored_tokens[token_to_buy] = {
-                            'initial_price': get_token_price(token_to_buy),
-                            'highest_price': get_token_price(token_to_buy),
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
-                        }
+                    sorted_tokens = sorted(profitable_tokens, key=lambda x: x['priority'])
+                    token_to_buy = sorted_tokens[0]['address']
+                    logging.info(f"Found high potential meme token: {token_to_buy}")
+                    
+                    # Verify fully before buying
+                    if verify_token(token_to_buy):
+                        logging.info(f"Verified high potential token, attempting to buy: {token_to_buy}")
+                        if buy_token(token_to_buy, CONFIG['BUY_AMOUNT_SOL']):
+                            initial_price = get_token_price(token_to_buy)
+                            if initial_price:
+                                monitored_tokens[token_to_buy] = {
+                                    'initial_price': initial_price,
+                                    'highest_price': initial_price,
+                                    'partial_profit_taken': False,
+                                    'buy_time': time.time()
+                                }
+                            else:
+                                logging.warning(f"Bought token {token_to_buy} but couldn't get initial price")
+                
+                # If no high priority tokens or buying failed, check the rest
+                elif len(potential_tokens) > token_batch_size:
+                    remaining_tokens = potential_tokens[token_batch_size:]
+                    for token_address in remaining_tokens:
+                        if token_address not in monitored_tokens:
+                            if verify_token(token_address):
+                                profitable_tokens.append({
+                                    'address': token_address,
+                                    'is_meme': is_meme_token(token_address),
+                                    'priority': 2 if is_meme_token(token_address) else 3
+                                })
+                    
+                    # Sort by priority (meme tokens first)
+                    if profitable_tokens:
+                        sorted_tokens = sorted(profitable_tokens, key=lambda x: x['priority'])
+                        token_to_buy = sorted_tokens[0]['address']
+                        logging.info(f"Found promising token: {token_to_buy}")
+                        if buy_token(token_to_buy, CONFIG['BUY_AMOUNT_SOL']):
+                            initial_price = get_token_price(token_to_buy)
+                            if initial_price:
+                                monitored_tokens[token_to_buy] = {
+                                    'initial_price': initial_price,
+                                    'highest_price': initial_price,
+                                    'partial_profit_taken': False,
+                                    'buy_time': time.time()
+                                }
                 
                 # If no new tokens found, check the predefined list
                 elif len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
