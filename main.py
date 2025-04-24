@@ -1201,8 +1201,102 @@ def trading_loop():
             logging.error(traceback.format_exc())  # Print full stack trace
             time.sleep(5)  # Sleep a bit longer on error
 
+def test_buy_command(token_address: str = None):
+    """Test command to manually buy a specific token."""
+    global wallet, jupiter_handler
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[TEST] Cannot test buy in SIMULATION mode. Please set SIMULATION_MODE=false")
+        return False
+    
+    if not token_address:
+        # If no token provided, use BONK as a test
+        token_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+    
+    logging.info(f"[TEST] Manual buy command for token: {token_address}")
+    
+    # Initialize if needed
+    if wallet is None or jupiter_handler is None:
+        if not initialize():
+            logging.error("[TEST] Failed to initialize for test buy")
+            return False
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    logging.info(f"[TEST] Current wallet balance: {balance} SOL")
+    
+    # Try to buy the token
+    amount_sol = CONFIG['BUY_AMOUNT_SOL'] 
+    logging.info(f"[TEST] Attempting to buy {token_address} for {amount_sol} SOL")
+    
+    result = buy_token(token_address, amount_sol)
+    
+    if result:
+        logging.info(f"[TEST] Successfully bought {token_address}")
+        return True
+    else:
+        logging.error(f"[TEST] Failed to buy {token_address}")
+        return False
+
+def test_sell_command(token_address: str = None):
+    """Test command to manually sell a specific token."""
+    global wallet, jupiter_handler
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[TEST] Cannot test sell in SIMULATION mode. Please set SIMULATION_MODE=false")
+        return False
+    
+    if not token_address:
+        # If no token provided, try to sell BONK as a test
+        token_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+    
+    logging.info(f"[TEST] Manual sell command for token: {token_address}")
+    
+    # Initialize if needed
+    if wallet is None or jupiter_handler is None:
+        if not initialize():
+            logging.error("[TEST] Failed to initialize for test sell")
+            return False
+    
+    # Try to sell the token
+    logging.info(f"[TEST] Attempting to sell {token_address}")
+    
+    result = sell_token(token_address)
+    
+    if result:
+        logging.info(f"[TEST] Successfully sold {token_address}")
+        return True
+    else:
+        logging.error(f"[TEST] Failed to sell {token_address}")
+        return False
+
 def main():
     """Main entry point."""
+    import sys
+    
+    # Check for command-line arguments for testing
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == "buy":
+            token_address = sys.argv[2] if len(sys.argv) > 2 else None
+            test_buy_command(token_address)
+            return
+        
+        elif command == "sell":
+            token_address = sys.argv[2] if len(sys.argv) > 2 else None
+            test_sell_command(token_address)
+            return
+            
+        elif command == "test":
+            # Test both buying and selling
+            if test_buy_command():
+                logging.info("[TEST] Buy test successful. Waiting 10 seconds before sell test...")
+                time.sleep(10)
+                test_sell_command()
+            return
+    
+    # Normal operation
     if initialize():
         trading_loop()
     else:
