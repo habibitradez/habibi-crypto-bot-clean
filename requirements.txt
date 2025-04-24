@@ -9,7 +9,6 @@ beautifulsoup4
 snscrape==0.7.0.20230622
 base58==2.1.1
 matplotlib==3.8.3
-jupiter-python-sdk==0.0.2.0
 websockets==12.0
 solana==0.30.2
 python-dateutil==2.8.2
