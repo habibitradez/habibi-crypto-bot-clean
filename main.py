@@ -11,13 +11,12 @@ from typing import Dict, List, Tuple, Optional, Any
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Solana imports
-from solana.keypair import Keypair
-from solana.publickey import PublicKey
-from solana.rpc.api import Client
-from solana.rpc.types import TxOpts
-from solana.transaction import Transaction
-from solana.rpc.commitment import Confirmed
+# Solana imports using solders instead of solana
+from solders.keypair import Keypair
+from solders.pubkey import Pubkey as PublicKey
+from solders.transaction import Transaction
+from solders.system_program import transfer, TransferParams
+import base58
 
 # Configure logging
 logging.basicConfig(
@@ -97,14 +96,13 @@ class SolanaWallet:
     """Solana wallet implementation for the trading bot."""
     
     def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
-        """Initialize a Solana wallet.
+        """Initialize a Solana wallet using solders library.
         
         Args:
             private_key: Base58 encoded private key string
             rpc_url: URL for the Solana RPC endpoint
         """
         self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
-        self.client = Client(endpoint=self.rpc_url, commitment=Confirmed)
         
         # Initialize the keypair
         if private_key:
@@ -117,17 +115,22 @@ class SolanaWallet:
             else:
                 raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
         
-        self.public_key = self.keypair.public_key
+        self.public_key = self.keypair.pubkey()
         
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
         """Create a Solana keypair from a base58 encoded private key string."""
-        decoded_key = base58.b58decode(private_key)
-        return Keypair.from_secret_key(decoded_key)
+        secret_bytes = base58.b58decode(private_key)
+        if len(secret_bytes) == 64:
+            return Keypair.from_bytes(secret_bytes)
+        elif len(secret_bytes) == 32:
+            return Keypair.from_seed(secret_bytes)
+        else:
+            raise ValueError("Secret key must be 32 or 64 bytes.")
     
     def get_balance(self) -> float:
         """Get the SOL balance of the wallet in SOL units."""
         try:
-            response = self.client.get_balance(self.public_key)
+            response = self._rpc_call("getBalance", [str(self.public_key)])
             if 'result' in response and 'value' in response['result']:
                 # Convert lamports to SOL (1 SOL = 10^9 lamports)
                 return response['result']['value'] / 1_000_000_000
@@ -136,49 +139,61 @@ class SolanaWallet:
             logging.error(f"Error getting wallet balance: {str(e)}")
             return 0.0
     
-    def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
-        """Sign and submit a transaction to the Solana blockchain.
+    def _rpc_call(self, method: str, params: List) -> Dict:
+        """Make an RPC call to the Solana network."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params
+        }
         
-        Args:
-            transaction: The transaction to sign and submit
-            
-        Returns:
-            The transaction signature if successful, None otherwise
-        """
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(self.rpc_url, json=payload, headers=headers)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise Exception(f"RPC call failed with status {response.status_code}: {response.text}")
+    
+    def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
+        """Sign and submit a transaction to the Solana blockchain."""
         try:
-            # Submit the transaction to the network
-            response = self.client.send_transaction(
-                transaction, 
-                self.keypair,
-                opts=TxOpts(skip_confirmation=False, preflight_commitment=Confirmed)
-            )
+            # Get recent blockhash
+            blockhash_response = self._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
+            blockhash = blockhash_response["result"]["value"]["blockhash"]
             
-            if 'result' in response:
-                signature = response['result']
+            # Set blockhash and sign transaction
+            transaction.recent_blockhash = blockhash
+            transaction.sign([self.keypair])
+            
+            # Serialize and submit transaction
+            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx, 
+                {"encoding": "base64", "skipPreflight": False}
+            ])
+            
+            if "result" in response:
+                signature = response["result"]
                 logging.info(f"Transaction submitted successfully: {signature}")
                 return signature
             else:
                 logging.error(f"Failed to submit transaction: {response}")
                 return None
+                
         except Exception as e:
             logging.error(f"Error signing and submitting transaction: {str(e)}")
             return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
-        """Get token accounts owned by this wallet for a specific token.
-        
-        Args:
-            token_address: The token mint address
-            
-        Returns:
-            List of token accounts
-        """
+        """Get token accounts owned by this wallet for a specific token."""
         try:
-            token_pubkey = PublicKey(token_address)
-            response = self.client.get_token_accounts_by_owner(
-                self.public_key,
-                {'mint': token_pubkey}
-            )
+            response = self._rpc_call("getTokenAccountsByOwner", [
+                str(self.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
             
             if 'result' in response and 'value' in response['result']:
                 return response['result']['value']
@@ -199,17 +214,7 @@ class JupiterSwapHandler:
         self.api_url = jupiter_api_url
     
     def get_quote(self, input_mint: str, output_mint: str, amount: str, slippage_bps: str = "100") -> Optional[Dict]:
-        """Get a swap quote from Jupiter API.
-        
-        Args:
-            input_mint: The mint address of the input token
-            output_mint: The mint address of the output token
-            amount: The amount to swap in lamports/smallest decimal unit
-            slippage_bps: The slippage tolerance in basis points (1% = 100 bps)
-            
-        Returns:
-            The quote response data if successful, None otherwise
-        """
+        """Get a swap quote from Jupiter API."""
         try:
             params = {
                 "inputMint": input_mint,
@@ -233,15 +238,7 @@ class JupiterSwapHandler:
             return None
     
     def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
-        """Prepare a swap transaction using the quote data.
-        
-        Args:
-            quote_data: The quote data from get_quote
-            user_public_key: The public key of the user's wallet
-            
-        Returns:
-            The swap transaction data if successful, None otherwise
-        """
+        """Prepare a swap transaction using the quote data."""
         try:
             payload = {
                 "quoteResponse": quote_data,
@@ -265,14 +262,7 @@ class JupiterSwapHandler:
             return None
     
     def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction]:
-        """Deserialize a transaction from Jupiter API.
-        
-        Args:
-            transaction_data: The transaction data from prepare_swap_transaction
-            
-        Returns:
-            A Solana transaction object if successful, None otherwise
-        """
+        """Deserialize a transaction from Jupiter API."""
         try:
             # Extract the serialized transaction
             if "swapTransaction" in transaction_data:
@@ -282,7 +272,8 @@ class JupiterSwapHandler:
                 tx_bytes = base64.b64decode(serialized_tx)
                 
                 # Create a transaction from the bytes
-                transaction = Transaction.deserialize(tx_bytes)
+                # Note: This is different from before because we're using solders
+                transaction = Transaction.from_bytes(tx_bytes)
                 return transaction
             else:
                 logging.warning("No swapTransaction found in transaction data")
@@ -384,6 +375,9 @@ def initialize():
     logging.info("Bot successfully initialized!")
     return True
 
+# --- The rest of the token trading functions remain similar to the previous version ---
+# Will need to adapt transaction handling to use solders library instead
+
 def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = "") -> bool:
     """Determine if a token is likely a meme token based on patterns."""
     token_address_lower = token_address.lower()
@@ -411,9 +405,6 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
     if "420" in token_address_lower or "69" in token_address_lower or "1337" in token_address_lower:
         logging.info(f"Meme number pattern detected in token: {token_address}")
         return True
-        
-    # If token was created very recently (within last few hours)
-    # This requires transaction analysis which we're already doing in scan_for_new_tokens
     
     return False
 
@@ -610,7 +601,6 @@ def analyze_transaction(signature: str) -> List[str]:
         logging.error(f"Error analyzing transaction {signature}: {str(e)}")
         return []
 
-# Monitor token sniping strategy
 def scan_for_new_tokens() -> List[str]:
     """Scan blockchain for new token addresses with enhanced detection for promising meme tokens."""
     logging.info(f"Scanning for new tokens (limit: {CONFIG['TOKEN_SCAN_LIMIT']})")
@@ -675,7 +665,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
             return False
     
-    # Real trading logic for production mode
+    # Real trading logic for production mode using solders
     try:
         global wallet, jupiter_handler
         
@@ -759,7 +749,16 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             return False
         
         # Step 1: Find token account
-        token_accounts = wallet.get_token_accounts(token_address)
+        response = wallet._rpc_call("getTokenAccountsByOwner", [
+            str(wallet.public_key),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        token_accounts = []
+        if 'result' in response and 'value' in response['result']:
+            token_accounts = response['result']['value']
+        
         if not token_accounts:
             logging.error(f"No token account found for {token_address}")
             return False
