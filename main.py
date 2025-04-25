@@ -315,8 +315,14 @@ class JupiterSwapHandler:
                 if response.status_code == 200:
                     try:
                         response_data = response.json()
-                        if "data" in response_data:
+                        # For Jupiter v6 API, the JSON directly contains the quote data
+                        # Check for outAmount to verify it's a valid quote
+                        if "outAmount" in response_data:
+                            logging.info(f"Quote data received. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
+                            return response_data
+                        elif "data" in response_data and "outAmount" in response_data["data"]:
                             logging.info(f"Quote data received. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
+                            return response_data["data"]
                         else:
                             logging.info(f"Quote response: {json.dumps(response_data, indent=2)}")
                     except Exception as e:
@@ -324,9 +330,17 @@ class JupiterSwapHandler:
             
             if response.status_code == 200:
                 data = response.json()
-                if "data" in data:
+                # Check if the response is directly the quote data (v6 API format)
+                if "outAmount" in data:
+                    logging.info(f"Quote received successfully")
+                    return data
+                # Check for v4/v5 API format
+                elif "data" in data:
                     logging.info(f"Quote received successfully")
                     return data["data"]
+                else:
+                    logging.warning(f"Quote response has unexpected format: {json.dumps(data)}")
+                    return None
             
             logging.warning(f"Failed to get quote: {response.status_code} - {response.text}")
             return None
@@ -338,6 +352,7 @@ class JupiterSwapHandler:
     def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
         """Prepare a swap transaction using the quote data."""
         try:
+            # For Jupiter v6 API, the payload format is different
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": user_public_key,
@@ -345,6 +360,7 @@ class JupiterSwapHandler:
             }
             
             logging.info(f"Preparing swap transaction for user: {user_public_key}")
+            logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
             
             response = requests.post(
                 f"{self.api_url}/swap",
@@ -356,10 +372,22 @@ class JupiterSwapHandler:
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Swap preparation response status: {response.status_code}")
                 if response.status_code == 200:
-                    logging.info("Swap transaction prepared successfully")
+                    try:
+                        response_data = response.json()
+                        logging.info(f"Swap transaction prepared. Transaction data keys: {list(response_data.keys())}")
+                    except Exception as e:
+                        logging.error(f"Error parsing swap preparation response: {str(e)}")
             
             if response.status_code == 200:
-                return response.json()
+                swap_response = response.json()
+                
+                # Check if the response contains the transaction
+                if "swapTransaction" in swap_response:
+                    logging.info("Swap transaction prepared successfully")
+                    return swap_response
+                else:
+                    logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
+                    return None
             
             logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text}")
             return None
@@ -491,7 +519,9 @@ def initialize():
             if ULTRA_DIAGNOSTICS:
                 try:
                     response_data = jupiter_response.json()
-                    if "data" in response_data:
+                    if "outAmount" in response_data:
+                        logging.info(f"Jupiter API test quote: SOL → USDC. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
+                    elif "data" in response_data:
                         logging.info(f"Jupiter API test quote: SOL → USDC. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
                     else:
                         logging.info(f"Jupiter test response: {json.dumps(response_data, indent=2)}")
@@ -579,8 +609,20 @@ def get_token_price(token_address: str) -> Optional[float]:
         
         if response.status_code == 200:
             data = response.json()
-            if "data" in data and "outAmount" in data["data"]:
+            if "outAmount" in data:
                 # Calculate price as 1 SOL / outAmount (in token's smallest unit)
+                out_amount = int(data["outAmount"])
+                token_price = 1.0 / (out_amount / 1000000000)
+                
+                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                # Older API format
                 out_amount = int(data["data"]["outAmount"])
                 token_price = 1.0 / (out_amount / 1000000000)
                 
@@ -608,8 +650,20 @@ def get_token_price(token_address: str) -> Optional[float]:
         response = requests.get(quote_url, params=reverse_params, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if "data" in data and "outAmount" in data["data"]:
+            if "outAmount" in data:
                 # Calculate price directly from the quote
+                out_amount = int(data["outAmount"])
+                token_price = out_amount / 1000000000
+                
+                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                # Older API format
                 out_amount = int(data["data"]["outAmount"])
                 token_price = out_amount / 1000000000
                 
@@ -677,7 +731,10 @@ def check_token_liquidity(token_address: str) -> bool:
         if response.status_code == 200:
             data = response.json()
             # If we got a valid quote, token has liquidity
-            if "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
+            if "outAmount" in data and int(data["outAmount"]) > 0:
+                logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
+                return True
+            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
                 return True
             else:
@@ -697,9 +754,14 @@ def check_token_liquidity(token_address: str) -> bool:
         response = requests.get(quote_url, params=reverse_params, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
+            if "outAmount" in data and int(data["outAmount"]) > 0:
                 logging.info(f"Reverse liquidity check PASSED for {token_address}")
                 return True
+            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
+                logging.info(f"Reverse liquidity check PASSED for {token_address}")
+                return True
+            else:
+                logging.info(f"Second liquidity check failed - trying even smaller amount")
         else:
             logging.info(f"Second liquidity check failed with status {response.status_code} - trying even smaller amount")
                 
@@ -715,7 +777,10 @@ def check_token_liquidity(token_address: str) -> bool:
         response = requests.get(quote_url, params=ultra_small_params, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
+            if "outAmount" in data and int(data["outAmount"]) > 0:
+                logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
+                return True
+            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
                 return True
             else:
@@ -943,6 +1008,29 @@ def startup_test_buy():
         logging.error("This suggests there may be issues with the trading functionality.")
     
     logging.info("======= END TEST =======")
+
+def force_buy_bonk():
+    """Force buy BONK token to test trading functionality."""
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+    
+    logging.info("=" * 50)
+    logging.info("FORCE BUYING BONK TOKEN")
+    logging.info("=" * 50)
+    
+    if buy_token(bonk_address, CONFIG['BUY_AMOUNT_SOL']):
+        initial_price = get_token_price(bonk_address)
+        if initial_price:
+            monitored_tokens[bonk_address] = {
+                'initial_price': initial_price,
+                'highest_price': initial_price,
+                'partial_profit_taken': False,
+                'buy_time': time.time()
+            }
+            logging.info(f"Successfully bought and monitoring BONK at {initial_price}")
+            return True
+    
+    logging.error("Failed to buy BONK - Check logs for errors")
+    return False
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
     """Buy a token using Jupiter API."""
@@ -1224,410 +1312,4 @@ def monitor_token_price(token_address: str) -> None:
     time_limit_hit = time_elapsed_minutes >= CONFIG['TIME_LIMIT_MINUTES']
     
     # Log current status
-    logging.info(f"Token {token_address} - Current: {price_change_pct:.2f}% change, Time: {time_elapsed_minutes:.1f} min")
-    
-    # Strategy execution
-    if not monitored_tokens[token_address]['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_PERCENT']:
-        # Take partial profit at PARTIAL_PROFIT_PERCENT
-        logging.info(f"Taking partial profit for {token_address} at {price_change_pct:.2f}% gain")
-        if sell_token(token_address, 50):  # Sell 50% of holdings
-            monitored_tokens[token_address]['partial_profit_taken'] = True
-    
-    if price_change_pct >= CONFIG['PROFIT_TARGET_PERCENT']:
-        # Take full profit at PROFIT_TARGET_PERCENT
-        logging.info(f"Taking full profit for {token_address} at {price_change_pct:.2f}% gain")
-        sell_token(token_address)  # Sell 100% of remaining holdings
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
-    
-    if price_change_pct <= -CONFIG['STOP_LOSS_PERCENT']:
-        # Stop loss hit
-        logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
-        sell_token(token_address)  # Sell 100% of holdings
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
-    
-    if time_limit_hit:
-        if price_change_pct > 0:
-            # Time limit hit with profit
-            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% gain")
-            sell_token(token_address)  # Sell 100% of holdings
-        else:
-            # Time limit hit with loss
-            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
-            sell_token(token_address)  # Sell 100% of holdings
-        
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
-
-def can_buy_token() -> bool:
-    """Check if we can buy another token based on concurrent limits and cooldown."""
-    # Always return true if we have zero monitored tokens
-    if len(monitored_tokens) == 0:
-        return True
-        
-    # Check concurrent token limit
-    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
-        logging.info(f"Can't buy: at max concurrent tokens ({len(monitored_tokens)})")
-        return False
-    
-    # Use much shorter cooldown
-    cooldown_seconds = 30  # Just 30 seconds cooldown instead of minutes
-    
-    # Check buy cooldown
-    current_time = time.time()
-    for token_address, timestamp in token_buy_timestamps.items():
-        time_since_last_buy = current_time - timestamp  # in seconds
-        if time_since_last_buy < cooldown_seconds:
-            logging.info(f"Can't buy: cooldown active ({cooldown_seconds - time_since_last_buy:.1f} seconds remaining)")
-            return False
-    
-    return True
-
-def print_status_report():
-    """Print a comprehensive status report of the bot's activities."""
-    logging.info("=" * 50)
-    logging.info("BOT STATUS REPORT")
-    logging.info("=" * 50)
-    
-    # Report wallet status
-    if not CONFIG['SIMULATION_MODE'] and wallet:
-        balance = wallet.get_balance()
-        logging.info(f"Wallet address: {wallet.public_key}")
-        logging.info(f"Wallet balance: {balance} SOL")
-    else:
-        logging.info("SIMULATION MODE: No real wallet in use")
-    
-    # Report monitored tokens
-    logging.info(f"Currently monitoring {len(monitored_tokens)} tokens:")
-    
-    for token_address, data in monitored_tokens.items():
-        initial_price = data['initial_price']
-        highest_price = data['highest_price']
-        current_price = get_token_price(token_address)
-        
-        if current_price:
-            price_change_pct = ((current_price - initial_price) / initial_price) * 100
-            high_change_pct = ((highest_price - initial_price) / initial_price) * 100
-            time_elapsed = time.time() - data['buy_time']
-            minutes = int(time_elapsed / 60)
-            seconds = int(time_elapsed % 60)
-            
-            logging.info(f"  Token: {token_address}")
-            logging.info(f"    Initial price: {initial_price:.10f} SOL")
-            logging.info(f"    Current price: {current_price:.10f} SOL (Change: {price_change_pct:.2f}%)")
-            logging.info(f"    Highest price: {highest_price:.10f} SOL (Max gain: {high_change_pct:.2f}%)")
-            logging.info(f"    Holding time: {minutes} minutes, {seconds} seconds")
-            logging.info(f"    Partial profit taken: {data['partial_profit_taken']}")
-    
-    # Report statistics
-    logging.info("Bot Statistics:")
-    logging.info(f"  Tokens scanned: {tokens_scanned}")
-    logging.info(f"  Buy attempts: {buy_attempts}")
-    logging.info(f"  Buy successes: {buy_successes}")
-    logging.info(f"  Sell attempts: {sell_attempts}")
-    logging.info(f"  Sell successes: {sell_successes}")
-    logging.info(f"  Errors encountered: {errors_encountered}")
-    
-    # Report price cache stats
-    logging.info(f"Price cache size: {len(price_cache)} tokens")
-    
-    # Report configuration
-    logging.info("Current configuration:")
-    logging.info(f"  PROFIT_TARGET_PERCENT: {CONFIG['PROFIT_TARGET_PERCENT']}%")
-    logging.info(f"  PARTIAL_PROFIT_PERCENT: {CONFIG['PARTIAL_PROFIT_PERCENT']}%")
-    logging.info(f"  STOP_LOSS_PERCENT: {CONFIG['STOP_LOSS_PERCENT']}%")
-    logging.info(f"  TIME_LIMIT_MINUTES: {CONFIG['TIME_LIMIT_MINUTES']} minutes")
-    logging.info(f"  BUY_AMOUNT_SOL: {CONFIG['BUY_AMOUNT_SOL']} SOL")
-    logging.info(f"  MAX_CONCURRENT_TOKENS: {CONFIG['MAX_CONCURRENT_TOKENS']}")
-    
-    logging.info("=" * 50)
-
-def force_buy_bonk():
-    """Force buy BONK token to test trading functionality."""
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-    
-    logging.info("=" * 50)
-    logging.info("FORCE BUYING BONK TOKEN")
-    logging.info("=" * 50)
-    
-    if buy_token(bonk_address, CONFIG['BUY_AMOUNT_SOL']):
-        initial_price = get_token_price(bonk_address)
-        if initial_price:
-            monitored_tokens[bonk_address] = {
-                'initial_price': initial_price,
-                'highest_price': initial_price,
-                'partial_profit_taken': False,
-                'buy_time': time.time()
-            }
-            logging.info(f"Successfully bought and monitoring BONK at {initial_price}")
-            return True
-    
-    logging.error("Failed to buy BONK - Check logs for errors")
-    return False
-
-def trading_loop():
-    """Main trading loop."""
-    global iteration_count, last_status_time, errors_encountered
-    
-    logging.info("Trading loop started")
-    
-    # Run startup test to verify trading works
-    startup_test_buy()
-    
-    # Also force buy BONK to make sure we're trading something
-    force_buy_bonk()
-    
-    iteration_count = 0
-    last_status_time = time.time()
-    force_buy_counter = 0
-    
-    while True:
-        try:
-            iteration_count += 1
-            
-            # Print status report every 5 minutes
-            current_time = time.time()
-            if current_time - last_status_time > 300:  # 5 minutes
-                print_status_report()
-                last_status_time = current_time
-                
-                # Try to force buy BONK again if we're not monitoring any tokens
-                if len(monitored_tokens) == 0:
-                    logging.info("No tokens being monitored - trying to force buy BONK again")
-                    force_buy_bonk()
-            
-            # If we can buy more tokens
-            if can_buy_token():
-                logging.info(f"Iteration {iteration_count}: Looking for tokens to buy")
-                # First, check for new tokens
-                potential_tokens = scan_for_new_tokens()
-                
-                if potential_tokens:
-                    logging.info(f"Found {len(potential_tokens)} potential tokens to evaluate")
-                    
-                    # Evaluate all tokens (up to 5 at a time)
-                    valid_tokens = []
-                    for token_address in potential_tokens[:5]:
-                        if token_address not in monitored_tokens:
-                            # Check if it's a known token - if so, automatically verify
-                            is_known = False
-                            for known_token in KNOWN_TOKENS:
-                                if known_token["address"] == token_address:
-                                    is_known = True
-                                    token_symbol = known_token.get("symbol", "")
-                                    logging.info(f"Found known token: {token_symbol} ({token_address})")
-                                    valid_tokens.append({
-                                        'address': token_address,
-                                        'is_meme': True,  # Assume all known tokens are good candidates
-                                        'priority': 0  # Highest priority for known tokens
-                                    })
-                                    break
-                            
-                            if not is_known:
-                                # Quick check if it's a meme token
-                                is_meme = is_meme_token(token_address)
-                                
-                                # Very basic price check
-                                has_price = False
-                                price = get_token_price(token_address)
-                                if price is not None:
-                                    has_price = True
-                                
-                                # Skip liquidity check - assume if it has a price, it has liquidity
-                                has_liquidity = True
-                                
-                                logging.info(f"Token {token_address}: Meme={is_meme}, HasPrice={has_price}, HasLiquidity=assumed")
-                                
-                                if has_price:
-                                    valid_tokens.append({
-                                        'address': token_address,
-                                        'is_meme': is_meme,
-                                        'priority': 1 if is_meme else 2
-                                    })
-                    
-                    # Force buy after 10 iterations if we haven't bought anything yet
-                    force_buy = force_buy_counter >= 10 and len(monitored_tokens) == 0
-                    
-                    # Buy a token if we found any valid ones
-                    if valid_tokens:
-                        # Sort by priority (known tokens first, then meme tokens, then others)
-                        sorted_tokens = sorted(valid_tokens, key=lambda x: x['priority'])
-                        token_to_buy = sorted_tokens[0]['address']
-                        
-                        # Check if it's a known token and log appropriately
-                        token_name = "Unknown"
-                        for token in KNOWN_TOKENS:
-                            if token["address"] == token_to_buy:
-                                token_name = token["symbol"]
-                                break
-                                
-                        logging.info(f"Attempting to buy token: {token_name} ({token_to_buy})")
-                        
-                        # Try to buy it
-                        buy_result = buy_token(token_to_buy, CONFIG['BUY_AMOUNT_SOL'])
-                        logging.info(f"Buy attempt result: {buy_result}")
-                        
-                        if buy_result:
-                            force_buy_counter = 0
-                            
-                            # Record the purchase in monitored_tokens
-                            initial_price = get_token_price(token_to_buy)
-                            if initial_price:
-                                monitored_tokens[token_to_buy] = {
-                                    'initial_price': initial_price,
-                                    'highest_price': initial_price,
-                                    'partial_profit_taken': False,
-                                    'buy_time': time.time()
-                                }
-                                logging.info(f"Successfully bought and monitoring {token_name} ({token_to_buy}) at {initial_price}")
-                        else:
-                            logging.warning(f"Failed to buy {token_name} ({token_to_buy})")
-                    elif force_buy:
-                        # Force buy a known token
-                        logging.info("Force buying a known token after 10 failed iterations")
-                        force_buy_bonk()
-                        
-                        # Reset counter
-                        force_buy_counter = 0
-                    else:
-                        force_buy_counter += 1
-                else:
-                    logging.info("No potential tokens found in this iteration")
-                    force_buy_counter += 1
-            else:
-                logging.info(f"Iteration {iteration_count}: Cannot buy more tokens right now")
-            
-            # Monitor existing tokens
-            tokens_to_monitor = list(monitored_tokens.keys())
-            if tokens_to_monitor:
-                logging.info(f"Monitoring {len(tokens_to_monitor)} tokens")
-                for token_address in tokens_to_monitor:
-                    monitor_token_price(token_address)
-            
-            # Sleep before next check - reduced to be more aggressive
-            sleep_time = CONFIG.get('CHECK_INTERVAL_MS', 1000) / 1000
-            # Make sure it's not too long
-            sleep_time = min(sleep_time, 1.0)  # Maximum 1 second between checks
-            time.sleep(sleep_time)
-            
-        except Exception as e:
-            errors_encountered += 1
-            logging.error(f"Error in trading loop: {str(e)}")
-            logging.error(traceback.format_exc())
-            time.sleep(5)  # Sleep a bit longer on error
-
-def test_buy_command(token_address: str = None):
-    """Test command to manually buy a specific token."""
-    global wallet, jupiter_handler
-    
-    if CONFIG['SIMULATION_MODE']:
-        logging.info(f"[TEST] Cannot test buy in SIMULATION mode. Please set SIMULATION_MODE=false")
-        return False
-    
-    if not token_address:
-        # If no token provided, use BONK as a test
-        token_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-    
-    logging.info(f"[TEST] Manual buy command for token: {token_address}")
-    
-    # Initialize if needed
-    if wallet is None or jupiter_handler is None:
-        if not initialize():
-            logging.error("[TEST] Failed to initialize for test buy")
-            return False
-    
-    # Check wallet balance
-    balance = wallet.get_balance()
-    logging.info(f"[TEST] Current wallet balance: {balance} SOL")
-    
-    # Try to buy the token
-    amount_sol = CONFIG['BUY_AMOUNT_SOL'] 
-    logging.info(f"[TEST] Attempting to buy {token_address} for {amount_sol} SOL")
-    
-    result = buy_token(token_address, amount_sol)
-    
-    if result:
-        logging.info(f"[TEST] Successfully bought {token_address}")
-        return True
-    else:
-        logging.error(f"[TEST] Failed to buy {token_address}")
-        return False
-
-def test_sell_command(token_address: str = None):
-    """Test command to manually sell a specific token."""
-    global wallet, jupiter_handler
-    
-    if CONFIG['SIMULATION_MODE']:
-        logging.info(f"[TEST] Cannot test sell in SIMULATION mode. Please set SIMULATION_MODE=false")
-        return False
-    
-    if not token_address:
-        # If no token provided, try to sell BONK as a test
-        token_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-    
-    logging.info(f"[TEST] Manual sell command for token: {token_address}")
-    
-    # Initialize if needed
-    if wallet is None or jupiter_handler is None:
-        if not initialize():
-            logging.error("[TEST] Failed to initialize for test sell")
-            return False
-    
-    # Try to sell the token
-    logging.info(f"[TEST] Attempting to sell {token_address}")
-    
-    result = sell_token(token_address)
-    
-    if result:
-        logging.info(f"[TEST] Successfully sold {token_address}")
-        return True
-    else:
-        logging.error(f"[TEST] Failed to sell {token_address}")
-        return False
-
-def main():
-    """Main entry point."""
-    import sys
-    
-    # Check for command-line arguments for testing
-    if len(sys.argv) > 1:
-        command = sys.argv[1].lower()
-        
-        if command == "buy":
-            token_address = sys.argv[2] if len(sys.argv) > 2 else None
-            test_buy_command(token_address)
-            return
-        
-        elif command == "sell":
-            token_address = sys.argv[2] if len(sys.argv) > 2 else None
-            test_sell_command(token_address)
-            return
-            
-        elif command == "test":
-            # Test both buying and selling
-            if test_buy_command():
-                logging.info("[TEST] Buy test successful. Waiting 10 seconds before sell test...")
-                time.sleep(10)
-                test_sell_command()
-            return
-            
-        elif command == "force_buy_bonk":
-            # Just force buy BONK
-            if not initialize():
-                logging.error("Failed to initialize bot")
-                return
-            force_buy_bonk()
-            return
-    
-    # Normal operation
-    if initialize():
-        trading_loop()
-    else:
-        logging.error("Failed to initialize bot. Please check configurations.")
-
-if __name__ == "__main__":
-    main()
+    logging.info(f"Token {token_address} - Current: {price_change_pct
