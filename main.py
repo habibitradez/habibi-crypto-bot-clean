@@ -517,279 +517,7 @@ def initialize():
                 logging.warning(f"RPC connection might have issues: {rpc_response.text}")
                 # Still continue, as this might just be a format issue
         else:
-            logging.warning(f"Could not get initial price for {token_address}")
-            return
-    
-    # Get current price
-    current_price = get_token_price(token_address)
-    if not current_price:
-        logging.warning(f"Could not get current price for {token_address}")
-        return
-    
-    # Update highest price if current price is higher
-    if current_price > monitored_tokens[token_address]['highest_price']:
-        monitored_tokens[token_address]['highest_price'] = current_price
-    
-    # Calculate price change percentage
-    initial_price = monitored_tokens[token_address]['initial_price']
-    price_change_pct = ((current_price - initial_price) / initial_price) * 100
-    
-    # Check if enough time has passed
-    time_elapsed_minutes = (time.time() - monitored_tokens[token_address]['buy_time']) / 60
-    time_limit_hit = time_elapsed_minutes >= CONFIG['TIME_LIMIT_MINUTES']
-    
-    # Log current status
-    logging.info(f"Token {token_address} - Current: {price_change_pct:.2f}% change, Time: {time_elapsed_minutes:.1f} min")
-    
-    # Strategy execution
-    if not monitored_tokens[token_address]['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_PERCENT']:
-        # Take partial profit at PARTIAL_PROFIT_PERCENT
-        logging.info(f"Taking partial profit for {token_address} at {price_change_pct:.2f}% gain")
-        if sell_token(token_address, 50):  # Sell 50% of holdings
-            monitored_tokens[token_address]['partial_profit_taken'] = True
-    
-    if price_change_pct >= CONFIG['PROFIT_TARGET_PERCENT']:
-        # Take full profit at PROFIT_TARGET_PERCENT
-        logging.info(f"Taking full profit for {token_address} at {price_change_pct:.2f}% gain")
-        sell_token(token_address)  # Sell 100% of remaining holdings
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
-    
-    if price_change_pct <= -CONFIG['STOP_LOSS_PERCENT']:
-        # Stop loss hit
-        logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
-        sell_token(token_address)  # Sell 100% of holdings
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
-    
-    if time_limit_hit:
-        if price_change_pct > 0:
-            # Time limit hit with profit
-            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% gain")
-            sell_token(token_address)  # Sell 100% of holdings
-        else:
-            # Time limit hit with loss
-            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
-            sell_token(token_address)  # Sell 100% of holdings
-        
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-
-def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):  # Default to BONK
-    """Test the entire buy flow with detailed logging."""
-    logging.info(f"====== TESTING BUY FLOW FOR {token_address} ======")
-    
-    # Step 1: Get token price
-    logging.info("Step 1: Getting token price")
-    token_price = get_token_price(token_address)
-    logging.info(f"Token price: {token_price} SOL")
-    
-    if not token_price:
-        logging.error("Failed at step 1: Could not get token price")
-        return False
-    
-    # Step 2: Check liquidity
-    logging.info("Step 2: Checking liquidity")
-    has_liquidity = check_token_liquidity(token_address)
-    logging.info(f"Has liquidity: {has_liquidity}")
-    
-    if not has_liquidity:
-        logging.error("Failed at step 2: Token does not have liquidity")
-        return False
-    
-    # Step 3: Get Jupiter quote
-    logging.info("Step 3: Getting Jupiter quote")
-    amount_lamports = int(CONFIG['BUY_AMOUNT_SOL'] * 1000000000)
-    
-    quote_data = jupiter_handler.get_quote(
-        input_mint=SOL_TOKEN_ADDRESS,
-        output_mint=token_address,
-        amount=str(amount_lamports),
-        slippage_bps="1000"
-    )
-    
-    if quote_data:
-        logging.info(f"Quote data received with keys: {list(quote_data.keys())}")
-    else:
-        logging.error("Failed at step 3: Could not get Jupiter quote")
-        return False
-    
-    # Step 4: Prepare swap transaction
-    logging.info("Step 4: Preparing swap transaction")
-    swap_data = jupiter_handler.prepare_swap_transaction(
-        quote_data=quote_data,
-        user_public_key=str(wallet.public_key)
-    )
-    
-    if swap_data:
-        logging.info(f"Swap data received with keys: {list(swap_data.keys())}")
-    else:
-        logging.error("Failed at step 4: Could not prepare swap transaction")
-        return False
-    
-    # Step 5: Deserialize transaction
-    logging.info("Step 5: Deserializing transaction")
-    transaction = jupiter_handler.deserialize_transaction(swap_data)
-    
-    if transaction:
-        logging.info(f"Transaction deserialized successfully")
-    else:
-        logging.error("Failed at step 5: Could not deserialize transaction")
-        return False
-    
-    # Step 6: Sign and submit transaction (only if not in simulation)
-    if not CONFIG['SIMULATION_MODE']:
-        logging.info("Step 6: Signing and submitting transaction")
-        signature = wallet.sign_and_submit_transaction(transaction)
-        
-        if signature:
-            logging.info(f"Transaction submitted successfully: {signature}")
-        else:
-            logging.error("Failed at step 6: Could not sign and submit transaction")
-            return False
-    
-    logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
-    return True
-
-def find_and_buy_promising_tokens():
-    """Aggressively scan for and buy promising meme tokens."""
-    logging.info("Scanning for promising meme tokens...")
-    
-    # Limit how many tokens we'll buy in one go
-    max_buys = 3
-    buys_this_round = 0
-    
-    # Scan for potential tokens
-    potential_tokens = scan_for_new_tokens()
-    meme_tokens = [t for t in potential_tokens if is_meme_token(t)]
-    
-    logging.info(f"Found {len(meme_tokens)} potential meme tokens")
-    
-    for token_address in meme_tokens:
-        # Skip if we've reached max buys for this round
-        if buys_this_round >= max_buys:
-            break
-            
-        # Skip tokens we're already monitoring
-        if token_address in monitored_tokens:
-            continue
-        
-        # Check cooldown
-        if token_address in token_buy_timestamps:
-            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
-                continue
-        
-        # Verify token is suitable
-        if verify_token(token_address):
-            # Check liquidity 
-            if check_token_liquidity(token_address):
-                logging.info(f"Found promising meme token with liquidity: {token_address}")
-                
-                # Buy token with more aggressive buy amount
-                aggressive_buy_amount = CONFIG['BUY_AMOUNT_SOL'] * 1.5  # 50% more than normal
-                if buy_token(token_address, aggressive_buy_amount):
-                    logging.info(f"Successfully bought promising meme token: {token_address}")
-                    buys_this_round += 1
-                else:
-                    logging.warning(f"Failed to buy promising meme token: {token_address}")
-    
-    logging.info(f"Completed aggressive token buying round, bought {buys_this_round} tokens")
-    return buys_this_round
-
-def trading_loop():
-    """Main trading loop."""
-    global iteration_count, last_status_time, errors_encountered
-    
-    logging.info("Starting main trading loop")
-    
-    while True:
-        iteration_count += 1
-        
-        try:
-            # Print status every 5 minutes
-            if time.time() - last_status_time > 300:  # 5 minutes
-                logging.info(f"===== STATUS UPDATE =====")
-                logging.info(f"Tokens scanned: {tokens_scanned}")
-                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"Buy attempts: {buy_attempts}, successes: {buy_successes}")
-                logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
-                logging.info(f"Errors encountered: {errors_encountered}")
-                logging.info(f"Iteration count: {iteration_count}")
-                
-                # Also log wallet balance in production mode
-                if not CONFIG['SIMULATION_MODE'] and wallet:
-                    balance = wallet.get_balance()
-                    logging.info(f"Current wallet balance: {balance} SOL")
-                
-                last_status_time = time.time()
-            
-            # Monitor tokens we're already trading
-            for token_address in list(monitored_tokens.keys()):
-                monitor_token_price(token_address)
-            
-            # Only look for new tokens if we have capacity
-            if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
-                # Scan for new tokens
-                potential_tokens = scan_for_new_tokens()
-                
-                for token_address in potential_tokens:
-                    # Skip tokens we're already monitoring
-                    if token_address in monitored_tokens:
-                        continue
-                    
-                    # Check if we've bought this token recently (cooldown period)
-                    if token_address in token_buy_timestamps:
-                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
-                            continue
-                    
-                    # Skip if we're at max concurrent tokens
-                    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
-                        break
-                    
-                    # Verify token is suitable for trading
-                    if verify_token(token_address):
-                        # Check liquidity before buying
-                        if check_token_liquidity(token_address):
-                            logging.info(f"Found promising token with liquidity: {token_address}")
-                            
-                            # Attempt to buy the token
-                            if buy_token(token_address, CONFIG['BUY_AMOUNT_SOL']):
-                                logging.info(f"Successfully bought token: {token_address}")
-                                # Monitor token price will be handled in the next iteration
-                            else:
-                                logging.warning(f"Failed to buy token: {token_address}")
-            
-            # Sleep before next iteration
-            time.sleep(CONFIG['CHECK_INTERVAL_MS'] / 1000)  # Convert ms to seconds
-            
-        except Exception as e:
-            errors_encountered += 1
-            logging.error(f"Error in main loop: {str(e)}")
-            logging.error(traceback.format_exc())
-            # Short sleep and continue
-            time.sleep(5)
-
-def main():
-    """Main entry point."""
-    logging.info("============ BOT STARTING ============")
-    
-    if initialize():
-        # Force buy BONK right after initialization as a test
-        logging.info("Attempting to force buy BONK as startup test")
-        force_buy_bonk()
-        
-        # Continue with normal trading loop
-        trading_loop()
-    else:
-        logging.error("Failed to initialize bot. Please check configurations.")
-
-# Add this at the end of your file
-if __name__ == "__main__":
-    main().error(f"Failed to connect to QuickNode RPC: {rpc_response.status_code}")
+            logging.error(f"Failed to connect to QuickNode RPC: {rpc_response.status_code}")
             return False
     except Exception as e:
         logging.error(f"Error connecting to QuickNode RPC: {str(e)}")
@@ -992,10 +720,6 @@ def get_token_price(token_address: str) -> Optional[float]:
             price_cache_time[token_address] = time.time()
             logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
             return random_price
-    except Exception as e:
-        logging.error(f"Error getting price for {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-                
     except Exception as e:
         logging.error(f"Error getting price for {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
@@ -1274,38 +998,127 @@ def verify_token(token_address: str) -> bool:
     logging.info(f"Token {token_address} PASSED verification with minimal checks")
     return True
 
-def startup_test_buy():
-    """Perform a test buy of BONK at startup to verify trading works."""
-    if CONFIG['SIMULATION_MODE']:
-        logging.info("Skipping startup test buy in simulation mode")
-        return
+def find_and_buy_promising_tokens():
+    """Aggressively scan for and buy promising meme tokens."""
+    logging.info("Scanning for promising meme tokens...")
     
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK token
+    # Limit how many tokens we'll buy in one go
+    max_buys = 3
+    buys_this_round = 0
     
-    logging.info("======= STARTUP TEST =======")
-    logging.info(f"Attempting to buy BONK token as startup test")
+    # Scan for potential tokens
+    potential_tokens = scan_for_new_tokens()
+    meme_tokens = [t for t in potential_tokens if is_meme_token(t)]
     
-    # Try to buy a small amount of BONK
-    test_amount = CONFIG['BUY_AMOUNT_SOL'] / 5  # Use 1/5 of normal buy amount
+    logging.info(f"Found {len(meme_tokens)} potential meme tokens")
     
-    result = buy_token(bonk_address, test_amount)
+    for token_address in meme_tokens:
+        # Skip if we've reached max buys for this round
+        if buys_this_round >= max_buys:
+            break
+            
+        # Skip tokens we're already monitoring
+        if token_address in monitored_tokens:
+            continue
+        
+        # Check cooldown
+        if token_address in token_buy_timestamps:
+            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                continue
+        
+        # Verify token is suitable
+        if verify_token(token_address):
+            # Check liquidity 
+            if check_token_liquidity(token_address):
+                logging.info(f"Found promising meme token with liquidity: {token_address}")
+                
+                # Buy token with more aggressive buy amount
+                aggressive_buy_amount = CONFIG['BUY_AMOUNT_SOL'] * 1.5  # 50% more than normal
+                if buy_token(token_address, aggressive_buy_amount):
+                    logging.info(f"Successfully bought promising meme token: {token_address}")
+                    buys_this_round += 1
+                else:
+                    logging.warning(f"Failed to buy promising meme token: {token_address}")
     
-    if result:
-        logging.info("STARTUP TEST PASSED - Successfully bought BONK!")
-        # Add to monitored tokens
-        initial_price = get_token_price(bonk_address)
-        if initial_price:
-            monitored_tokens[bonk_address] = {
-                'initial_price': initial_price,
-                'highest_price': initial_price,
-                'partial_profit_taken': False,
-                'buy_time': time.time()
-            }
+    logging.info(f"Completed aggressive token buying round, bought {buys_this_round} tokens")
+    return buys_this_round
+
+def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):  # Default to BONK
+    """Test the entire buy flow with detailed logging."""
+    logging.info(f"====== TESTING BUY FLOW FOR {token_address} ======")
+    
+    # Step 1: Get token price
+    logging.info("Step 1: Getting token price")
+    token_price = get_token_price(token_address)
+    logging.info(f"Token price: {token_price} SOL")
+    
+    if not token_price:
+        logging.error("Failed at step 1: Could not get token price")
+        return False
+    
+    # Step 2: Check liquidity
+    logging.info("Step 2: Checking liquidity")
+    has_liquidity = check_token_liquidity(token_address)
+    logging.info(f"Has liquidity: {has_liquidity}")
+    
+    if not has_liquidity:
+        logging.error("Failed at step 2: Token does not have liquidity")
+        return False
+    
+    # Step 3: Get Jupiter quote
+    logging.info("Step 3: Getting Jupiter quote")
+    amount_lamports = int(CONFIG['BUY_AMOUNT_SOL'] * 1000000000)
+    
+    quote_data = jupiter_handler.get_quote(
+        input_mint=SOL_TOKEN_ADDRESS,
+        output_mint=token_address,
+        amount=str(amount_lamports),
+        slippage_bps="1000"
+    )
+    
+    if quote_data:
+        logging.info(f"Quote data received with keys: {list(quote_data.keys())}")
     else:
-        logging.error("STARTUP TEST FAILED - Could not buy BONK!")
-        logging.error("This suggests there may be issues with the trading functionality.")
+        logging.error("Failed at step 3: Could not get Jupiter quote")
+        return False
     
-    logging.info("======= END TEST =======")
+    # Step 4: Prepare swap transaction
+    logging.info("Step 4: Preparing swap transaction")
+    swap_data = jupiter_handler.prepare_swap_transaction(
+        quote_data=quote_data,
+        user_public_key=str(wallet.public_key)
+    )
+    
+    if swap_data:
+        logging.info(f"Swap data received with keys: {list(swap_data.keys())}")
+    else:
+        logging.error("Failed at step 4: Could not prepare swap transaction")
+        return False
+    
+    # Step 5: Deserialize transaction
+    logging.info("Step 5: Deserializing transaction")
+    transaction = jupiter_handler.deserialize_transaction(swap_data)
+    
+    if transaction:
+        logging.info(f"Transaction deserialized successfully")
+    else:
+        logging.error("Failed at step 5: Could not deserialize transaction")
+        return False
+    
+    # Step 6: Sign and submit transaction (only if not in simulation)
+    if not CONFIG['SIMULATION_MODE']:
+        logging.info("Step 6: Signing and submitting transaction")
+        signature = wallet.sign_and_submit_transaction(transaction)
+        
+        if signature:
+            logging.info(f"Transaction submitted successfully: {signature}")
+        else:
+            logging.error("Failed at step 6: Could not sign and submit transaction")
+            return False
+    
+    logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
+    return True
 
 def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
@@ -1573,19 +1386,206 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
 
 def monitor_token_price(token_address: str) -> None:
     """Monitor a token's price and execute the trading strategy."""
-    # If we don't have a buy timestamp, record now
-    if token_address not in token_buy_timestamps:
-        token_buy_timestamps[token_address] = time.time()
+    try:
+        # If we don't have a buy timestamp, record now
+        if token_address not in token_buy_timestamps:
+            token_buy_timestamps[token_address] = time.time()
+        
+        # Get initial price if not already monitored
+        if token_address not in monitored_tokens:
+            initial_price = get_token_price(token_address)
+            if initial_price:
+                monitored_tokens[token_address] = {
+                    'initial_price': initial_price,
+                    'highest_price': initial_price,
+                    'partial_profit_taken': False,
+                    'buy_time': token_buy_timestamps[token_address]
+                }
+            else:
+                logging.warning(f"Could not get initial price for {token_address}")
+                return
+        
+        # Get current price
+        current_price = get_token_price(token_address)
+        if not current_price:
+            logging.warning(f"Could not get current price for {token_address}")
+            return
+        
+        # Update highest price if current price is higher
+        if current_price > monitored_tokens[token_address]['highest_price']:
+            monitored_tokens[token_address]['highest_price'] = current_price
+        
+        # Calculate price change percentage
+        initial_price = monitored_tokens[token_address]['initial_price']
+        price_change_pct = ((current_price - initial_price) / initial_price) * 100
+        
+        # Check if enough time has passed
+        time_elapsed_minutes = (time.time() - monitored_tokens[token_address]['buy_time']) / 60
+        time_limit_hit = time_elapsed_minutes >= CONFIG['TIME_LIMIT_MINUTES']
+        
+        # Log current status
+        logging.info(f"Token {token_address} - Current: {price_change_pct:.2f}% change, Time: {time_elapsed_minutes:.1f} min")
+        
+        # Strategy execution
+        if not monitored_tokens[token_address]['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_PERCENT']:
+            # Take partial profit at PARTIAL_PROFIT_PERCENT
+            logging.info(f"Taking partial profit for {token_address} at {price_change_pct:.2f}% gain")
+            if sell_token(token_address, 50):  # Sell 50% of holdings
+                monitored_tokens[token_address]['partial_profit_taken'] = True
+        
+        if price_change_pct >= CONFIG['PROFIT_TARGET_PERCENT']:
+            # Take full profit at PROFIT_TARGET_PERCENT
+            logging.info(f"Taking full profit for {token_address} at {price_change_pct:.2f}% gain")
+            sell_token(token_address)  # Sell 100% of remaining holdings
+            # Remove from monitoring
+            del monitored_tokens[token_address]
+            return
+        
+        if price_change_pct <= -CONFIG['STOP_LOSS_PERCENT']:
+            # Stop loss hit
+            logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
+            sell_token(token_address)  # Sell 100% of holdings
+            # Remove from monitoring
+            del monitored_tokens[token_address]
+            return
+        
+        if time_limit_hit:
+            if price_change_pct > 0:
+                # Time limit hit with profit
+                logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% gain")
+                sell_token(token_address)  # Sell 100% of holdings
+            else:
+                # Time limit hit with loss
+                logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
+                sell_token(token_address)  # Sell 100% of holdings
+            
+            # Remove from monitoring
+            del monitored_tokens[token_address]
+    except Exception as e:
+        logging.error(f"Error monitoring token {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+
+def startup_test_buy():
+    """Perform a test buy of BONK at startup to verify trading works."""
+    if CONFIG['SIMULATION_MODE']:
+        logging.info("Skipping startup test buy in simulation mode")
+        return
     
-    # Get initial price if not already monitored
-    if token_address not in monitored_tokens:
-        initial_price = get_token_price(token_address)
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK token
+    
+    logging.info("======= STARTUP TEST =======")
+    logging.info(f"Attempting to buy BONK token as startup test")
+    
+    # Try to buy a small amount of BONK
+    test_amount = CONFIG['BUY_AMOUNT_SOL'] / 5  # Use 1/5 of normal buy amount
+    
+    result = buy_token(bonk_address, test_amount)
+    
+    if result:
+        logging.info("STARTUP TEST PASSED - Successfully bought BONK!")
+        # Add to monitored tokens
+        initial_price = get_token_price(bonk_address)
         if initial_price:
-            monitored_tokens[token_address] = {
+            monitored_tokens[bonk_address] = {
                 'initial_price': initial_price,
                 'highest_price': initial_price,
                 'partial_profit_taken': False,
-                'buy_time': token_buy_timestamps[token_address]
+                'buy_time': time.time()
             }
-        else:
-            logging
+    else:
+        logging.error("STARTUP TEST FAILED - Could not buy BONK!")
+        logging.error("This suggests there may be issues with the trading functionality.")
+    
+    logging.info("======= END TEST =======")
+
+def trading_loop():
+    """Main trading loop."""
+    global iteration_count, last_status_time, errors_encountered
+    
+    logging.info("Starting main trading loop")
+    
+    while True:
+        iteration_count += 1
+        
+        try:
+            # Print status every 5 minutes
+            if time.time() - last_status_time > 300:  # 5 minutes
+                logging.info(f"===== STATUS UPDATE =====")
+                logging.info(f"Tokens scanned: {tokens_scanned}")
+                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
+                logging.info(f"Buy attempts: {buy_attempts}, successes: {buy_successes}")
+                logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
+                logging.info(f"Errors encountered: {errors_encountered}")
+                logging.info(f"Iteration count: {iteration_count}")
+                
+                # Also log wallet balance in production mode
+                if not CONFIG['SIMULATION_MODE'] and wallet:
+                    balance = wallet.get_balance()
+                    logging.info(f"Current wallet balance: {balance} SOL")
+                
+                last_status_time = time.time()
+            
+            # Monitor tokens we're already trading
+            for token_address in list(monitored_tokens.keys()):
+                monitor_token_price(token_address)
+            
+            # Only look for new tokens if we have capacity
+            if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
+                # Scan for new tokens
+                potential_tokens = scan_for_new_tokens()
+                
+                for token_address in potential_tokens:
+                    # Skip tokens we're already monitoring
+                    if token_address in monitored_tokens:
+                        continue
+                    
+                    # Check if we've bought this token recently (cooldown period)
+                    if token_address in token_buy_timestamps:
+                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                            continue
+                    
+                    # Skip if we're at max concurrent tokens
+                    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
+                        break
+                    
+                    # Verify token is suitable for trading
+                    if verify_token(token_address):
+                        # Check liquidity before buying
+                        if check_token_liquidity(token_address):
+                            logging.info(f"Found promising token with liquidity: {token_address}")
+                            
+                            # Attempt to buy the token
+                            if buy_token(token_address, CONFIG['BUY_AMOUNT_SOL']):
+                                logging.info(f"Successfully bought token: {token_address}")
+                                # Monitor token price will be handled in the next iteration
+                            else:
+                                logging.warning(f"Failed to buy token: {token_address}")
+            
+            # Sleep before next iteration
+            time.sleep(CONFIG['CHECK_INTERVAL_MS'] / 1000)  # Convert ms to seconds
+            
+        except Exception as e:
+            errors_encountered += 1
+            logging.error(f"Error in main loop: {str(e)}")
+            logging.error(traceback.format_exc())
+            # Short sleep and continue
+            time.sleep(5)
+
+def main():
+    """Main entry point."""
+    logging.info("============ BOT STARTING ============")
+    
+    if initialize():
+        # Force buy BONK right after initialization as a test
+        logging.info("Attempting to force buy BONK as startup test")
+        force_buy_bonk()
+        
+        # Continue with normal trading loop
+        trading_loop()
+    else:
+        logging.error("Failed to initialize bot. Please check configurations.")
+
+# Add this at the end of your file
+if __name__ == "__main__":
+    main()
