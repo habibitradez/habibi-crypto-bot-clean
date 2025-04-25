@@ -42,13 +42,13 @@ CONFIG = {
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
-    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '1')),
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
-    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '15')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Increased from 0.05 to 0.15
-    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '500')),
+    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),  # Increased to 5 minutes
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),  # Increased to 5 seconds
+    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),  # Reduced from 15 to 5
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Kept at 0.15 SOL
+    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),  # Reduced from 500 to 100
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
-    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50'))  # Conservative limit
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))  # Reduced from 50 to 20
 }
 
 # Diagnostics flag - set to True for very verbose logging
@@ -1361,7 +1361,7 @@ def force_buy_bonk():
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
     """Buy a token using Jupiter API."""
-    global buy_attempts, buy_successes
+    global buy_attempts, buy_successes, last_api_call_time, api_call_delay
     
     buy_attempts += 1
     
@@ -1392,42 +1392,118 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
         logging.info(f"Getting quote for buying {token_address} with {amount_lamports} lamports ({amount_sol} SOL)")
         
-        quote_data = jupiter_handler.get_quote(
-            input_mint=SOL_TOKEN_ADDRESS,
-            output_mint=token_address,
-            amount=str(amount_lamports),
-            slippage_bps="1000"  # 10% slippage to ensure transaction goes through
-        )
+        # Manual rate limiting for quote request
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before quote request")
+            time.sleep(sleep_time)
         
-        if quote_data is None:
-            logging.error(f"Failed to get quote for buying {token_address}")
+        # Get the quote with rate limiting
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        quote_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": str(amount_lamports),
+            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
+        }
+        
+        last_api_call_time = time.time()
+        quote_response = requests.get(quote_url, params=quote_params, timeout=10)
+        
+        # Check for rate limiting
+        if quote_response.status_code == 429:
+            logging.warning(f"Rate limited by Jupiter API (429). Waiting 10 seconds before retrying...")
+            time.sleep(10)  # Much longer wait on rate limit during buying
+            api_call_delay += 1.0  # Increase delay significantly
+            logging.warning(f"Increased delay to {api_call_delay}s")
+            
+            # Try again
+            last_api_call_time = time.time()
+            quote_response = requests.get(quote_url, params=quote_params, timeout=10)
+        
+        if quote_response.status_code == 200:
+            quote_data = quote_response.json()
+        else:
+            logging.error(f"Failed to get quote for buying {token_address}: {quote_response.status_code} - {quote_response.text}")
+            return False
+        
+        if "outAmount" not in quote_data and "data" not in quote_data:
+            logging.error(f"Invalid quote response for {token_address}: {json.dumps(quote_data)}")
             return False
             
         logging.info(f"Successfully got quote for buying {token_address}")
         
-        # Step 2: Prepare swap transaction
+        # Step 2: Prepare swap transaction - with rate limiting
         logging.info(f"Preparing swap transaction for {token_address}")
-        swap_data = jupiter_handler.prepare_swap_transaction(
-            quote_data=quote_data,
-            user_public_key=str(wallet.public_key)
+        
+        # Rate limiting before swap request
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before swap request")
+            time.sleep(sleep_time)
+        
+        # For Jupiter v6 API, the payload format is different
+        swap_payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapUnwrapSOL": True
+        }
+        
+        last_api_call_time = time.time()
+        swap_response = requests.post(
+            f"{CONFIG['JUPITER_API_URL']}/swap",
+            json=swap_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
         )
         
-        if swap_data is None:
-            logging.error(f"Failed to prepare swap transaction for {token_address}")
+        # Check for rate limiting
+        if swap_response.status_code == 429:
+            logging.warning(f"Rate limited during swap preparation. Waiting 10 seconds before retrying...")
+            time.sleep(10)
+            api_call_delay += 1.0  # Increase delay significantly
+            logging.warning(f"Increased delay to {api_call_delay}s")
+            
+            # Try again
+            last_api_call_time = time.time()
+            swap_response = requests.post(
+                f"{CONFIG['JUPITER_API_URL']}/swap",
+                json=swap_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap transaction: {swap_response.status_code} - {swap_response.text}")
+            return False
+            
+        swap_data = swap_response.json()
+        if "swapTransaction" not in swap_data:
+            logging.error(f"Swap response does not contain transaction: {json.dumps(swap_data)}")
             return False
             
         logging.info(f"Successfully prepared swap transaction for {token_address}")
         
         # Step 3: Deserialize the transaction
         logging.info(f"Deserializing transaction for {token_address}")
-        transaction = jupiter_handler.deserialize_transaction(swap_data)
         
-        if transaction is None:
-            logging.error(f"Failed to deserialize transaction for {token_address}")
+        try:
+            # Extract the serialized transaction
+            serialized_tx = swap_data["swapTransaction"]
+            
+            # Decode the base64 transaction data
+            tx_bytes = base64.b64decode(serialized_tx)
+            
+            # Create a transaction from the bytes
+            transaction = Transaction.from_bytes(tx_bytes)
+            logging.info(f"Transaction deserialized successfully")
+        except Exception as e:
+            logging.error(f"Error deserializing transaction: {str(e)}")
+            logging.error(traceback.format_exc())
             return False
             
-        logging.info(f"Successfully deserialized transaction for {token_address}")
-        
         # Step 4: Sign and submit the transaction
         logging.info(f"Signing and submitting transaction for {token_address}")
         signature = wallet.sign_and_submit_transaction(transaction)
@@ -1716,7 +1792,7 @@ def startup_test_buy():
 
 def trading_loop():
     """Main trading loop."""
-    global iteration_count, last_status_time, errors_encountered
+    global iteration_count, last_status_time, errors_encountered, api_call_delay
     
     logging.info("Starting main trading loop")
     
@@ -1733,6 +1809,7 @@ def trading_loop():
                 logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
                 logging.info(f"Errors encountered: {errors_encountered}")
                 logging.info(f"Iteration count: {iteration_count}")
+                logging.info(f"Current API delay: {api_call_delay}s")
                 
                 # Also log wallet balance in production mode
                 if not CONFIG['SIMULATION_MODE'] and wallet:
@@ -1744,13 +1821,29 @@ def trading_loop():
             # Monitor tokens we're already trading
             for token_address in list(monitored_tokens.keys()):
                 monitor_token_price(token_address)
+                # Add a sleep between token monitoring to avoid rate limits
+                time.sleep(3)
             
-            # Only look for new tokens if we have capacity
+            # Only look for new tokens if we have capacity and not too frequently
             if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
+                # Add a random delay between 10-20 seconds before scanning for new tokens
+                # This prevents hitting Jupiter API too frequently
+                scan_delay = random.uniform(10, 20)
+                logging.info(f"Delaying token scan for {scan_delay:.2f} seconds to avoid rate limits")
+                time.sleep(scan_delay)
+                
                 # Scan for new tokens
                 potential_tokens = scan_for_new_tokens()
                 
+                # Shuffle tokens to avoid always trying the same ones
+                random.shuffle(potential_tokens)
+                
+                tokens_checked = 0
                 for token_address in potential_tokens:
+                    # Limit how many tokens we check per iteration
+                    if tokens_checked >= 2:
+                        break
+                        
                     # Skip tokens we're already monitoring
                     if token_address in monitored_tokens:
                         continue
@@ -1771,22 +1864,35 @@ def trading_loop():
                         if check_token_liquidity(token_address):
                             logging.info(f"Found promising token with liquidity: {token_address}")
                             
+                            # Delay before buying to avoid rate limits
+                            buy_delay = random.uniform(5, 10)
+                            logging.info(f"Delaying buy for {buy_delay:.2f} seconds to avoid rate limits")
+                            time.sleep(buy_delay)
+                            
                             # Attempt to buy the token
                             if buy_token(token_address, CONFIG['BUY_AMOUNT_SOL']):
                                 logging.info(f"Successfully bought token: {token_address}")
-                                # Monitor token price will be handled in the next iteration
+                                # Add a longer delay after successful buy to avoid rate limits
+                                time.sleep(15)
                             else:
                                 logging.warning(f"Failed to buy token: {token_address}")
+                                # Add a delay after failed buy
+                                time.sleep(5)
+                                
+                    tokens_checked += 1
             
             # Sleep before next iteration
-            time.sleep(CONFIG['CHECK_INTERVAL_MS'] / 1000)  # Convert ms to seconds
+            sleep_time = CONFIG['CHECK_INTERVAL_MS'] / 1000  # Convert ms to seconds
+            logging.info(f"Sleeping for {sleep_time} seconds before next iteration")
+            time.sleep(sleep_time)
             
         except Exception as e:
             errors_encountered += 1
             logging.error(f"Error in main loop: {str(e)}")
             logging.error(traceback.format_exc())
-            # Short sleep and continue
-            time.sleep(5)
+            # Longer sleep on error
+            logging.info("Error encountered, sleeping for 30 seconds before continuing")
+            time.sleep(30)
 
 def find_tradable_tokens():
     """Find and update which tokens are actually tradable."""
