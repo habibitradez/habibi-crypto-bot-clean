@@ -100,15 +100,22 @@ SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
 # Predefined list of known tokens
 KNOWN_TOKENS = [
     {"symbol": "SOL", "address": SOL_TOKEN_ADDRESS},
-    {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"},
-    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"},
-    {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi"},
-    {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA"},
-    {"symbol": "GIGA", "address": "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT"},
-    {"symbol": "PNUT", "address": "PNUtFk6iQhs2VXiCMQpzGM81PdE7yGL5Y4fo9mFfb7o"},
-    {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW"},
-    {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ"},
-    {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF"}
+    {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "tradable": True},
+    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": False},
+    {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi", "tradable": False},
+    {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA", "tradable": False},
+    {"symbol": "GIGA", "address": "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT", "tradable": False},
+    {"symbol": "PNUT", "address": "PNUtFk6iQhs2VXiCMQpzGM81PdE7yGL5Y4fo9mFfb7o", "tradable": False},
+    {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW", "tradable": False},
+    {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ", "tradable": False},
+    {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF", "tradable": False},
+    # Updated list of known tradable tokens - verify these on your network
+    {"symbol": "JUP", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "tradable": True},
+    {"symbol": "ORCA", "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "tradable": True},
+    {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "tradable": True},
+    {"symbol": "RAY", "address": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "tradable": True},
+    {"symbol": "STEP", "address": "StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT", "tradable": True},
+    {"symbol": "RENDER", "address": "RNDRxx6LYgjvGdgkTKYbJ3y4KMqZyWawN7GpfSZJT3z", "tradable": True}
 ]
 
 class SolanaWallet:
@@ -221,14 +228,23 @@ class SolanaWallet:
             blockhash = blockhash_response["result"]["value"]["blockhash"]
             logging.info(f"Got blockhash: {blockhash}")
             
-            # Set blockhash and sign transaction
+            # For solders Transaction: Create a Hash object from the blockhash string
+            from solders.hash import Hash
+            
+            # Convert the string blockhash to a Hash object
+            blockhash_obj = Hash.from_string(blockhash)
+            
+            # Create a new transaction with the blockhash and sign it
             logging.info("Setting blockhash and signing transaction...")
-            transaction.recent_blockhash = blockhash
-            transaction.sign([self.keypair])
+            signed_tx = Transaction.sign_unchecked(
+                [self.keypair],  # List of signers
+                transaction.message,  # Use the original transaction's message
+                blockhash_obj  # Use the blockhash object
+            )
             
             # Serialize and submit transaction
             logging.info("Serializing and submitting transaction...")
-            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            serialized_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
             
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
@@ -971,6 +987,48 @@ def scan_for_new_tokens() -> List[str]:
     logging.info(f"Found {len(potential_tokens)} potential new tokens")
     return potential_tokens
 
+def check_token_tradability(token_address: str) -> bool:
+    """Check if a token is tradable on Jupiter API."""
+    try:
+        # Try to get a quote for a tiny amount to check tradability
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": "1000000",  # Only 0.001 SOL in lamports - extremely small amount
+            "slippageBps": "2000"  # 20% slippage - extremely lenient
+        }
+        
+        logging.info(f"Checking tradability for {token_address}")
+        response = requests.get(quote_url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # If we got a valid quote, token is tradable
+            if "outAmount" in data and int(data["outAmount"]) > 0:
+                logging.info(f"Token {token_address} is tradable on Jupiter")
+                return True
+            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
+                logging.info(f"Token {token_address} is tradable on Jupiter")
+                return True
+        
+        # Check if there's a specific error about tradability
+        if response.status_code == 400:
+            try:
+                error_data = response.json()
+                if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                    logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter")
+                    return False
+            except:
+                pass
+        
+        logging.info(f"Token {token_address} appears to not be tradable on Jupiter")
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error checking tradability for {token_address}: {str(e)}")
+        return False
+
 def verify_token(token_address: str) -> bool:
     """Verify if a token is valid, has liquidity, and is worth trading."""
     # Skip SOL token
@@ -980,12 +1038,28 @@ def verify_token(token_address: str) -> bool:
     # Log verification steps
     logging.info(f"Verifying token {token_address}")
     
-    # For BONK and other known tokens, just return true immediately
+    # List of tokens we've verified to be tradable
+    TRADABLE_TOKENS = [
+        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+        # Add more tokens here that you've verified are tradable
+    ]
+    
+    if token_address in TRADABLE_TOKENS:
+        logging.info(f"Token {token_address} is in verified tradable list")
+        return True
+    
+    # For known tokens, check tradability
     for token in KNOWN_TOKENS:
         if token["address"] == token_address:
-            logging.info(f"Known token {token_address} ({token.get('symbol', '')}) - Automatically verified")
-            return True
-        
+            # Explicitly check tradability for all tokens
+            is_tradable = check_token_tradability(token_address)
+            if is_tradable:
+                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is tradable")
+                return True
+            else:
+                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is NOT tradable")
+                return False
+    
     # Check if token has a price
     token_price = get_token_price(token_address)
     if token_price is None:
@@ -994,8 +1068,13 @@ def verify_token(token_address: str) -> bool:
     else:
         logging.info(f"Token {token_address} price: {token_price} SOL")
     
-    # Skip liquidity check for known tokens - extremely permissive verification
-    logging.info(f"Token {token_address} PASSED verification with minimal checks")
+    # Check tradability
+    is_tradable = check_token_tradability(token_address)
+    if not is_tradable:
+        logging.info(f"Token {token_address} verification failed: Not tradable on Jupiter")
+        return False
+    
+    logging.info(f"Token {token_address} PASSED verification")
     return True
 
 def find_and_buy_promising_tokens():
@@ -1128,6 +1207,35 @@ def force_buy_bonk():
     logging.info("FORCE BUYING BONK TOKEN")
     logging.info("=" * 50)
     
+    # First verify BONK is actually tradable
+    is_tradable = check_token_tradability(bonk_address)
+    if not is_tradable:
+        logging.error("BONK token is not tradable on Jupiter! Trying a different token...")
+        
+        # Try a different token from our updated list
+        for token in KNOWN_TOKENS:
+            if token.get("tradable", False) and token["address"] != SOL_TOKEN_ADDRESS:
+                logging.info(f"Trying to buy {token['symbol']} instead of BONK...")
+                
+                if buy_token(token["address"], CONFIG['BUY_AMOUNT_SOL']):
+                    initial_price = get_token_price(token["address"])
+                    if initial_price:
+                        monitored_tokens[token["address"]] = {
+                            'initial_price': initial_price,
+                            'highest_price': initial_price,
+                            'partial_profit_taken': False,
+                            'buy_time': time.time()
+                        }
+                        logging.info(f"Successfully bought and monitoring {token['symbol']} at {initial_price}")
+                        return True
+                
+                # If we've tried one token and failed, continue to the next
+                logging.warning(f"Failed to buy {token['symbol']}, trying next token...")
+        
+        logging.error("Failed to buy any test token - Check logs for errors")
+        return False
+    
+    # If BONK is tradable, proceed with the buy
     if buy_token(bonk_address, CONFIG['BUY_AMOUNT_SOL']):
         initial_price = get_token_price(bonk_address)
         if initial_price:
@@ -1572,13 +1680,40 @@ def trading_loop():
             # Short sleep and continue
             time.sleep(5)
 
+def find_tradable_tokens():
+    """Find and update which tokens are actually tradable."""
+    logging.info("Checking tradability status of known tokens...")
+    
+    tradable_count = 0
+    for token in KNOWN_TOKENS:
+        if token["address"] != SOL_TOKEN_ADDRESS:
+            is_tradable = check_token_tradability(token["address"])
+            # Update the token's tradability status
+            token["tradable"] = is_tradable
+            if is_tradable:
+                tradable_count += 1
+                logging.info(f"{token['symbol']} ({token['address']}) is TRADABLE")
+            else:
+                logging.info(f"{token['symbol']} ({token['address']}) is NOT tradable")
+    
+    logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
+    return tradable_count > 0
+
 def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Force buy BONK right after initialization as a test
-        logging.info("Attempting to force buy BONK as startup test")
+        # First check which tokens are actually tradable
+        logging.info("Checking which tokens are tradable before starting trading...")
+        has_tradable_tokens = find_tradable_tokens()
+        
+        if not has_tradable_tokens:
+            logging.warning("No tradable tokens found in KNOWN_TOKENS list!")
+            logging.warning("Bot will continue but may not be able to execute trades")
+        
+        # Force buy BONK or another tradable token as a test
+        logging.info("Attempting to force buy a token as startup test")
         force_buy_bonk()
         
         # Continue with normal trading loop
