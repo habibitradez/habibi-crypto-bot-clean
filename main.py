@@ -38,15 +38,17 @@ CONFIG = {
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
-    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),
+    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x return
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
-    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '1')),  # Reduced from 2 to 1
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),  # Reduced to 1 second
+    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '1')),
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '15')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.05')),  # Reduced from 0.1 to 0.05
-    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '500'))  # Increased from 200 to 500
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Increased from 0.05 to 0.15
+    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '500')),
+    'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50'))  # Conservative limit
 }
 
 # Diagnostics flag - set to True for very verbose logging
@@ -651,9 +653,11 @@ def get_token_price(token_address: str) -> Optional[float]:
         }
         
         logging.info(f"Getting price for {token_address} using Jupiter API...")
-        response = requests.get(quote_url, params=params, timeout=10)
         
-        if response.status_code == 200:
+        # Use rate-limited API call
+        response = call_jupiter_api(quote_url, params)
+        
+        if response and response.status_code == 200:
             data = response.json()
             if "outAmount" in data:
                 # Calculate price as 1 SOL / outAmount (in token's smallest unit)
@@ -693,7 +697,7 @@ def get_token_price(token_address: str) -> Optional[float]:
                 return token_price
             else:
                 logging.warning(f"Invalid quote response for {token_address}: {json.dumps(data)}")
-        else:
+        elif response:
             logging.warning(f"Failed to get quote for {token_address}: {response.status_code} - {response.text}")
             
             # Check if response indicates token is not tradable and mark it
@@ -719,8 +723,10 @@ def get_token_price(token_address: str) -> Optional[float]:
             "slippageBps": "500"
         }
         
-        response = requests.get(quote_url, params=reverse_params, timeout=10)
-        if response.status_code == 200:
+        # Use rate-limited API call
+        response = call_jupiter_api(quote_url, reverse_params)
+        
+        if response and response.status_code == 200:
             data = response.json()
             if "outAmount" in data:
                 # Calculate price directly from the quote
@@ -760,7 +766,7 @@ def get_token_price(token_address: str) -> Optional[float]:
                 return token_price
             else:
                 logging.warning(f"Invalid reverse quote response for {token_address}: {json.dumps(data)}")
-        else:
+        elif response:
             logging.warning(f"Failed to get reverse quote for {token_address}: {response.status_code} - {response.text}")
             
             # Check if response indicates token is not tradable
@@ -1011,30 +1017,36 @@ def scan_for_new_tokens() -> List[str]:
     potential_tokens = []
     promising_meme_tokens = []
     
-    # Add known tokens to potential list to ensure we always have options
+    # Add known tradable tokens to potential list to ensure we always have options
     for token in KNOWN_TOKENS:
         if token["address"] not in potential_tokens and token["address"] != SOL_TOKEN_ADDRESS:
-            potential_tokens.append(token["address"])
-            if is_meme_token(token["address"], token.get("symbol", "")):
-                promising_meme_tokens.append(token["address"])
-                logging.info(f"Added known meme token to scan results: {token['symbol']} ({token['address']})")
+            if token.get("tradable", False):
+                potential_tokens.append(token["address"])
+                if is_meme_token(token["address"], token.get("symbol", "")):
+                    promising_meme_tokens.append(token["address"])
+                    logging.info(f"Added known tradable meme token to scan results: {token['symbol']} ({token['address']})")
     
-    # Get recent transactions involving token program
-    recent_txs = get_recent_transactions(CONFIG['TOKEN_SCAN_LIMIT'])
-    logging.info(f"Found {len(recent_txs)} transactions to analyze")
-    
-    # Analyze each transaction to find potential new tokens
-    for tx in recent_txs:
-        if "signature" in tx:
-            token_addresses = analyze_transaction(tx["signature"])
-            for token_address in token_addresses:
-                if token_address not in potential_tokens:
-                    potential_tokens.append(token_address)
-                    tokens_scanned += 1
-                    
-                    # Immediately check if it's likely a meme token
-                    if is_meme_token(token_address):
-                        promising_meme_tokens.append(token_address)
+    # Only scan for new tokens if we don't have enough tradable ones
+    if len(promising_meme_tokens) < 3:
+        # Get recent transactions involving token program
+        recent_txs = get_recent_transactions(CONFIG['TOKEN_SCAN_LIMIT'])
+        logging.info(f"Found {len(recent_txs)} transactions to analyze")
+        
+        # Analyze each transaction to find potential new tokens
+        for tx in recent_txs:
+            if "signature" in tx:
+                token_addresses = analyze_transaction(tx["signature"])
+                for token_address in token_addresses:
+                    if token_address not in potential_tokens:
+                        potential_tokens.append(token_address)
+                        tokens_scanned += 1
+                        
+                        # Immediately check if it's likely a meme token
+                        if is_meme_token(token_address):
+                            # Quick check if it's tradable
+                            if check_token_tradability(token_address):
+                                promising_meme_tokens.append(token_address)
+                                logging.info(f"Found promising tradable meme token: {token_address}")
     
     # First check and log if we found promising meme tokens
     if promising_meme_tokens:
@@ -1042,8 +1054,14 @@ def scan_for_new_tokens() -> List[str]:
         # Return the promising meme tokens first for faster processing
         return promising_meme_tokens
     
-    # If no promising meme tokens, return all potential tokens
-    logging.info(f"Found {len(potential_tokens)} potential new tokens")
+    # If no promising meme tokens, return only known tradable tokens
+    tradable_tokens = [t["address"] for t in KNOWN_TOKENS if t.get("tradable", False) and t["address"] != SOL_TOKEN_ADDRESS]
+    if tradable_tokens:
+        logging.info(f"No promising meme tokens found, returning {len(tradable_tokens)} known tradable tokens")
+        return tradable_tokens
+    
+    # If no tradable tokens at all, return all potential tokens as a last resort
+    logging.info(f"No tradable tokens found, returning all {len(potential_tokens)} potential tokens")
     return potential_tokens
 
 def check_token_tradability(token_address: str) -> bool:
@@ -1743,6 +1761,25 @@ def find_tradable_tokens():
     """Find and update which tokens are actually tradable."""
     logging.info("Checking tradability status of known tokens...")
     
+    # Calculate delay based on rate limit
+    rate_limit = CONFIG['JUPITER_RATE_LIMIT_PER_MIN']
+    delay_between_calls = 60.0 / (rate_limit * 0.8)  # Use 80% of limit for safety
+    logging.info(f"Using {delay_between_calls:.2f}s delay between API calls (rate limit: {rate_limit}/min)")
+    
+    global api_call_delay
+    api_call_delay = max(api_call_delay, delay_between_calls)
+    
+    # Create a list of additional tokens to check
+    additional_tokens = [
+        {"symbol": "COPE", "address": "8HGyAAB1yoM1ttS7pXjHMa3dukTFGQggnFFH3hJZgzQh", "tradable": True},
+        {"symbol": "MNGO", "address": "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac", "tradable": True},
+        {"symbol": "SLND", "address": "SLNDpmoWTVADgEdndyvWzroNL7zSi1dF9PC3xHGtPwp", "tradable": True},
+        {"symbol": "DUST", "address": "DUSTawucrTsGU8hcqRdHDCbuYhCPADMLM2VcCb8VnFnQ", "tradable": True},
+        {"symbol": "BERN", "address": "3j7SXnkP1BkxvKwUYLKJsZj88zQDZxA8MkUiHSp57o2g", "tradable": True},
+        {"symbol": "LDO", "address": "HZRCwxP2Vq9PCpPXooayhJ2bxTpo5xfpQrwB1svh332p", "tradable": True}
+    ]
+    
+    # First check existing tokens
     tradable_count = 0
     for token in KNOWN_TOKENS:
         if token["address"] != SOL_TOKEN_ADDRESS:
@@ -1754,6 +1791,18 @@ def find_tradable_tokens():
                 logging.info(f"{token['symbol']} ({token['address']}) is TRADABLE")
             else:
                 logging.info(f"{token['symbol']} ({token['address']}) is NOT tradable")
+    
+    # If no tradable tokens found, check the additional tokens
+    if tradable_count == 0:
+        logging.info("No tradable tokens found in KNOWN_TOKENS, checking additional tokens...")
+        for token in additional_tokens:
+            is_tradable = check_token_tradability(token["address"])
+            token["tradable"] = is_tradable
+            if is_tradable:
+                # Add this token to KNOWN_TOKENS
+                KNOWN_TOKENS.append(token)
+                tradable_count += 1
+                logging.info(f"Added new tradable token: {token['symbol']} ({token['address']})")
     
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
