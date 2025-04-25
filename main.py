@@ -1333,9 +1333,6 @@ def monitor_token_price(token_address: str) -> None:
         # Stop loss hit
         logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
         sell_token(token_address)  # Sell 100% of holdings
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
     
     if time_limit_hit:
         if price_change_pct > 0:
@@ -1347,6 +1344,16 @@ def monitor_token_price(token_address: str) -> None:
             logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
             sell_token(token_address)  # Sell 100% of holdings
         
-        # Remove from monitoring
-        del monitored_tokens[token_address]
-        return
+       def main():
+    """Main entry point."""
+    logging.info("============ BOT STARTING ============")
+    
+    if initialize():
+        # Force buy BONK right after initialization as a test
+        logging.info("Attempting to force buy BONK as startup test")
+        force_buy_bonk()
+        
+        # Continue with normal trading loop
+        trading_loop()
+    else:
+        logging.error("Failed to initialize bot. Please check configurations.")
