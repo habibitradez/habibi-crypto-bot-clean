@@ -472,11 +472,6 @@ def initialize():
     
     logging.info(f"Starting bot initialization...")
     
-    # Add a proper implementation for call_jupiter_api function if it's not present
-    if 'call_jupiter_api' not in globals():
-        logging.info("Adding call_jupiter_api function to globals")
-        globals()['call_jupiter_api'] = call_jupiter_api
-    
     if CONFIG['SIMULATION_MODE']:
         logging.info("Running in SIMULATION mode")
     else:
