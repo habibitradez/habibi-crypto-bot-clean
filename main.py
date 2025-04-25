@@ -101,7 +101,7 @@ SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
 KNOWN_TOKENS = [
     {"symbol": "SOL", "address": SOL_TOKEN_ADDRESS},
     {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "tradable": True},
-    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": False},
+    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": True},  # Updated: WIF is tradable based on logs
     {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi", "tradable": False},
     {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA", "tradable": False},
     {"symbol": "GIGA", "address": "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT", "tradable": False},
@@ -109,7 +109,7 @@ KNOWN_TOKENS = [
     {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW", "tradable": False},
     {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ", "tradable": False},
     {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF", "tradable": False},
-    # Updated list of known tradable tokens - verify these on your network
+    # Updated list of known tradable tokens
     {"symbol": "JUP", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "tradable": True},
     {"symbol": "ORCA", "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "tradable": True},
     {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "tradable": True},
@@ -524,7 +524,7 @@ def initialize():
             timeout=10
         )
         if rpc_response.status_code == 200:
-            logging.info(f"Successfully connected to QuickNode RPC (status {rpc_response.status_code})")
+            logging.info(f"Successfully connected to Solana RPC (status {rpc_response.status_code})")
             # No need to check getLatestBlockhash here since we'll use it during transactions
             # Just verify we got a valid response from getHealth
             if "result" in rpc_response.json():
@@ -533,10 +533,10 @@ def initialize():
                 logging.warning(f"RPC connection might have issues: {rpc_response.text}")
                 # Still continue, as this might just be a format issue
         else:
-            logging.error(f"Failed to connect to QuickNode RPC: {rpc_response.status_code}")
+            logging.error(f"Failed to connect to Solana RPC: {rpc_response.status_code}")
             return False
     except Exception as e:
-        logging.error(f"Error connecting to QuickNode RPC: {str(e)}")
+        logging.error(f"Error connecting to Solana RPC: {str(e)}")
         logging.error(traceback.format_exc())
         return False
     
@@ -544,9 +544,10 @@ def initialize():
     try:
         logging.info("Testing Jupiter API connection...")
         jupiter_test_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        # Use BONK for testing as we know it works
         test_params = {
             "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+            "outputMint": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
             "amount": "100000000",  # 0.1 SOL in lamports
             "slippageBps": "500"
         }
@@ -559,9 +560,9 @@ def initialize():
                 try:
                     response_data = jupiter_response.json()
                     if "outAmount" in response_data:
-                        logging.info(f"Jupiter API test quote: SOL → USDC. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
+                        logging.info(f"Jupiter API test quote: SOL → BONK. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
                     elif "data" in response_data:
-                        logging.info(f"Jupiter API test quote: SOL → USDC. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
+                        logging.info(f"Jupiter API test quote: SOL → BONK. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
                     else:
                         logging.info(f"Jupiter test response: {json.dumps(response_data, indent=2)}")
                 except Exception as e:
@@ -632,6 +633,12 @@ def get_token_price(token_address: str) -> Optional[float]:
     if token_address == SOL_TOKEN_ADDRESS:
         return 1.0
     
+    # Skip tokens we know are not tradable from our KNOWN_TOKENS list
+    for token in KNOWN_TOKENS:
+        if token["address"] == token_address and token.get("tradable") is False:
+            logging.info(f"Skipping price check for known non-tradable token: {token_address} ({token.get('symbol', '')})")
+            return None
+    
     # For other tokens, try Jupiter API
     try:
         # Use Jupiter v6 quote API
@@ -659,6 +666,12 @@ def get_token_price(token_address: str) -> Optional[float]:
                 price_cache[token_address] = token_price
                 price_cache_time[token_address] = time.time()
                 
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
                 return token_price
             elif "data" in data and "outAmount" in data["data"]:
                 # Older API format
@@ -671,11 +684,31 @@ def get_token_price(token_address: str) -> Optional[float]:
                 price_cache[token_address] = token_price
                 price_cache_time[token_address] = time.time()
                 
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
                 return token_price
             else:
                 logging.warning(f"Invalid quote response for {token_address}: {json.dumps(data)}")
         else:
             logging.warning(f"Failed to get quote for {token_address}: {response.status_code} - {response.text}")
+            
+            # Check if response indicates token is not tradable and mark it
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                        logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter")
+                        # Mark the token as non-tradable in our list if it exists
+                        for token in KNOWN_TOKENS:
+                            if token["address"] == token_address:
+                                token["tradable"] = False
+                                break
+                except:
+                    pass
         
         # Method 2: Try reverse direction (token to SOL)
         logging.info(f"Trying reverse direction for {token_address} price...")
@@ -700,6 +733,12 @@ def get_token_price(token_address: str) -> Optional[float]:
                 price_cache[token_address] = token_price
                 price_cache_time[token_address] = time.time()
                 
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
                 return token_price
             elif "data" in data and "outAmount" in data["data"]:
                 # Older API format
@@ -712,11 +751,31 @@ def get_token_price(token_address: str) -> Optional[float]:
                 price_cache[token_address] = token_price
                 price_cache_time[token_address] = time.time()
                 
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
                 return token_price
             else:
                 logging.warning(f"Invalid reverse quote response for {token_address}: {json.dumps(data)}")
         else:
             logging.warning(f"Failed to get reverse quote for {token_address}: {response.status_code} - {response.text}")
+            
+            # Check if response indicates token is not tradable
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                        logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter (reverse test)")
+                        # Mark the token as non-tradable in our list if it exists
+                        for token in KNOWN_TOKENS:
+                            if token["address"] == token_address:
+                                token["tradable"] = False
+                                break
+                except:
+                    pass
         
         # If we have a cached price, use that as fallback
         if token_address in price_cache:
