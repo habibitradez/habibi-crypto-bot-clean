@@ -1312,4 +1312,41 @@ def monitor_token_price(token_address: str) -> None:
     time_limit_hit = time_elapsed_minutes >= CONFIG['TIME_LIMIT_MINUTES']
     
     # Log current status
-    logging.info(f"Token {token_address} - Current: {price_change_pct
+    logging.info(f"Token {token_address} - Current: {price_change_pct:.2f}% change, Time: {time_elapsed_minutes:.1f} min")
+    
+    # Strategy execution
+    if not monitored_tokens[token_address]['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_PERCENT']:
+        # Take partial profit at PARTIAL_PROFIT_PERCENT
+        logging.info(f"Taking partial profit for {token_address} at {price_change_pct:.2f}% gain")
+        if sell_token(token_address, 50):  # Sell 50% of holdings
+            monitored_tokens[token_address]['partial_profit_taken'] = True
+    
+    if price_change_pct >= CONFIG['PROFIT_TARGET_PERCENT']:
+        # Take full profit at PROFIT_TARGET_PERCENT
+        logging.info(f"Taking full profit for {token_address} at {price_change_pct:.2f}% gain")
+        sell_token(token_address)  # Sell 100% of remaining holdings
+        # Remove from monitoring
+        del monitored_tokens[token_address]
+        return
+    
+    if price_change_pct <= -CONFIG['STOP_LOSS_PERCENT']:
+        # Stop loss hit
+        logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
+        sell_token(token_address)  # Sell 100% of holdings
+        # Remove from monitoring
+        del monitored_tokens[token_address]
+        return
+    
+    if time_limit_hit:
+        if price_change_pct > 0:
+            # Time limit hit with profit
+            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% gain")
+            sell_token(token_address)  # Sell 100% of holdings
+        else:
+            # Time limit hit with loss
+            logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
+            sell_token(token_address)  # Sell 100% of holdings
+        
+        # Remove from monitoring
+        del monitored_tokens[token_address]
+        return
