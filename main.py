@@ -992,6 +992,9 @@ def get_token_price(token_address: str) -> Optional[float]:
             price_cache_time[token_address] = time.time()
             logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
             return random_price
+    except Exception as e:
+        logging.error(f"Error getting price for {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
                 
     except Exception as e:
         logging.error(f"Error getting price for {token_address}: {str(e)}")
