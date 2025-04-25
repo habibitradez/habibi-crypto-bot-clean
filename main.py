@@ -1328,7 +1328,10 @@ def monitor_token_price(token_address: str) -> None:
     
     # Calculate price change percentage
     initial_price = monitored_tokens[token_address]['initial_price']
-    pricedef monitor_token_price(token_address: str) -> None:
+    price_change_pct = ((current_price - initial_price) / initial_price) * 100
+    
+    # Check if enough time has passed
+    timedef monitor_token_price(token_address: str) -> None:
     """Monitor a token's price and execute the trading strategy."""
     # If we don't have a buy timestamp, record now
     if token_address not in token_buy_timestamps:
