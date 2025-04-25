@@ -314,35 +314,38 @@ class JupiterSwapHandler:
                 logging.info(f"Quote response status: {response.status_code}")
                 if response.status_code == 200:
                     try:
-                        response_data = response.json()
-                        # For Jupiter v6 API, the JSON directly contains the quote data
-                        # Check for outAmount to verify it's a valid quote
-                        if "outAmount" in response_data:
-                            logging.info(f"Quote data received. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
-                            return response_data
-                        elif "data" in response_data and "outAmount" in response_data["data"]:
-                            logging.info(f"Quote data received. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
-                            return response_data["data"]
-                        else:
-                            logging.info(f"Quote response: {json.dumps(response_data, indent=2)}")
+                        logging.info(f"Quote response preview: {response.text[:200]}...")
                     except Exception as e:
-                        logging.error(f"Error parsing quote response: {str(e)}")
+                        logging.error(f"Error logging response preview: {str(e)}")
             
             if response.status_code == 200:
-                data = response.json()
-                # Check if the response is directly the quote data (v6 API format)
-                if "outAmount" in data:
-                    logging.info(f"Quote received successfully")
-                    return data
-                # Check for v4/v5 API format
-                elif "data" in data:
-                    logging.info(f"Quote received successfully")
-                    return data["data"]
-                else:
-                    logging.warning(f"Quote response has unexpected format: {json.dumps(data)}")
+                try:
+                    data = response.json()
+                    
+                    # Debug log the response structure
+                    if ULTRA_DIAGNOSTICS:
+                        logging.info(f"Quote response keys: {list(data.keys())}")
+                    
+                    # Check if the response is directly the quote data (v6 API format)
+                    if "outAmount" in data:
+                        logging.info(f"Quote received successfully (v6 format)")
+                        return data
+                    # Check for v4/v5 API format
+                    elif "data" in data and "outAmount" in data["data"]:
+                        logging.info(f"Quote received successfully (v4/v5 format)")
+                        return data["data"]
+                    else:
+                        # Log the full response for debugging
+                        if ULTRA_DIAGNOSTICS:
+                            logging.warning(f"Unexpected quote response format: {json.dumps(data)}")
+                        logging.warning(f"Quote response has unexpected format")
+                        return None
+                    
+                except json.JSONDecodeError:
+                    logging.error(f"Failed to parse quote response as JSON: {response.text[:200]}...")
                     return None
             
-            logging.warning(f"Failed to get quote: {response.status_code} - {response.text}")
+            logging.warning(f"Failed to get quote: {response.status_code} - {response.text[:200]}")
             return None
         except Exception as e:
             logging.error(f"Error getting quote: {str(e)}")
@@ -352,6 +355,10 @@ class JupiterSwapHandler:
     def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
         """Prepare a swap transaction using the quote data."""
         try:
+            # Add more diagnostic logging
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Preparing swap with quote data keys: {list(quote_data.keys())}")
+                
             # For Jupiter v6 API, the payload format is different
             payload = {
                 "quoteResponse": quote_data,
@@ -361,6 +368,12 @@ class JupiterSwapHandler:
             
             logging.info(f"Preparing swap transaction for user: {user_public_key}")
             logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
+            
+            # Log the payload structure
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Swap request payload keys: {list(payload.keys())}")
+                if 'quoteResponse' in payload:
+                    logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
             
             response = requests.post(
                 f"{self.api_url}/swap",
@@ -373,23 +386,33 @@ class JupiterSwapHandler:
                 logging.info(f"Swap preparation response status: {response.status_code}")
                 if response.status_code == 200:
                     try:
-                        response_data = response.json()
-                        logging.info(f"Swap transaction prepared. Transaction data keys: {list(response_data.keys())}")
+                        logging.info(f"Swap response preview: {response.text[:200]}...")
                     except Exception as e:
-                        logging.error(f"Error parsing swap preparation response: {str(e)}")
+                        logging.error(f"Error logging swap response preview: {str(e)}")
             
             if response.status_code == 200:
-                swap_response = response.json()
-                
-                # Check if the response contains the transaction
-                if "swapTransaction" in swap_response:
-                    logging.info("Swap transaction prepared successfully")
-                    return swap_response
-                else:
-                    logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
+                try:
+                    swap_response = response.json()
+                    
+                    # Debug log the response structure
+                    if ULTRA_DIAGNOSTICS:
+                        logging.info(f"Swap response keys: {list(swap_response.keys())}")
+                    
+                    # Check if the response contains the transaction
+                    if "swapTransaction" in swap_response:
+                        logging.info("Swap transaction prepared successfully")
+                        return swap_response
+                    else:
+                        if ULTRA_DIAGNOSTICS:
+                            logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
+                        logging.warning(f"Swap response does not contain swapTransaction key")
+                        return None
+                        
+                except json.JSONDecodeError:
+                    logging.error(f"Failed to parse swap response as JSON: {response.text[:200]}...")
                     return None
             
-            logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text}")
+            logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text[:200]}")
             return None
         except Exception as e:
             logging.error(f"Error preparing swap transaction: {str(e)}")
@@ -1305,6 +1328,38 @@ def monitor_token_price(token_address: str) -> None:
     
     # Calculate price change percentage
     initial_price = monitored_tokens[token_address]['initial_price']
+    pricedef monitor_token_price(token_address: str) -> None:
+    """Monitor a token's price and execute the trading strategy."""
+    # If we don't have a buy timestamp, record now
+    if token_address not in token_buy_timestamps:
+        token_buy_timestamps[token_address] = time.time()
+    
+    # Get initial price if not already monitored
+    if token_address not in monitored_tokens:
+        initial_price = get_token_price(token_address)
+        if initial_price:
+            monitored_tokens[token_address] = {
+                'initial_price': initial_price,
+                'highest_price': initial_price,
+                'partial_profit_taken': False,
+                'buy_time': token_buy_timestamps[token_address]
+            }
+        else:
+            logging.warning(f"Could not get initial price for {token_address}")
+            return
+    
+    # Get current price
+    current_price = get_token_price(token_address)
+    if not current_price:
+        logging.warning(f"Could not get current price for {token_address}")
+        return
+    
+    # Update highest price if current price is higher
+    if current_price > monitored_tokens[token_address]['highest_price']:
+        monitored_tokens[token_address]['highest_price'] = current_price
+    
+    # Calculate price change percentage
+    initial_price = monitored_tokens[token_address]['initial_price']
     price_change_pct = ((current_price - initial_price) / initial_price) * 100
     
     # Check if enough time has passed
@@ -1333,6 +1388,9 @@ def monitor_token_price(token_address: str) -> None:
         # Stop loss hit
         logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
         sell_token(token_address)  # Sell 100% of holdings
+        # Remove from monitoring
+        del monitored_tokens[token_address]
+        return
     
     if time_limit_hit:
         if price_change_pct > 0:
@@ -1344,7 +1402,206 @@ def monitor_token_price(token_address: str) -> None:
             logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
             sell_token(token_address)  # Sell 100% of holdings
         
-       def main():
+        # Remove from monitoring
+        del monitored_tokens[token_address]
+
+def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):  # Default to BONK
+    """Test the entire buy flow with detailed logging."""
+    logging.info(f"====== TESTING BUY FLOW FOR {token_address} ======")
+    
+    # Step 1: Get token price
+    logging.info("Step 1: Getting token price")
+    token_price = get_token_price(token_address)
+    logging.info(f"Token price: {token_price} SOL")
+    
+    if not token_price:
+        logging.error("Failed at step 1: Could not get token price")
+        return False
+    
+    # Step 2: Check liquidity
+    logging.info("Step 2: Checking liquidity")
+    has_liquidity = check_token_liquidity(token_address)
+    logging.info(f"Has liquidity: {has_liquidity}")
+    
+    if not has_liquidity:
+        logging.error("Failed at step 2: Token does not have liquidity")
+        return False
+    
+    # Step 3: Get Jupiter quote
+    logging.info("Step 3: Getting Jupiter quote")
+    amount_lamports = int(CONFIG['BUY_AMOUNT_SOL'] * 1000000000)
+    
+    quote_data = jupiter_handler.get_quote(
+        input_mint=SOL_TOKEN_ADDRESS,
+        output_mint=token_address,
+        amount=str(amount_lamports),
+        slippage_bps="1000"
+    )
+    
+    if quote_data:
+        logging.info(f"Quote data received with keys: {list(quote_data.keys())}")
+    else:
+        logging.error("Failed at step 3: Could not get Jupiter quote")
+        return False
+    
+    # Step 4: Prepare swap transaction
+    logging.info("Step 4: Preparing swap transaction")
+    swap_data = jupiter_handler.prepare_swap_transaction(
+        quote_data=quote_data,
+        user_public_key=str(wallet.public_key)
+    )
+    
+    if swap_data:
+        logging.info(f"Swap data received with keys: {list(swap_data.keys())}")
+    else:
+        logging.error("Failed at step 4: Could not prepare swap transaction")
+        return False
+    
+    # Step 5: Deserialize transaction
+    logging.info("Step 5: Deserializing transaction")
+    transaction = jupiter_handler.deserialize_transaction(swap_data)
+    
+    if transaction:
+        logging.info(f"Transaction deserialized successfully")
+    else:
+        logging.error("Failed at step 5: Could not deserialize transaction")
+        return False
+    
+    # Step 6: Sign and submit transaction (only if not in simulation)
+    if not CONFIG['SIMULATION_MODE']:
+        logging.info("Step 6: Signing and submitting transaction")
+        signature = wallet.sign_and_submit_transaction(transaction)
+        
+        if signature:
+            logging.info(f"Transaction submitted successfully: {signature}")
+        else:
+            logging.error("Failed at step 6: Could not sign and submit transaction")
+            return False
+    
+    logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
+    return True
+
+def find_and_buy_promising_tokens():
+    """Aggressively scan for and buy promising meme tokens."""
+    logging.info("Scanning for promising meme tokens...")
+    
+    # Limit how many tokens we'll buy in one go
+    max_buys = 3
+    buys_this_round = 0
+    
+    # Scan for potential tokens
+    potential_tokens = scan_for_new_tokens()
+    meme_tokens = [t for t in potential_tokens if is_meme_token(t)]
+    
+    logging.info(f"Found {len(meme_tokens)} potential meme tokens")
+    
+    for token_address in meme_tokens:
+        # Skip if we've reached max buys for this round
+        if buys_this_round >= max_buys:
+            break
+            
+        # Skip tokens we're already monitoring
+        if token_address in monitored_tokens:
+            continue
+        
+        # Check cooldown
+        if token_address in token_buy_timestamps:
+            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                continue
+        
+        # Verify token is suitable
+        if verify_token(token_address):
+            # Check liquidity 
+            if check_token_liquidity(token_address):
+                logging.info(f"Found promising meme token with liquidity: {token_address}")
+                
+                # Buy token with more aggressive buy amount
+                aggressive_buy_amount = CONFIG['BUY_AMOUNT_SOL'] * 1.5  # 50% more than normal
+                if buy_token(token_address, aggressive_buy_amount):
+                    logging.info(f"Successfully bought promising meme token: {token_address}")
+                    buys_this_round += 1
+                else:
+                    logging.warning(f"Failed to buy promising meme token: {token_address}")
+    
+    logging.info(f"Completed aggressive token buying round, bought {buys_this_round} tokens")
+    return buys_this_round
+
+def trading_loop():
+    """Main trading loop."""
+    global iteration_count, last_status_time, errors_encountered
+    
+    logging.info("Starting main trading loop")
+    
+    while True:
+        iteration_count += 1
+        
+        try:
+            # Print status every 5 minutes
+            if time.time() - last_status_time > 300:  # 5 minutes
+                logging.info(f"===== STATUS UPDATE =====")
+                logging.info(f"Tokens scanned: {tokens_scanned}")
+                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
+                logging.info(f"Buy attempts: {buy_attempts}, successes: {buy_successes}")
+                logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
+                logging.info(f"Errors encountered: {errors_encountered}")
+                logging.info(f"Iteration count: {iteration_count}")
+                
+                # Also log wallet balance in production mode
+                if not CONFIG['SIMULATION_MODE'] and wallet:
+                    balance = wallet.get_balance()
+                    logging.info(f"Current wallet balance: {balance} SOL")
+                
+                last_status_time = time.time()
+            
+            # Monitor tokens we're already trading
+            for token_address in list(monitored_tokens.keys()):
+                monitor_token_price(token_address)
+            
+            # Only look for new tokens if we have capacity
+            if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
+                # Scan for new tokens
+                potential_tokens = scan_for_new_tokens()
+                
+                for token_address in potential_tokens:
+                    # Skip tokens we're already monitoring
+                    if token_address in monitored_tokens:
+                        continue
+                    
+                    # Check if we've bought this token recently (cooldown period)
+                    if token_address in token_buy_timestamps:
+                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                            continue
+                    
+                    # Skip if we're at max concurrent tokens
+                    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
+                        break
+                    
+                    # Verify token is suitable for trading
+                    if verify_token(token_address):
+                        # Check liquidity before buying
+                        if check_token_liquidity(token_address):
+                            logging.info(f"Found promising token with liquidity: {token_address}")
+                            
+                            # Attempt to buy the token
+                            if buy_token(token_address, CONFIG['BUY_AMOUNT_SOL']):
+                                logging.info(f"Successfully bought token: {token_address}")
+                                # Monitor token price will be handled in the next iteration
+                            else:
+                                logging.warning(f"Failed to buy token: {token_address}")
+            
+            # Sleep before next iteration
+            time.sleep(CONFIG['CHECK_INTERVAL_MS'] / 1000)  # Convert ms to seconds
+            
+        except Exception as e:
+            errors_encountered += 1
+            logging.error(f"Error in main loop: {str(e)}")
+            logging.error(traceback.format_exc())
+            # Short sleep and continue
+            time.sleep(5)
+
+def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
     
@@ -1357,3 +1614,7 @@ def monitor_token_price(token_address: str) -> None:
         trading_loop()
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
+
+# Add this at the end of your file
+if __name__ == "__main__":
+    main()
