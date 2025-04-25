@@ -660,8 +660,33 @@ def get_token_price(token_address: str) -> Optional[float]:
         
         logging.info(f"Getting price for {token_address} using Jupiter API...")
         
-        # Use rate-limited API call
-        response = call_jupiter_api(quote_url, params)
+        # Make the API call directly instead of using call_jupiter_api
+        # Enforce rate limiting
+        global last_api_call_time, api_call_delay
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds before Jupiter API call")
+            time.sleep(sleep_time)
+        
+        # Make the API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=params, timeout=10)
+        
+        # Check for rate limiting
+        if response.status_code == 429:
+            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
+            time.sleep(2)  # Wait longer on rate limit
+            
+            # Try again with increased delay
+            last_api_call_time = time.time()
+            response = requests.get(quote_url, params=params, timeout=10)
+            
+            # Update delay if still rate limited
+            if response.status_code == 429:
+                api_call_delay += 0.5  # Increase delay
+                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
         
         if response and response.status_code == 200:
             data = response.json()
