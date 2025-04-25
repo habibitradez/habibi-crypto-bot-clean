@@ -80,6 +80,12 @@ MEME_TOKEN_PATTERNS = [
     "smog", "sunny", "saga", "spx", "degods", "wepe", "bab"
 ]
 
+# Global Variables Section - Defined at the top level
+# --------------------------------------------------
+# Rate limiting variables
+last_api_call_time = 0
+api_call_delay = 1.5  # Start with 1.5 seconds between calls (40 calls/min)
+
 # Track tokens we're monitoring
 monitored_tokens = {}
 token_buy_timestamps = {}
@@ -1766,8 +1772,11 @@ def find_tradable_tokens():
     delay_between_calls = 60.0 / (rate_limit * 0.8)  # Use 80% of limit for safety
     logging.info(f"Using {delay_between_calls:.2f}s delay between API calls (rate limit: {rate_limit}/min)")
     
-    global api_call_delay
-    api_call_delay = max(api_call_delay, delay_between_calls)
+    # Update the global rate limit
+    global last_api_call_time
+    last_api_call_time = time.time()  # Reset timer
+    
+    # Don't try to modify api_call_delay here
     
     # Create a list of additional tokens to check
     additional_tokens = [
