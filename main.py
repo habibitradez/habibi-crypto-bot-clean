@@ -34,7 +34,7 @@ logging.basicConfig(
 # Configuration from environment variables with fallbacks
 CONFIG = {
     'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
-    'JUPITER_API_URL': 'https://quote-api.jup.ag/v6',  # Updated to v6 API
+    'JUPITER_API_URL': 'https://quote-api.jup.ag/v6',  # Using the quote API v6
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
@@ -327,12 +327,14 @@ class JupiterSwapHandler:
                 "outputMint": output_mint,
                 "amount": amount,
                 "slippageBps": slippage_bps,
-                "onlyDirectRoutes": "false"
+                "onlyDirectRoutes": "false",
+                # Remove asLegacyTransaction parameter if it exists in other locations
             }
             
             logging.info(f"Getting quote: {input_mint} → {output_mint}, amount: {amount}, slippage: {slippage_bps}bps")
             
-            response = requests.get(f"{self.api_url}/quote", params=params, timeout=10)
+            # For Jupiter v6, the quote endpoint is the base URL itself
+            response = requests.get(self.api_url, params=params, timeout=10)
             
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Quote response status: {response.status_code}")
@@ -387,7 +389,9 @@ class JupiterSwapHandler:
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": user_public_key,
-                "wrapUnwrapSOL": True
+                "wrapUnwrapSOL": True,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto"
             }
             
             logging.info(f"Preparing swap transaction for user: {user_public_key}")
@@ -399,8 +403,9 @@ class JupiterSwapHandler:
                 if 'quoteResponse' in payload:
                     logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
             
+            # For Jupiter v6, the swap endpoint is /swap-instructions
             response = requests.post(
-                f"{self.api_url}/swap",
+                "https://quote-api.jup.ag/v6/swap",
                 json=payload,
                 headers={"Content-Type": "application/json"},
                 timeout=10
@@ -493,8 +498,8 @@ def get_token_price(token_address: str) -> Optional[float]:
     
     # For other tokens, try Jupiter API
     try:
-        # Use Jupiter v6 quote API
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        # Use Jupiter v6 quote API (the base URL is already the quote endpoint)
+        quote_url = CONFIG['JUPITER_API_URL']
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
@@ -741,7 +746,7 @@ def initialize():
     # Test Jupiter API connection
     try:
         logging.info("Testing Jupiter API connection...")
-        jupiter_test_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        jupiter_test_url = CONFIG['JUPITER_API_URL']
         # Use BONK for testing as we know it works
         test_params = {
             "inputMint": SOL_TOKEN_ADDRESS,
@@ -830,7 +835,7 @@ def check_token_liquidity(token_address: str) -> bool:
         logging.info(f"Checking liquidity for {token_address}...")
         
         # Try to get a quote for a tiny amount to check liquidity
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        quote_url = CONFIG['JUPITER_API_URL']
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
@@ -1078,7 +1083,7 @@ def check_token_tradability(token_address: str) -> bool:
     """Check if a token is tradable on Jupiter API."""
     try:
         # Try to get a quote for a tiny amount to check tradability
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        quote_url = CONFIG['JUPITER_API_URL']
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
@@ -1378,13 +1383,13 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             time.sleep(sleep_time)
         
         # Get the quote with rate limiting
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/quote"
+        quote_url = CONFIG['JUPITER_API_URL']
         quote_params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
             "amount": str(amount_lamports),
-            "slippageBps": "1000",  # 10% slippage to ensure transaction goes through
-            "asLegacyTransaction": False
+            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
+            # Removed asLegacyTransaction parameter as it's causing errors
         }
         
         last_api_call_time = time.time()
@@ -1428,14 +1433,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
-            "asLegacyTransaction": False,
+            # Removed asLegacyTransaction parameter
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto"
         }
         
         last_api_call_time = time.time()
         swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/swap",
+            "https://quote-api.jup.ag/v6/swap",
             json=swap_payload,
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -1451,7 +1456,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             # Try again
             last_api_call_time = time.time()
             swap_response = requests.post(
-                f"{CONFIG['JUPITER_API_URL']}/swap",
+                "https://quote-api.jup.ag/v6/swap",
                 json=swap_payload,
                 headers={"Content-Type": "application/json"},
                 timeout=10
