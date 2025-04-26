@@ -1492,15 +1492,26 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                     from solders.transaction import VersionedTransaction
                     transaction = VersionedTransaction.from_bytes(tx_bytes)
                     logging.info("Successfully parsed as VersionedTransaction")
-                    # For versioned transactions, we need to sign differently
-                    from solders.signature import Signature
-                    transaction.sign([wallet.keypair], transaction.message.recent_blockhash)
                     is_versioned = True
-                except:
+                except Exception as e:
                     transaction = Transaction.from_bytes(tx_bytes)
                     logging.info("Successfully parsed as legacy Transaction")
-                    transaction.sign([wallet.keypair])
                     is_versioned = False
+                
+                # For versioned transactions from Jupiter, they often come partially signed
+                # We need to add our signature
+                if is_versioned:
+                    # Get the message to sign
+                    message = transaction.message
+                    # Sign the message
+                    signature = wallet.keypair.sign_message(message.serialize())
+                    # Add the signature to the transaction
+                    transaction.signatures[0] = signature
+                    logging.info("Added signature to VersionedTransaction")
+                else:
+                    # For legacy transactions
+                    transaction.sign([wallet.keypair])
+                    logging.info("Signed legacy Transaction")
                 
                 # Serialize the signed transaction
                 serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
