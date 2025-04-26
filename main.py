@@ -1490,51 +1490,51 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # For Jupiter transactions, we'll use a simple approach
+            # Decode the transaction bytes - try base64 first, then base58
             try:
-                # Decode the transaction bytes
                 tx_bytes = base64.b64decode(serialized_tx)
-                
-                # Try as legacy transaction (since we requested legacy format)
-                transaction = Transaction.from_bytes(tx_bytes)
-                logging.info("Successfully parsed as legacy Transaction")
-                
-                # Sign the transaction
-                transaction.sign([wallet.keypair])
-                
-                # Serialize the signed transaction
-                serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-                
-            except Exception as e:
-                logging.error(f"Error signing transaction: {str(e)}")
-                logging.error(traceback.format_exc())
-                # If signing fails, try submitting as-is (Jupiter may have pre-signed)
-                serialized_signed_tx = serialized_tx
+            except Exception:
+                try:
+                    tx_bytes = base58.b58decode(serialized_tx)
+                except Exception as e:
+                    logging.error(f"Failed to decode transaction: {str(e)}")
+                    return False
             
-            # Submit the signed transaction
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_signed_tx, 
-                {
-                    "encoding": "base64", 
-                    "skipPreflight": False,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 5
-                }
-            ])
-            
-            if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                # Record buy timestamp
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                return True
-            else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
+            # For Jupiter transactions, we'll use the approach that works in the Discord bot
+            # No need to deserialize and reconstruct - just submit the raw transaction
+            try:
+                # The transaction from Jupiter should already be signed for everything except our wallet
+                # We just need to send it as-is
+                
+                # Submit the transaction directly
+                response = wallet._rpc_call("sendTransaction", [
+                    serialized_tx,  # Use the original base64 string
+                    {
+                        "encoding": "base64", 
+                        "skipPreflight": True,  # Skip preflight like in the Discord bot
+                        "preflightCommitment": "confirmed",
+                        "maxRetries": 5
+                    }
+                ])
+                
+                if "result" in response:
+                    signature = response["result"]
+                    logging.info(f"Transaction submitted successfully: {signature}")
+                    # Record buy timestamp
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    return True
                 else:
-                    logging.error(f"Failed to submit transaction - unexpected response format")
+                    if "error" in response:
+                        error_message = response.get("error", {}).get("message", "Unknown error")
+                        logging.error(f"Transaction error: {error_message}")
+                    else:
+                        logging.error(f"Failed to submit transaction - unexpected response format")
+                    return False
+                    
+            except Exception as e:
+                logging.error(f"Error submitting transaction: {str(e)}")
+                logging.error(traceback.format_exc())
                 return False
                 
         except Exception as e:
