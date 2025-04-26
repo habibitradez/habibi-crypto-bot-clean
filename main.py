@@ -628,6 +628,7 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
     
     return False
 
+    # Start with a fresh function to avoid indentation issues
 def get_token_price(token_address: str) -> Optional[float]:
     """Get token price in SOL using Jupiter API with fallback methods."""
     # Check cache first if it's recent (less than 30 seconds old)
@@ -660,7 +661,7 @@ def get_token_price(token_address: str) -> Optional[float]:
         
         logging.info(f"Getting price for {token_address} using Jupiter API...")
         
-        # Make the API call directly with rate limiting
+        # Rate limiting
         global last_api_call_time, api_call_delay
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
@@ -669,23 +670,171 @@ def get_token_price(token_address: str) -> Optional[float]:
                 logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds before Jupiter API call")
             time.sleep(sleep_time)
         
-        # Make the API call
+        # Make API call
         last_api_call_time = time.time()
         response = requests.get(quote_url, params=params, timeout=10)
         
-        # Check for rate limiting
+        # Handle rate limiting
         if response.status_code == 429:
             logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
-            time.sleep(2)  # Wait longer on rate limit
-            
-            # Try again with increased delay
+            time.sleep(2)
             last_api_call_time = time.time()
             response = requests.get(quote_url, params=params, timeout=10)
             
-            # Update delay if still rate limited
             if response.status_code == 429:
-                api_call_delay += 0.5  # Increase delay
+                api_call_delay += 0.5
                 logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
+        
+        # Process successful response
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                out_amount = int(data["outAmount"])
+                token_price = 1.0 / (out_amount / 1000000000)
+                
+                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Mark as tradable
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                out_amount = int(data["data"]["outAmount"])
+                token_price = 1.0 / (out_amount / 1000000000)
+                
+                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Mark as tradable
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            else:
+                logging.warning(f"Invalid quote response for {token_address}")
+        elif response.status_code == 400:
+            logging.warning(f"Failed to get quote for {token_address}: {response.status_code}")
+            
+            try:
+                error_data = response.json()
+                if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                    logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter")
+                    for token in KNOWN_TOKENS:
+                        if token["address"] == token_address:
+                            token["tradable"] = False
+                            break
+            except:
+                pass
+        else:
+            logging.warning(f"Failed to get quote for {token_address}: {response.status_code}")
+        
+        # Try reverse direction
+        logging.info(f"Trying reverse direction for {token_address} price...")
+        reverse_params = {
+            "inputMint": token_address,
+            "outputMint": SOL_TOKEN_ADDRESS,
+            "amount": "1000000000",
+            "slippageBps": "500"
+        }
+        
+        # Rate limiting for reverse call
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds before Jupiter API call")
+            time.sleep(sleep_time)
+        
+        # Make reverse API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=reverse_params, timeout=10)
+        
+        # Handle rate limiting
+        if response.status_code == 429:
+            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
+            time.sleep(2)
+            last_api_call_time = time.time()
+            response = requests.get(quote_url, params=reverse_params, timeout=10)
+            
+            if response.status_code == 429:
+                api_call_delay += 0.5
+                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
+        
+        # Process successful reverse response
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                out_amount = int(data["outAmount"])
+                token_price = out_amount / 1000000000
+                
+                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Mark as tradable
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                out_amount = int(data["data"]["outAmount"])
+                token_price = out_amount / 1000000000
+                
+                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Mark as tradable
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            else:
+                logging.warning(f"Invalid reverse quote response for {token_address}")
+        
+        # Use fallbacks
+        if token_address in price_cache:
+            logging.warning(f"Using cached price for {token_address} due to API issue: {price_cache[token_address]} SOL")
+            return price_cache[token_address]
+            
+        for token in KNOWN_TOKENS:
+            if token["address"] == token_address and "price_estimate" in token:
+                logging.warning(f"Using predefined price estimate for {token_address}: {token['price_estimate']} SOL")
+                return token["price_estimate"]
+                
+        if CONFIG['SIMULATION_MODE']:
+            random_price = random.uniform(0.00000001, 0.001)
+            price_cache[token_address] = random_price
+            price_cache_time[token_address] = time.time()
+            logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
+            return random_price
+            
+    except Exception as e:
+        logging.error(f"Error getting price for {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+    
+    logging.error(f"All price retrieval methods failed for {token_address}")
+    return None
         
         if response.status_code == 200:
             data = response.json()
