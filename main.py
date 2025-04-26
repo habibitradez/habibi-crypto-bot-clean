@@ -1492,13 +1492,38 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         try:
             # Extract the serialized transaction
             serialized_tx = swap_data["swapTransaction"]
+            logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+            
+            # For solders, we need to process the transaction differently
+            # Import necessary solders components
+            from solders.hash import Hash
+            
+            # Get blockhash for the transaction
+            blockhash_response = wallet._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
+            
+            if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
+                logging.error(f"Invalid blockhash response")
+                return False
+                
+            blockhash = blockhash_response["result"]["value"]["blockhash"]
+            blockhash_obj = Hash.from_string(blockhash)
             
             # Decode the base64 transaction data
             tx_bytes = base64.b64decode(serialized_tx)
             
-            # Create a transaction from the bytes
-            transaction = Transaction.from_bytes(tx_bytes)
-            logging.info(f"Transaction deserialized successfully")
+            # Use safer Transaction.deserialize method
+            import io
+            transaction = Transaction.deserialize(io.BytesIO(tx_bytes))
+            
+            # Set the blockhash and sign it
+            transaction_with_blockhash = Transaction.sign_unchecked(
+                [wallet.keypair],
+                transaction.message,
+                blockhash_obj
+            )
+            
+            logging.info(f"Transaction deserialized and resigned successfully")
+            
         except Exception as e:
             logging.error(f"Error deserializing transaction: {str(e)}")
             logging.error(traceback.format_exc())
@@ -1506,16 +1531,35 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         # Step 4: Sign and submit the transaction
         logging.info(f"Signing and submitting transaction for {token_address}")
-        signature = wallet.sign_and_submit_transaction(transaction)
         
-        if signature:
-            logging.info(f"Successfully bought {token_address} for {amount_sol} SOL - Signature: {signature}")
-            # Record buy timestamp
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            logging.error(f"Failed to submit transaction for buying {token_address}")
+        try:
+            # We already have the signed transaction from the previous step
+            # Just serialize and submit it
+            serialized_tx = base64.b64encode(transaction_with_blockhash.serialize()).decode("utf-8")
+            
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx, 
+                {"encoding": "base64", "skipPreflight": False}
+            ])
+            
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted successfully: {signature}")
+                # Record buy timestamp
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                return True
+            else:
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                else:
+                    logging.error(f"Failed to submit transaction - unexpected response format")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            logging.error(traceback.format_exc())
             return False
         
     except Exception as e:
