@@ -1394,22 +1394,10 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "outputMint": token_address,
             "amount": str(amount_lamports),
             "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
-            # Removed asLegacyTransaction parameter as it's causing errors
         }
         
         last_api_call_time = time.time()
         quote_response = requests.get(quote_url, params=quote_params, timeout=10)
-        
-        # Check for rate limiting
-        if quote_response.status_code == 429:
-            logging.warning(f"Rate limited by Jupiter API (429). Waiting 10 seconds before retrying...")
-            time.sleep(10)  # Much longer wait on rate limit during buying
-            api_call_delay += 1.0  # Increase delay significantly
-            logging.warning(f"Increased delay to {api_call_delay}s")
-            
-            # Try again
-            last_api_call_time = time.time()
-            quote_response = requests.get(quote_url, params=quote_params, timeout=10)
         
         if quote_response.status_code == 200:
             quote_data = quote_response.json()
@@ -1423,15 +1411,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         logging.info(f"Successfully got quote for buying {token_address}")
         
-        # Step 2: Prepare swap transaction - with rate limiting
+        # Step 2: Prepare swap transaction
         logging.info(f"Preparing swap transaction for {token_address}")
-        
-        # Rate limiting before swap request
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before swap request")
-            time.sleep(sleep_time)
         
         # For Jupiter v6 API, the payload format is different
         swap_payload = {
@@ -1441,7 +1422,10 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto",
             "useSharedAccounts": True,
-            "asLegacyTransaction": True  # Request legacy transaction format to simplify signing
+            # Add parameters to reduce transaction size
+            "feeAccount": str(wallet.public_key),
+            "computeUnitPriceMicroLamports": 1,
+            "asLegacyTransaction": False
         }
         
         last_api_call_time = time.time()
@@ -1451,22 +1435,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             headers={"Content-Type": "application/json"},
             timeout=10
         )
-        
-        # Check for rate limiting
-        if swap_response.status_code == 429:
-            logging.warning(f"Rate limited during swap preparation. Waiting 10 seconds before retrying...")
-            time.sleep(10)
-            api_call_delay += 1.0  # Increase delay significantly
-            logging.warning(f"Increased delay to {api_call_delay}s")
-            
-            # Try again
-            last_api_call_time = time.time()
-            swap_response = requests.post(
-                f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-                json=swap_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
         
         if swap_response.status_code != 200:
             logging.error(f"Failed to prepare swap transaction: {swap_response.status_code} - {swap_response.text}")
@@ -1487,58 +1455,44 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Decode the transaction bytes - try base64 first, then base58
-            try:
-                tx_bytes = base64.b64decode(serialized_tx)
-            except Exception:
-                try:
-                    tx_bytes = base58.b58decode(serialized_tx)
-                except Exception as e:
-                    logging.error(f"Failed to decode transaction: {str(e)}")
-                    return False
+            # Submit the transaction with optimized parameters
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64", 
+                    "skipPreflight": True,
+                    "preflightCommitment": "processed",  # Changed from "confirmed" to "processed"
+                    "maxRetries": 2  # Reduced from 5 to 2
+                }
+            ])
             
-            # For Jupiter transactions, we'll use the approach that works in the Discord bot
-            # No need to deserialize and reconstruct - just submit the raw transaction
-            try:
-                # The transaction from Jupiter should already be signed for everything except our wallet
-                # We just need to send it as-is
-                
-                # Submit the transaction directly
-                response = wallet._rpc_call("sendTransaction", [
-                    serialized_tx,  # Use the original base64 string
-                    {
-                        "encoding": "base64", 
-                        "skipPreflight": True,  # Skip preflight like in the Discord bot
-                        "preflightCommitment": "confirmed",
-                        "maxRetries": 5
-                    }
-                ])
-                
-                if "result" in response:
-                    signature = response["result"]
-                    logging.info(f"Transaction submitted successfully: {signature}")
-                    # Record buy timestamp
-                    token_buy_timestamps[token_address] = time.time()
-                    buy_successes += 1
-                    return True
-                else:
-                    if "error" in response:
-                        error_message = response.get("error", {}).get("message", "Unknown error")
-                        logging.error(f"Transaction error: {error_message}")
-                    else:
-                        logging.error(f"Failed to submit transaction - unexpected response format")
-                    return False
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted successfully: {signature}")
+                # Record buy timestamp
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                return True
+            else:
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    error_code = response.get("error", {}).get("code", "Unknown code")
+                    logging.error(f"Transaction error: {error_message} (Code: {error_code})")
                     
-            except Exception as e:
-                logging.error(f"Error submitting transaction: {str(e)}")
-                logging.error(traceback.format_exc())
+                    # Handle specific error cases
+                    if error_code == -32007:  # Request is too big
+                        logging.error("Transaction too large - attempting to reduce size")
+                        # Try alternative submission methods or reduce transaction size
+                        return False
+                else:
+                    logging.error(f"Failed to submit transaction - unexpected response format")
                 return False
-                
+                    
         except Exception as e:
-            logging.error(f"Error processing transaction: {str(e)}")
+            logging.error(f"Error submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
-        
+                
     except Exception as e:
         logging.error(f"Error buying {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
