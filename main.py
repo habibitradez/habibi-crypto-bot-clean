@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey as PublicKey
-from solders.transaction import Transaction
+from solders.transaction import Transaction, VersionedTransaction
 from solders.system_program import transfer, TransferParams
 import base58
 
@@ -472,7 +472,15 @@ class JupiterSwapHandler:
                 tx_bytes = base64.b64decode(serialized_tx)
                 
                 # Create a transaction from the bytes
-                transaction = Transaction.from_bytes(tx_bytes)
+                try:
+                    # Try the from_bytes method first
+                    transaction = Transaction.from_bytes(tx_bytes)
+                except Exception as e:
+                    logging.error(f"Error using from_bytes: {str(e)}")
+                    # If that fails, try deserialize method with BytesIO
+                    from io import BytesIO
+                    transaction = Transaction.deserialize(BytesIO(tx_bytes))
+                
                 logging.info(f"Transaction deserialized successfully")
                 return transaction
             else:
@@ -1501,7 +1509,23 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             tx_bytes = base64.b64decode(serialized_tx)
             
             # Create a transaction object from bytes
-            transaction = Transaction.from_bytes(tx_bytes)
+            try:
+                # Try parsing the transaction
+                from solders.transaction import VersionedTransaction
+                transaction = VersionedTransaction.from_bytes(tx_bytes)
+                logging.info("Successfully parsed as VersionedTransaction")
+            except Exception as e1:
+                logging.error(f"Error parsing as VersionedTransaction: {str(e1)}")
+                try:
+                    # Try as legacy transaction
+                    transaction = Transaction.from_bytes(tx_bytes)
+                    logging.info("Successfully parsed as legacy Transaction")
+                except Exception as e2:
+                    logging.error(f"Error parsing as legacy Transaction: {str(e2)}")
+                    # Last resort: try deserialize with BytesIO
+                    from io import BytesIO
+                    transaction = Transaction.deserialize(BytesIO(tx_bytes))
+                    logging.info("Successfully parsed with deserialize method")
             
             # Get fresh blockhash
             logging.info("Getting recent blockhash...")
@@ -1516,14 +1540,26 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
             # Sign the transaction with our wallet
             from solders.hash import Hash
+            from solders.signature import Signature
             blockhash_obj = Hash.from_string(blockhash)
             
-            signed_tx = Transaction.new_signed_with_payer(
-                instructions=transaction.message.instructions,
-                payer=wallet.public_key,
-                signing_keypairs=[wallet.keypair],
-                recent_blockhash=blockhash_obj
-            )
+            # Handle versioned transaction
+            if hasattr(transaction, 'message') and hasattr(transaction.message, 'serialize'):
+                # For versioned transactions
+                signed_tx = Transaction.new_with_payer(
+                    instructions=transaction.message.instructions,
+                    payer=wallet.public_key
+                )
+                signed_tx.recent_blockhash = blockhash_obj
+                signed_tx.sign([wallet.keypair])
+            else:
+                # For legacy transactions
+                signed_tx = Transaction.new_signed_with_payer(
+                    instructions=transaction.message.instructions,
+                    payer=wallet.public_key,
+                    signing_keypairs=[wallet.keypair],
+                    recent_blockhash=blockhash_obj
+                )
             
             # Serialize the signed transaction
             serialized_signed_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
