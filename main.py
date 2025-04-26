@@ -1272,6 +1272,16 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
         logging.error("Failed at step 5: Could not deserialize transaction")
         return False
     
+    # Step 6: Sign and submit transaction (only if not in simulation)
+    if not CONFIG['SIMULATION_MODE']:
+        logging.info("Step 6: Signing and submitting transaction")
+        signature = wallet.sign_and_submit_transaction(transaction)
+        
+        if signature:
+            logging.info(f"Transaction submitted successfully: {signature}")
+        else:
+            logging.error("Failed at step 6: Could not sign and submit transaction")
+            return False
     
     logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
     return True
@@ -1373,7 +1383,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
             "amount": str(amount_lamports),
-            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
+            "slippageBps": "1000",  # 10% slippage to ensure transaction goes through
+            "asLegacyTransaction": False
         }
         
         last_api_call_time = time.time()
@@ -1416,7 +1427,10 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True
+            "wrapUnwrapSOL": True,
+            "asLegacyTransaction": False,
+            "dynamicComputeUnitLimit": True,
+            "prioritizationFeeLamports": "auto"
         }
         
         last_api_call_time = time.time()
@@ -1454,17 +1468,48 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         logging.info(f"Successfully prepared swap transaction for {token_address}")
         
-        # Step 3: Submit the transaction directly without deserialization
-        logging.info(f"Submitting transaction for {token_address}")
+        # Step 3: Sign and submit the transaction
+        logging.info(f"Signing and submitting transaction for {token_address}")
         
         try:
-            # Extract the serialized transaction
+            # Extract the serialized transaction (already in base64)
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Since Jupiter v6 returns a fully prepared transaction, we can submit it directly
+            # Decode the transaction bytes
+            tx_bytes = base64.b64decode(serialized_tx)
+            
+            # Create a transaction object from bytes
+            transaction = Transaction.from_bytes(tx_bytes)
+            
+            # Get fresh blockhash
+            logging.info("Getting recent blockhash...")
+            blockhash_response = wallet._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
+            
+            if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
+                logging.error(f"Invalid blockhash response: {blockhash_response}")
+                return False
+            
+            blockhash = blockhash_response["result"]["value"]["blockhash"]
+            logging.info(f"Got blockhash: {blockhash}")
+            
+            # Sign the transaction with our wallet
+            from solders.hash import Hash
+            blockhash_obj = Hash.from_string(blockhash)
+            
+            signed_tx = Transaction.new_signed_with_payer(
+                instructions=transaction.message.instructions,
+                payer=wallet.public_key,
+                signing_keypairs=[wallet.keypair],
+                recent_blockhash=blockhash_obj
+            )
+            
+            # Serialize the signed transaction
+            serialized_signed_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
+            
+            # Submit the signed transaction
             response = wallet._rpc_call("sendTransaction", [
-                serialized_tx, 
+                serialized_signed_tx, 
                 {
                     "encoding": "base64", 
                     "skipPreflight": False,
@@ -1489,7 +1534,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 return False
                 
         except Exception as e:
-            logging.error(f"Error submitting transaction: {str(e)}")
+            logging.error(f"Error signing/submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
         
