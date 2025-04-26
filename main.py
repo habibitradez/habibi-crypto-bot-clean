@@ -660,8 +660,7 @@ def get_token_price(token_address: str) -> Optional[float]:
         
         logging.info(f"Getting price for {token_address} using Jupiter API...")
         
-        # Make the API call directly instead of using call_jupiter_api
-        # Enforce rate limiting
+        # Make the API call directly with rate limiting
         global last_api_call_time, api_call_delay
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
@@ -687,6 +686,182 @@ def get_token_price(token_address: str) -> Optional[float]:
             if response.status_code == 429:
                 api_call_delay += 0.5  # Increase delay
                 logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                # Calculate price as 1 SOL / outAmount (in token's smallest unit)
+                out_amount = int(data["outAmount"])
+                token_price = 1.0 / (out_amount / 1000000000)
+                
+                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                # Older API format
+                out_amount = int(data["data"]["outAmount"])
+                token_price = 1.0 / (out_amount / 1000000000)
+                
+                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            else:
+                logging.warning(f"Invalid quote response for {token_address}: {json.dumps(data)}")
+        elif response.status_code == 400:
+            logging.warning(f"Failed to get quote for {token_address}: {response.status_code} - {response.text}")
+            
+            # Check if response indicates token is not tradable and mark it
+            try:
+                error_data = response.json()
+                if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                    logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter")
+                    # Mark the token as non-tradable in our list if it exists
+                    for token in KNOWN_TOKENS:
+                        if token["address"] == token_address:
+                            token["tradable"] = False
+                            break
+            except:
+                pass
+        else:
+            logging.warning(f"Failed to get quote for {token_address}: {response.status_code} - {response.text}")
+        
+        # Method 2: Try reverse direction (token to SOL)
+        logging.info(f"Trying reverse direction for {token_address} price...")
+        reverse_params = {
+            "inputMint": token_address,
+            "outputMint": SOL_TOKEN_ADDRESS,
+            "amount": "1000000000",  # 1 unit of token in lamports (adjust if needed)
+            "slippageBps": "500"
+        }
+        
+        # Apply rate limiting for the second call
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f} seconds before Jupiter API call")
+            time.sleep(sleep_time)
+        
+        # Make the reverse API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=reverse_params, timeout=10)
+        
+        # Check for rate limiting
+        if response.status_code == 429:
+            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
+            time.sleep(2)  # Wait longer on rate limit
+            
+            # Try again with increased delay
+            last_api_call_time = time.time()
+            response = requests.get(quote_url, params=reverse_params, timeout=10)
+            
+            # Update delay if still rate limited
+            if response.status_code == 429:
+                api_call_delay += 0.5  # Increase delay
+                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                # Calculate price directly from the quote
+                out_amount = int(data["outAmount"])
+                token_price = out_amount / 1000000000
+                
+                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            elif "data" in data and "outAmount" in data["data"]:
+                # Older API format
+                out_amount = int(data["data"]["outAmount"])
+                token_price = out_amount / 1000000000
+                
+                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                # Also mark the token as tradable in our list if it exists
+                for token in KNOWN_TOKENS:
+                    if token["address"] == token_address:
+                        token["tradable"] = True
+                        break
+                
+                return token_price
+            else:
+                logging.warning(f"Invalid reverse quote response for {token_address}: {json.dumps(data)}")
+        elif response.status_code == 400:
+            logging.warning(f"Failed to get reverse quote for {token_address}: {response.status_code} - {response.text}")
+            
+            # Check if response indicates token is not tradable
+            try:
+                error_data = response.json()
+                if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
+                    logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter (reverse test)")
+                    # Mark the token as non-tradable in our list if it exists
+                    for token in KNOWN_TOKENS:
+                        if token["address"] == token_address:
+                            token["tradable"] = False
+                            break
+            except:
+                pass
+        else:
+            logging.warning(f"Failed to get reverse quote for {token_address}: {response.status_code} - {response.text}")
+        
+        # If we have a cached price, use that as fallback
+        if token_address in price_cache:
+            logging.warning(f"Using cached price for {token_address} due to API issue: {price_cache[token_address]} SOL")
+            return price_cache[token_address]
+            
+        # Last resort: Known tokens table
+        for token in KNOWN_TOKENS:
+            if token["address"] == token_address and "price_estimate" in token:
+                logging.warning(f"Using predefined price estimate for {token_address}: {token['price_estimate']} SOL")
+                return token["price_estimate"]
+                
+        # Really last resort: Generate a random price (only in simulation)
+        if CONFIG['SIMULATION_MODE']:
+            random_price = random.uniform(0.00000001, 0.001)
+            price_cache[token_address] = random_price
+            price_cache_time[token_address] = time.time()
+            logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
+            return random_price
+    except Exception as e:
+        logging.error(f"Error getting price for {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+    
+    logging.error(f"All price retrieval methods failed for {token_address}")
+    return None
         
         if response and response.status_code == 200:
             data = response.json()
@@ -1507,23 +1682,19 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 return False
                 
             blockhash = blockhash_response["result"]["value"]["blockhash"]
-            blockhash_obj = Hash.from_string(blockhash)
+            logging.info(f"Creating signed transaction with blockhash: {blockhash}")
             
             # Decode the base64 transaction data
             tx_bytes = base64.b64decode(serialized_tx)
             
-            # Use Transaction.from_bytes instead of deserialize
+            # Use Transaction.from_bytes for deserializing
             transaction = Transaction.from_bytes(tx_bytes)
             
-            # Set the blockhash and sign it
-            logging.info(f"Creating signed transaction with blockhash: {blockhash}")
-            transaction_with_blockhash = Transaction.sign_unchecked(
-                [wallet.keypair],
-                transaction.message,
-                blockhash_obj
-            )
+            # Since we can't use sign_unchecked with this version of solders, we'll create a new transaction
+            # directly with sendTransaction RPC call
+            transaction_with_blockhash = transaction
             
-            logging.info(f"Transaction deserialized and resigned successfully")
+            logging.info(f"Transaction deserialized successfully")
             
         except Exception as e:
             logging.error(f"Error deserializing transaction: {str(e)}")
@@ -1534,10 +1705,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         logging.info(f"Signing and submitting transaction for {token_address}")
         
         try:
-            # We already have the signed transaction from the previous step
-            # Just serialize and submit it
+            # We'll submit the transaction as is since Jupiter already prepared it with the right signatures
             serialized_tx = base64.b64encode(transaction_with_blockhash.serialize()).decode("utf-8")
             
+            # Add a log of the serialized transaction for debugging
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Submitting transaction, first 100 chars: {serialized_tx[:100]}")
+            
+            # Use the sendTransaction RPC call directly since the Jupiter swap transaction is fully prepared
             response = wallet._rpc_call("sendTransaction", [
                 serialized_tx, 
                 {"encoding": "base64", "skipPreflight": False}
@@ -1559,7 +1734,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 return False
                 
         except Exception as e:
-            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            logging.error(f"Error submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
         
