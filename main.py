@@ -1436,7 +1436,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "wrapUnwrapSOL": True,
             # Removed asLegacyTransaction parameter
             "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto"
+            "prioritizationFeeLamports": "auto",
+            "useSharedAccounts": True,
+            "asLegacyTransaction": True  # Request legacy transaction format to simplify signing
         }
         
         last_api_call_time = time.time()
@@ -1483,35 +1485,31 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
             # For Jupiter transactions, we don't need to reconstruct - just sign and submit
+        try:
+            # Extract the serialized transaction (already in base64)
+            serialized_tx = swap_data["swapTransaction"]
+            logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+            
+            # For Jupiter transactions, we'll use a simple approach
             try:
                 # Decode the transaction bytes
                 tx_bytes = base64.b64decode(serialized_tx)
                 
-                # Create a transaction object from bytes
-                try:
-                    from solders.transaction import VersionedTransaction
-                    transaction = VersionedTransaction.from_bytes(tx_bytes)
-                    logging.info("Successfully parsed as VersionedTransaction")
-                    is_versioned = True
-                except Exception as e:
-                    transaction = Transaction.from_bytes(tx_bytes)
-                    logging.info("Successfully parsed as legacy Transaction")
-                    is_versioned = False
+                # Try as legacy transaction (since we requested legacy format)
+                transaction = Transaction.from_bytes(tx_bytes)
+                logging.info("Successfully parsed as legacy Transaction")
                 
-                # For versioned transactions from Jupiter, they often come partially signed
-                # We need to add our signature
-                if is_versioned:
-                    # Get the message to sign
-                    message = transaction.message
-                    # Sign the message
-                    signature = wallet.keypair.sign_message(message.serialize())
-                    # Add the signature to the transaction
-                    transaction.signatures[0] = signature
-                    logging.info("Added signature to VersionedTransaction")
-                else:
-                    # For legacy transactions
-                    transaction.sign([wallet.keypair])
-                    logging.info("Signed legacy Transaction")
+                # Sign the transaction
+                transaction.sign([wallet.keypair])
+                
+                # Serialize the signed transaction
+                serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+                
+            except Exception as e:
+                logging.error(f"Error signing transaction: {str(e)}")
+                logging.error(traceback.format_exc())
+                # If signing fails, try submitting as-is (Jupiter may have pre-signed)
+                serialized_signed_tx = serialized_tx
                 
                 # Serialize the signed transaction
                 serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
