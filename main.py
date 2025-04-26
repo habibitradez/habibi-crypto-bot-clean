@@ -782,7 +782,7 @@ def get_token_price(token_address: str) -> Optional[float]:
         
         if response.status_code == 200:
             data = response.json()
-            if "outAmount" in data:
+            if "outAmount" in data and "outAmount" in data:
                 # Calculate price directly from the quote
                 out_amount = int(data["outAmount"])
                 token_price = out_amount / 1000000000
@@ -863,7 +863,7 @@ def get_token_price(token_address: str) -> Optional[float]:
     logging.error(f"All price retrieval methods failed for {token_address}")
     return None
         
-        if response and response.status_code == 200:
+        if response.status_code == 200:
             data = response.json()
             if "outAmount" in data:
                 # Calculate price as 1 SOL / outAmount (in token's smallest unit)
