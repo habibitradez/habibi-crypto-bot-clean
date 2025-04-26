@@ -222,37 +222,14 @@ class SolanaWallet:
     def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
         try:
-            logging.info("Getting recent blockhash...")
-            # Get recent blockhash
-            blockhash_response = self._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
+            logging.info("Signing and submitting transaction...")
             
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Blockhash response: {json.dumps(blockhash_response, indent=2)}")
-                
-            if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
-                logging.error(f"Invalid blockhash response: {blockhash_response}")
-                return None
-                
-            blockhash = blockhash_response["result"]["value"]["blockhash"]
-            logging.info(f"Got blockhash: {blockhash}")
-            
-            # For solders Transaction: Create a Hash object from the blockhash string
-            from solders.hash import Hash
-            
-            # Convert the string blockhash to a Hash object
-            blockhash_obj = Hash.from_string(blockhash)
-            
-            # Create a new transaction with the blockhash and sign it
-            logging.info("Setting blockhash and signing transaction...")
-            signed_tx = Transaction.sign_unchecked(
-                [self.keypair],  # List of signers
-                transaction.message,  # Use the original transaction's message
-                blockhash_obj  # Use the blockhash object
-            )
+            # Check if this is a versioned transaction
+            is_versioned = hasattr(transaction, 'message') and not isinstance(transaction, Transaction)
             
             # Serialize and submit transaction
             logging.info("Serializing and submitting transaction...")
-            serialized_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
+            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
             
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
@@ -1505,61 +1482,66 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Decode the transaction bytes
-            tx_bytes = base64.b64decode(serialized_tx)
-            
-            # Create a transaction object from bytes
+            # For Jupiter transactions, we don't need to reconstruct - just sign and submit
             try:
-                # Try parsing the transaction
-                from solders.transaction import VersionedTransaction
-                transaction = VersionedTransaction.from_bytes(tx_bytes)
-                logging.info("Successfully parsed as VersionedTransaction")
-            except Exception as e1:
-                logging.error(f"Error parsing as VersionedTransaction: {str(e1)}")
+                # Decode the transaction bytes
+                tx_bytes = base64.b64decode(serialized_tx)
+                
+                # Create a transaction object from bytes
                 try:
-                    # Try as legacy transaction
+                    from solders.transaction import VersionedTransaction
+                    transaction = VersionedTransaction.from_bytes(tx_bytes)
+                    logging.info("Successfully parsed as VersionedTransaction")
+                    is_versioned = True
+                except:
                     transaction = Transaction.from_bytes(tx_bytes)
                     logging.info("Successfully parsed as legacy Transaction")
-                except Exception as e2:
-                    logging.error(f"Error parsing as legacy Transaction: {str(e2)}")
-                    # Last resort: try deserialize with BytesIO
-                    from io import BytesIO
-                    transaction = Transaction.deserialize(BytesIO(tx_bytes))
-                    logging.info("Successfully parsed with deserialize method")
-            
-            # Get fresh blockhash
-            logging.info("Getting recent blockhash...")
-            blockhash_response = wallet._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
-            
-            if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
-                logging.error(f"Invalid blockhash response: {blockhash_response}")
+                    is_versioned = False
+                
+                # Sign the transaction
+                if is_versioned:
+                    transaction.sign([wallet.keypair])
+                else:
+                    transaction.sign([wallet.keypair])
+                
+                # Serialize the signed transaction
+                serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+                
+                # Submit the signed transaction
+                response = wallet._rpc_call("sendTransaction", [
+                    serialized_signed_tx, 
+                    {
+                        "encoding": "base64", 
+                        "skipPreflight": False,
+                        "preflightCommitment": "confirmed",
+                        "maxRetries": 5
+                    }
+                ])
+                
+                if "result" in response:
+                    signature = response["result"]
+                    logging.info(f"Transaction submitted successfully: {signature}")
+                    # Record buy timestamp
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    return True
+                else:
+                    if "error" in response:
+                        error_message = response.get("error", {}).get("message", "Unknown error")
+                        logging.error(f"Transaction error: {error_message}")
+                    else:
+                        logging.error(f"Failed to submit transaction - unexpected response format")
+                    return False
+                    
+            except Exception as e:
+                logging.error(f"Error processing transaction: {str(e)}")
+                logging.error(traceback.format_exc())
                 return False
-            
-            blockhash = blockhash_response["result"]["value"]["blockhash"]
-            logging.info(f"Got blockhash: {blockhash}")
-            
-            # Sign the transaction with our wallet
-            from solders.hash import Hash
-            from solders.signature import Signature
-            blockhash_obj = Hash.from_string(blockhash)
-            
-            # Handle versioned transaction
-            if hasattr(transaction, 'message') and hasattr(transaction.message, 'serialize'):
-                # For versioned transactions
-                signed_tx = Transaction.new_with_payer(
-                    instructions=transaction.message.instructions,
-                    payer=wallet.public_key
-                )
-                signed_tx.recent_blockhash = blockhash_obj
-                signed_tx.sign([wallet.keypair])
-            else:
-                # For legacy transactions
-                signed_tx = Transaction.new_signed_with_payer(
-                    instructions=transaction.message.instructions,
-                    payer=wallet.public_key,
-                    signing_keypairs=[wallet.keypair],
-                    recent_blockhash=blockhash_obj
-                )
+        
+    except Exception as e:
+        logging.error(f"Error buying {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
             
             # Serialize the signed transaction
             serialized_signed_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
