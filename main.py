@@ -1499,6 +1499,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             from solders.hash import Hash
             
             # Get blockhash for the transaction
+            logging.info(f"Making RPC call: getLatestBlockhash with params [{{\"commitment\": \"confirmed\"}}]")
             blockhash_response = wallet._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
             
             if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
@@ -1511,11 +1512,11 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             # Decode the base64 transaction data
             tx_bytes = base64.b64decode(serialized_tx)
             
-            # Use safer Transaction.deserialize method
-            import io
-            transaction = Transaction.deserialize(io.BytesIO(tx_bytes))
+            # Use Transaction.from_bytes instead of deserialize
+            transaction = Transaction.from_bytes(tx_bytes)
             
             # Set the blockhash and sign it
+            logging.info(f"Creating signed transaction with blockhash: {blockhash}")
             transaction_with_blockhash = Transaction.sign_unchecked(
                 [wallet.keypair],
                 transaction.message,
