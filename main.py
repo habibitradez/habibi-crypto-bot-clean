@@ -628,8 +628,7 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
     
     return False
 
-    # Start with a fresh function to avoid indentation issues
-def get_token_price(token_address: str) -> Optional[float]:
+    def get_token_price(token_address: str) -> Optional[float]:
     """Get token price in SOL using Jupiter API with fallback methods."""
     # Check cache first if it's recent (less than 30 seconds old)
     if token_address in price_cache and token_address in price_cache_time:
@@ -724,21 +723,6 @@ def get_token_price(token_address: str) -> Optional[float]:
                 return token_price
             else:
                 logging.warning(f"Invalid quote response for {token_address}")
-        elif response.status_code == 400:
-            logging.warning(f"Failed to get quote for {token_address}: {response.status_code}")
-            
-            try:
-                error_data = response.json()
-                if "error" in error_data and "TOKEN_NOT_TRADABLE" in error_data.get("errorCode", ""):
-                    logging.info(f"Token {token_address} explicitly marked as not tradable by Jupiter")
-                    for token in KNOWN_TOKENS:
-                        if token["address"] == token_address:
-                            token["tradable"] = False
-                            break
-            except:
-                pass
-        else:
-            logging.warning(f"Failed to get quote for {token_address}: {response.status_code}")
         
         # Try reverse direction
         logging.info(f"Trying reverse direction for {token_address} price...")
@@ -809,8 +793,6 @@ def get_token_price(token_address: str) -> Optional[float]:
                         break
                 
                 return token_price
-            else:
-                logging.warning(f"Invalid reverse quote response for {token_address}")
         
         # Use fallbacks
         if token_address in price_cache:
