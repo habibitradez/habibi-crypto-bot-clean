@@ -1537,40 +1537,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 logging.error(f"Error processing transaction: {str(e)}")
                 logging.error(traceback.format_exc())
                 return False
-        
-    except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
-            
-            # Serialize the signed transaction
-            serialized_signed_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
-            
-            # Submit the signed transaction
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_signed_tx, 
-                {
-                    "encoding": "base64", 
-                    "skipPreflight": False,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 5
-                }
-            ])
-            
-            if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                # Record buy timestamp
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                return True
-            else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
-                else:
-                    logging.error(f"Failed to submit transaction - unexpected response format")
-                return False
                 
         except Exception as e:
             logging.error(f"Error signing/submitting transaction: {str(e)}")
