@@ -1294,6 +1294,9 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
 
 def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
+    bonk_address = "DezXAZ8
+    def force_buy_bonk():
+    """Force buy BONK token to test trading functionality."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
     
     logging.info("=" * 50)
@@ -1434,7 +1437,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
-            # Removed asLegacyTransaction parameter
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto",
             "useSharedAccounts": True,
@@ -1479,12 +1481,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 3: Sign and submit the transaction
         logging.info(f"Signing and submitting transaction for {token_address}")
         
-        try:
-            # Extract the serialized transaction (already in base64)
-            serialized_tx = swap_data["swapTransaction"]
-            logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
-            
-            # For Jupiter transactions, we don't need to reconstruct - just sign and submit
         try:
             # Extract the serialized transaction (already in base64)
             serialized_tx = swap_data["swapTransaction"]
@@ -1539,45 +1535,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 
         except Exception as e:
             logging.error(f"Error processing transaction: {str(e)}")
-            logging.error(traceback.format_exc())
-            return False
-                
-                # Serialize the signed transaction
-                serialized_signed_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-                
-                # Submit the signed transaction
-                response = wallet._rpc_call("sendTransaction", [
-                    serialized_signed_tx, 
-                    {
-                        "encoding": "base64", 
-                        "skipPreflight": False,
-                        "preflightCommitment": "confirmed",
-                        "maxRetries": 5
-                    }
-                ])
-                
-                if "result" in response:
-                    signature = response["result"]
-                    logging.info(f"Transaction submitted successfully: {signature}")
-                    # Record buy timestamp
-                    token_buy_timestamps[token_address] = time.time()
-                    buy_successes += 1
-                    return True
-                else:
-                    if "error" in response:
-                        error_message = response.get("error", {}).get("message", "Unknown error")
-                        logging.error(f"Transaction error: {error_message}")
-                    else:
-                        logging.error(f"Failed to submit transaction - unexpected response format")
-                    return False
-                    
-            except Exception as e:
-                logging.error(f"Error processing transaction: {str(e)}")
-                logging.error(traceback.format_exc())
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error signing/submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
         
