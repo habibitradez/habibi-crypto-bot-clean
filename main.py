@@ -1294,8 +1294,8 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
 
 def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
-    bonk_address = "DezXAZ8
-    def force_buy_bonk():
+    bonk_address = "DezXAZ
+def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
     
