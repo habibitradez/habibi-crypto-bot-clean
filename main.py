@@ -34,7 +34,9 @@ logging.basicConfig(
 # Configuration from environment variables with fallbacks
 CONFIG = {
     'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
-    'JUPITER_API_URL': 'https://quote-api.jup.ag/v6',  # Using the quote API v6
+    'JUPITER_API_URL': 'https://api.jup.ag/v6/quote',  # Fixed API URL
+    'JUPITER_PRICE_URL': 'https://api.jup.ag/price/v1',  # Price API endpoint
+    'JUPITER_SWAP_URL': 'https://api.jup.ag/v6/swap',  # Swap API endpoint
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
@@ -42,13 +44,15 @@ CONFIG = {
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
-    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),  # Increased to 5 minutes
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),  # Increased to 5 seconds
-    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),  # Reduced from 15 to 5
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Kept at 0.15 SOL
-    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),  # Reduced from 500 to 100
+    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
+    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),
+    'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
-    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))  # Reduced from 50 to 20
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '30')),
+    'API_TIMEOUT': int(os.environ.get('API_TIMEOUT', '15')),
+    'RETRY_DELAY': int(os.environ.get('RETRY_DELAY', '5'))
 }
 
 # Diagnostics flag - set to True for very verbose logging
@@ -109,21 +113,16 @@ SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
 KNOWN_TOKENS = [
     {"symbol": "SOL", "address": SOL_TOKEN_ADDRESS},
     {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "tradable": True},
-    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": True},  # Updated: WIF is tradable based on logs
-    {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi", "tradable": False},
-    {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA", "tradable": False},
-    {"symbol": "GIGA", "address": "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT", "tradable": False},
-    {"symbol": "PNUT", "address": "PNUtFk6iQhs2VXiCMQpzGM81PdE7yGL5Y4fo9mFfb7o", "tradable": False},
-    {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW", "tradable": False},
-    {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ", "tradable": False},
-    {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF", "tradable": False},
-    # Updated list of known tradable tokens
+    {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": True},
+    {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "tradable": True},
     {"symbol": "JUP", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "tradable": True},
     {"symbol": "ORCA", "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "tradable": True},
-    {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "tradable": True},
     {"symbol": "RAY", "address": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R", "tradable": True},
     {"symbol": "STEP", "address": "StepAscQoEioFxxWGnh2sLBDFp9d8rvKz2Yp39iDpyT", "tradable": True},
-    {"symbol": "RENDER", "address": "RNDRxx6LYgjvGdgkTKYbJ3y4KMqZyWawN7GpfSZJT3z", "tradable": True}
+    {"symbol": "RENDER", "address": "RNDRxx6LYgjvGdgkTKYbJ3y4KMqZyWawN7GpfSZJT3z", "tradable": True},
+    {"symbol": "COPE", "address": "8HGyAAB1yoM1ttS7pXjHMa3dukTFGQggnFFH3hJZgzQh", "tradable": True},
+    {"symbol": "MNGO", "address": "MangoCzJ36AjZyKwVj3VnYU4GTonjfVEnJmvvWaxLac", "tradable": True},
+    {"symbol": "SLND", "address": "SLNDpmoWTVADgEdndyvWzroNL7zSi1dF9PC3xHGtPwp", "tradable": True}
 ]
 
 class SolanaWallet:
@@ -205,7 +204,7 @@ class SolanaWallet:
             logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
             
         headers = {"Content-Type": "application/json"}
-        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
+        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=CONFIG['API_TIMEOUT'])
         
         if response.status_code == 200:
             response_data = response.json()
@@ -316,8 +315,10 @@ class JupiterSwapHandler:
         Args:
             jupiter_api_url: The URL for the Jupiter API
         """
-        self.api_url = jupiter_api_url
-        logging.info(f"Initialized Jupiter handler with API URL: {jupiter_api_url}")
+        self.api_url = CONFIG['JUPITER_API_URL']
+        self.price_url = CONFIG['JUPITER_PRICE_URL']
+        self.swap_url = CONFIG['JUPITER_SWAP_URL']
+        logging.info(f"Initialized Jupiter handler with API URL: {self.api_url}")
     
     def get_quote(self, input_mint: str, output_mint: str, amount: str, slippage_bps: str = "500") -> Optional[Dict]:
         """Get a swap quote from Jupiter API."""
@@ -326,15 +327,13 @@ class JupiterSwapHandler:
                 "inputMint": input_mint,
                 "outputMint": output_mint,
                 "amount": amount,
-                "slippageBps": slippage_bps,
-                "onlyDirectRoutes": "false",
-                # Remove asLegacyTransaction parameter if it exists in other locations
+                "slippageBps": slippage_bps
             }
             
             logging.info(f"Getting quote: {input_mint} → {output_mint}, amount: {amount}, slippage: {slippage_bps}bps")
             
-            # For Jupiter v6, the quote endpoint is the base URL itself
-            response = requests.get(self.api_url, params=params, timeout=10)
+            # Use the correct quote endpoint
+            response = requests.get(self.api_url, params=params, timeout=CONFIG['API_TIMEOUT'])
             
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Quote response status: {response.status_code}")
@@ -356,10 +355,6 @@ class JupiterSwapHandler:
                     if "outAmount" in data:
                         logging.info(f"Quote received successfully (v6 format)")
                         return data
-                    # Check for v4/v5 API format
-                    elif "data" in data and "outAmount" in data["data"]:
-                        logging.info(f"Quote received successfully (v4/v5 format)")
-                        return data["data"]
                     else:
                         # Log the full response for debugging
                         if ULTRA_DIAGNOSTICS:
@@ -403,12 +398,12 @@ class JupiterSwapHandler:
                 if 'quoteResponse' in payload:
                     logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
             
-            # For Jupiter v6, the swap endpoint is /swap-instructions
+            # Use the correct swap endpoint
             response = requests.post(
-                "https://quote-api.jup.ag/v6/swap",
+                self.swap_url,
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=10
+                timeout=CONFIG['API_TIMEOUT']
             )
             
             if ULTRA_DIAGNOSTICS:
@@ -478,194 +473,72 @@ wallet = None
 jupiter_handler = None
 
 def get_token_price(token_address: str) -> Optional[float]:
-    """Get token price in SOL using Jupiter API with fallback methods."""
-    # Check cache first if it's recent (less than 30 seconds old)
+    """Get token price in SOL using Jupiter API with proper error handling."""
+    global last_api_call_time, api_call_delay
+    
+    # Check cache first
     if token_address in price_cache and token_address in price_cache_time:
-        if time.time() - price_cache_time[token_address] < 30:  # 30 second cache
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Using cached price for {token_address}: {price_cache[token_address]} SOL")
+        if time.time() - price_cache_time[token_address] < 30:
             return price_cache[token_address]
     
-    # For SOL token, price is always 1 SOL
+    # SOL is always 1
     if token_address == SOL_TOKEN_ADDRESS:
         return 1.0
     
-    # Skip tokens we know are not tradable from our KNOWN_TOKENS list
-    for token in KNOWN_TOKENS:
-        if token["address"] == token_address and token.get("tradable") is False:
-            logging.info(f"Skipping price check for known non-tradable token: {token_address} ({token.get('symbol', '')})")
-            return None
-    
-    # For other tokens, try Jupiter API
     try:
-        # Use Jupiter v6 quote API (the base URL is already the quote endpoint)
+        # First try using the Price API
+        quote_url = CONFIG['JUPITER_PRICE_URL']
+        params = {
+            "ids": token_address,
+            "vsToken": SOL_TOKEN_ADDRESS
+        }
+        
+        # Rate limiting
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            time.sleep(sleep_time)
+        
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=params, timeout=CONFIG['API_TIMEOUT'])
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'data' in data and token_address in data['data']:
+                price = data['data'][token_address].get('price')
+                if price:
+                    # Cache the price
+                    price_cache[token_address] = price
+                    price_cache_time[token_address] = time.time()
+                    return price
+        
+        # Fallback to quote method if price API fails
         quote_url = CONFIG['JUPITER_API_URL']
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
-            "amount": "1000000000",  # 1 SOL in lamports
+            "amount": "1000000000",  # 1 SOL
             "slippageBps": "500"
         }
         
-        logging.info(f"Getting price for {token_address} using Jupiter API...")
+        response = requests.get(quote_url, params=params, timeout=CONFIG['API_TIMEOUT'])
         
-        # Rate limiting
-        global last_api_call_time, api_call_delay
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
-            time.sleep(sleep_time)
-        
-        # Make API call
-        last_api_call_time = time.time()
-        response = requests.get(quote_url, params=params, timeout=10)
-        
-        # Handle rate limiting
-        if response.status_code == 429:
-            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
-            time.sleep(2)
-            last_api_call_time = time.time()
-            response = requests.get(quote_url, params=params, timeout=10)
-            
-            if response.status_code == 429:
-                api_call_delay += 0.5
-                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
-        
-        # Process successful response
         if response.status_code == 200:
             data = response.json()
-            if "outAmount" in data:
-                out_amount = int(data["outAmount"])
+            if 'outAmount' in data:
+                out_amount = int(data['outAmount'])
                 token_price = 1.0 / (out_amount / 1000000000)
                 
-                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
-                
-                # Update cache
+                # Cache the price
                 price_cache[token_address] = token_price
                 price_cache_time[token_address] = time.time()
-                
-                # Mark as tradable
-                for token in KNOWN_TOKENS:
-                    if token["address"] == token_address:
-                        token["tradable"] = True
-                        break
-                
-                return token_price
-            elif "data" in data and "outAmount" in data["data"]:
-                out_amount = int(data["data"]["outAmount"])
-                token_price = 1.0 / (out_amount / 1000000000)
-                
-                logging.info(f"Got price for {token_address}: {token_price} SOL (1 SOL = {out_amount} tokens)")
-                
-                # Update cache
-                price_cache[token_address] = token_price
-                price_cache_time[token_address] = time.time()
-                
-                # Mark as tradable
-                for token in KNOWN_TOKENS:
-                    if token["address"] == token_address:
-                        token["tradable"] = True
-                        break
-                
-                return token_price
-            else:
-                logging.warning(f"Invalid quote response for {token_address}")
-        
-        # Try reverse direction
-        logging.info(f"Trying reverse direction for {token_address} price...")
-        reverse_params = {
-            "inputMint": token_address,
-            "outputMint": SOL_TOKEN_ADDRESS,
-            "amount": "1000000000",
-            "slippageBps": "500"
-        }
-        
-        # Rate limiting for reverse call
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
-            time.sleep(sleep_time)
-        
-        # Make reverse API call
-        last_api_call_time = time.time()
-        response = requests.get(quote_url, params=reverse_params, timeout=10)
-        
-        # Handle rate limiting
-        if response.status_code == 429:
-            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
-            time.sleep(2)
-            last_api_call_time = time.time()
-            response = requests.get(quote_url, params=reverse_params, timeout=10)
-            
-            if response.status_code == 429:
-                api_call_delay += 0.5
-                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
-        
-        # Process successful reverse response
-        if response.status_code == 200:
-            data = response.json()
-            if "outAmount" in data:
-                out_amount = int(data["outAmount"])
-                token_price = out_amount / 1000000000
-                
-                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
-                
-                # Update cache
-                price_cache[token_address] = token_price
-                price_cache_time[token_address] = time.time()
-                
-                # Mark as tradable
-                for token in KNOWN_TOKENS:
-                    if token["address"] == token_address:
-                        token["tradable"] = True
-                        break
-                
-                return token_price
-            elif "data" in data and "outAmount" in data["data"]:
-                out_amount = int(data["data"]["outAmount"])
-                token_price = out_amount / 1000000000
-                
-                logging.info(f"Got reverse price for {token_address}: {token_price} SOL (1 token = {out_amount} lamports)")
-                
-                # Update cache
-                price_cache[token_address] = token_price
-                price_cache_time[token_address] = time.time()
-                
-                # Mark as tradable
-                for token in KNOWN_TOKENS:
-                    if token["address"] == token_address:
-                        token["tradable"] = True
-                        break
-                
                 return token_price
         
-        # Use fallbacks
-        if token_address in price_cache:
-            logging.warning(f"Using cached price for {token_address} due to API issue: {price_cache[token_address]} SOL")
-            return price_cache[token_address]
-            
-        for token in KNOWN_TOKENS:
-            if token["address"] == token_address and "price_estimate" in token:
-                logging.warning(f"Using predefined price estimate for {token_address}: {token['price_estimate']} SOL")
-                return token["price_estimate"]
-                
-        if CONFIG['SIMULATION_MODE']:
-            random_price = random.uniform(0.00000001, 0.001)
-            price_cache[token_address] = random_price
-            price_cache_time[token_address] = time.time()
-            logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
-            return random_price
-            
+        return None
+        
     except Exception as e:
         logging.error(f"Error getting price for {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-    
-    logging.error(f"All price retrieval methods failed for {token_address}")
-    return None
+        return None
 
 def initialize():
     """Initialize the bot and verify connectivity."""
@@ -724,7 +597,7 @@ def initialize():
             CONFIG['SOLANA_RPC_URL'],
             json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=CONFIG['API_TIMEOUT']
         )
         if rpc_response.status_code == 200:
             logging.info(f"Successfully connected to Solana RPC (status {rpc_response.status_code})")
@@ -754,7 +627,7 @@ def initialize():
             "amount": "100000000",  # 0.1 SOL in lamports
             "slippageBps": "500"
         }
-        jupiter_response = requests.get(jupiter_test_url, params=test_params, timeout=10)
+        jupiter_response = requests.get(jupiter_test_url, params=test_params, timeout=CONFIG['API_TIMEOUT'])
         
         if jupiter_response.status_code == 200:
             logging.info(f"Successfully tested Jupiter API integration (status {jupiter_response.status_code})")
@@ -764,8 +637,6 @@ def initialize():
                     response_data = jupiter_response.json()
                     if "outAmount" in response_data:
                         logging.info(f"Jupiter API test quote: SOL → BONK. Input: {response_data.get('inAmount')} Output: {response_data.get('outAmount')}")
-                    elif "data" in response_data:
-                        logging.info(f"Jupiter API test quote: SOL → BONK. Input: {response_data['data'].get('inputAmount')} Output: {response_data['data'].get('outAmount')}")
                     else:
                         logging.info(f"Jupiter test response: {json.dumps(response_data, indent=2)}")
                 except Exception as e:
@@ -825,15 +696,7 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
 
 def check_token_liquidity(token_address: str) -> bool:
     """Check if a token has sufficient liquidity."""
-    # For known tokens like BONK, assume they have liquidity
-    for token in KNOWN_TOKENS:
-        if token["address"] == token_address:
-            logging.info(f"Known token {token_address} ({token.get('symbol', '')}) - Assuming it has liquidity")
-            return True
-            
     try:
-        logging.info(f"Checking liquidity for {token_address}...")
-        
         # Try to get a quote for a tiny amount to check liquidity
         quote_url = CONFIG['JUPITER_API_URL']
         params = {
@@ -844,15 +707,12 @@ def check_token_liquidity(token_address: str) -> bool:
         }
         
         logging.info(f"Liquidity check 1: 0.001 SOL → {token_address} with 20% slippage")
-        response = requests.get(quote_url, params=params, timeout=10)
+        response = requests.get(quote_url, params=params, timeout=CONFIG['API_TIMEOUT'])
         
         if response.status_code == 200:
             data = response.json()
             # If we got a valid quote, token has liquidity
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
-                return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
                 return True
             else:
@@ -869,13 +729,10 @@ def check_token_liquidity(token_address: str) -> bool:
         }
         
         logging.info(f"Liquidity check 2: {token_address} → SOL with 20% slippage")
-        response = requests.get(quote_url, params=reverse_params, timeout=10)
+        response = requests.get(quote_url, params=reverse_params, timeout=CONFIG['API_TIMEOUT'])
         if response.status_code == 200:
             data = response.json()
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Reverse liquidity check PASSED for {token_address}")
-                return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Reverse liquidity check PASSED for {token_address}")
                 return True
             else:
@@ -892,13 +749,10 @@ def check_token_liquidity(token_address: str) -> bool:
         }
         
         logging.info(f"Liquidity check 3: 0.0005 SOL → {token_address} with 30% slippage")
-        response = requests.get(quote_url, params=ultra_small_params, timeout=10)
+        response = requests.get(quote_url, params=ultra_small_params, timeout=CONFIG['API_TIMEOUT'])
         if response.status_code == 200:
             data = response.json()
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
-                return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
                 return True
             else:
@@ -932,7 +786,7 @@ def get_recent_transactions(limit: int = 100) -> List[Dict]:
             CONFIG['SOLANA_RPC_URL'],
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=CONFIG['API_TIMEOUT']
         )
         
         if response.status_code == 200:
@@ -972,7 +826,7 @@ def analyze_transaction(signature: str) -> List[str]:
             CONFIG['SOLANA_RPC_URL'],
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=CONFIG['API_TIMEOUT']
         )
         
         if response.status_code != 200:
@@ -1008,7 +862,7 @@ def analyze_transaction(signature: str) -> List[str]:
             for account in result["transaction"]["message"].get("accountKeys", []):
                 if "pubkey" in account and len(account["pubkey"]) == 44:  # Typical Solana address length
                     token_address = account["pubkey"]
-                    if token_address not in found_tokens:
+                    if token_address not in found_tokens and token_address != SOL_TOKEN_ADDRESS:
                         found_tokens.append(token_address)
                         if ULTRA_DIAGNOSTICS:
                             logging.info(f"Found potential token in account keys: {token_address}")
@@ -1092,15 +946,12 @@ def check_token_tradability(token_address: str) -> bool:
         }
         
         logging.info(f"Checking tradability for {token_address}")
-        response = requests.get(quote_url, params=params, timeout=10)
+        response = requests.get(quote_url, params=params, timeout=CONFIG['API_TIMEOUT'])
         
         if response.status_code == 200:
             data = response.json()
             # If we got a valid quote, token is tradable
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Token {token_address} is tradable on Jupiter")
-                return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
                 logging.info(f"Token {token_address} is tradable on Jupiter")
                 return True
         
@@ -1130,23 +981,11 @@ def verify_token(token_address: str) -> bool:
     # Log verification steps
     logging.info(f"Verifying token {token_address}")
     
-    # List of tokens we've verified to be tradable
-    TRADABLE_TOKENS = [
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-        # Add more tokens here that you've verified are tradable
-    ]
-    
-    if token_address in TRADABLE_TOKENS:
-        logging.info(f"Token {token_address} is in verified tradable list")
-        return True
-    
-    # For known tokens, check tradability
+    # For known tokens, check if they're tradable
     for token in KNOWN_TOKENS:
         if token["address"] == token_address:
-            # Explicitly check tradability for all tokens
-            is_tradable = check_token_tradability(token_address)
-            if is_tradable:
-                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is tradable")
+            if token.get("tradable", False):
+                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is marked as tradable")
                 return True
             else:
                 logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is NOT tradable")
@@ -1215,82 +1054,6 @@ def find_and_buy_promising_tokens():
     logging.info(f"Completed aggressive token buying round, bought {buys_this_round} tokens")
     return buys_this_round
 
-def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):  # Default to BONK
-    """Test the entire buy flow with detailed logging."""
-    logging.info(f"====== TESTING BUY FLOW FOR {token_address} ======")
-    
-    # Step 1: Get token price
-    logging.info("Step 1: Getting token price")
-    token_price = get_token_price(token_address)
-    logging.info(f"Token price: {token_price} SOL")
-    
-    if not token_price:
-        logging.error("Failed at step 1: Could not get token price")
-        return False
-    
-    # Step 2: Check liquidity
-    logging.info("Step 2: Checking liquidity")
-    has_liquidity = check_token_liquidity(token_address)
-    logging.info(f"Has liquidity: {has_liquidity}")
-    
-    if not has_liquidity:
-        logging.error("Failed at step 2: Token does not have liquidity")
-        return False
-    
-    # Step 3: Get Jupiter quote
-    logging.info("Step 3: Getting Jupiter quote")
-    amount_lamports = int(CONFIG['BUY_AMOUNT_SOL'] * 1000000000)
-    
-    quote_data = jupiter_handler.get_quote(
-        input_mint=SOL_TOKEN_ADDRESS,
-        output_mint=token_address,
-        amount=str(amount_lamports),
-        slippage_bps="1000"
-    )
-    
-    if quote_data:
-        logging.info(f"Quote data received with keys: {list(quote_data.keys())}")
-    else:
-        logging.error("Failed at step 3: Could not get Jupiter quote")
-        return False
-    
-    # Step 4: Prepare swap transaction
-    logging.info("Step 4: Preparing swap transaction")
-    swap_data = jupiter_handler.prepare_swap_transaction(
-        quote_data=quote_data,
-        user_public_key=str(wallet.public_key)
-    )
-    
-    if swap_data:
-        logging.info(f"Swap data received with keys: {list(swap_data.keys())}")
-    else:
-        logging.error("Failed at step 4: Could not prepare swap transaction")
-        return False
-    
-    # Step 5: Deserialize transaction
-    logging.info("Step 5: Deserializing transaction")
-    transaction = jupiter_handler.deserialize_transaction(swap_data)
-    
-    if transaction:
-        logging.info(f"Transaction deserialized successfully")
-    else:
-        logging.error("Failed at step 5: Could not deserialize transaction")
-        return False
-    
-    # Step 6: Sign and submit transaction (only if not in simulation)
-    if not CONFIG['SIMULATION_MODE']:
-        logging.info("Step 6: Signing and submitting transaction")
-        signature = wallet.sign_and_submit_transaction(transaction)
-        
-        if signature:
-            logging.info(f"Transaction submitted successfully: {signature}")
-        else:
-            logging.error("Failed at step 6: Could not sign and submit transaction")
-            return False
-    
-    logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
-    return True
-
 def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
@@ -1344,10 +1107,12 @@ def force_buy_bonk():
     return False
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
-    """Buy a token using Jupiter API with improved transaction handling."""
-    global buy_attempts, buy_successes, last_api_call_time, api_call_delay
+    """Buy a token with improved error handling and retries."""
+    global buy_attempts, buy_successes
     
     buy_attempts += 1
+    max_retries = CONFIG['RETRY_ATTEMPTS']
+    retry_delay = CONFIG['RETRY_DELAY']
     
     logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
@@ -1363,196 +1128,98 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
             return False
     
-    # Real trading logic for production mode using solders
-    try:
-        global wallet, jupiter_handler
-        
-        if wallet is None or jupiter_handler is None:
-            logging.error("Wallet or Jupiter handler not initialized")
-            return False
-            
-        # Step 1: Get a quote
-        amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
-        logging.info(f"Getting quote for buying {token_address} with {amount_lamports} lamports ({amount_sol} SOL)")
-        
-        # Manual rate limiting for quote request
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before quote request")
-            time.sleep(sleep_time)
-        
-        # Get the quote with rate limiting
-        quote_url = CONFIG['JUPITER_API_URL']
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
-            # Removed asLegacyTransaction parameter as it's causing errors
-        }
-        
-        last_api_call_time = time.time()
-        quote_response = requests.get(quote_url, params=quote_params, timeout=10)
-        
-        # Check for rate limiting
-        if quote_response.status_code == 429:
-            logging.warning(f"Rate limited by Jupiter API (429). Waiting 10 seconds before retrying...")
-            time.sleep(10)  # Much longer wait on rate limit during buying
-            api_call_delay += 1.0  # Increase delay significantly
-            logging.warning(f"Increased delay to {api_call_delay}s")
-            
-            # Try again
-            last_api_call_time = time.time()
-            quote_response = requests.get(quote_url, params=quote_params, timeout=10)
-        
-        if quote_response.status_code == 200:
-            quote_data = quote_response.json()
-        else:
-            logging.error(f"Failed to get quote for buying {token_address}: {quote_response.status_code} - {quote_response.text}")
-            return False
-        
-        if "outAmount" not in quote_data and "data" not in quote_data:
-            logging.error(f"Invalid quote response for {token_address}: {json.dumps(quote_data)}")
-            return False
-            
-        logging.info(f"Successfully got quote for buying {token_address}")
-        
-        # Step 2: Prepare swap transaction - with rate limiting
-        logging.info(f"Preparing swap transaction for {token_address}")
-        
-        # Rate limiting before swap request
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before swap request")
-            time.sleep(sleep_time)
-        
-        # For Jupiter v6 API, the payload format is different
-        swap_payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True,
-            # Removed asLegacyTransaction parameter
-            "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto"
-        }
-        
-        last_api_call_time = time.time()
-        swap_response = requests.post(
-            "https://quote-api.jup.ag/v6/swap",
-            json=swap_payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        # Check for rate limiting
-        if swap_response.status_code == 429:
-            logging.warning(f"Rate limited during swap preparation. Waiting 10 seconds before retrying...")
-            time.sleep(10)
-            api_call_delay += 1.0  # Increase delay significantly
-            logging.warning(f"Increased delay to {api_call_delay}s")
-            
-            # Try again
-            last_api_call_time = time.time()
-            swap_response = requests.post(
-                "https://quote-api.jup.ag/v6/swap",
-                json=swap_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap transaction: {swap_response.status_code} - {swap_response.text}")
-            return False
-            
-        swap_data = swap_response.json()
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response does not contain transaction: {json.dumps(swap_data)}")
-            return False
-            
-        logging.info(f"Successfully prepared swap transaction for {token_address}")
-        
-        # Step 3: Sign and submit the transaction
-        logging.info(f"Signing and submitting transaction for {token_address}")
-        
+    # Real trading logic for production mode
+    for attempt in range(max_retries):
         try:
-            # Extract the serialized transaction (already in base64)
-            serialized_tx = swap_data["swapTransaction"]
-            logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+            global wallet, jupiter_handler
             
-            # Decode the transaction bytes
-            tx_bytes = base64.b64decode(serialized_tx)
+            if wallet is None or jupiter_handler is None:
+                logging.error("Wallet or Jupiter handler not initialized")
+                return False
+                
+            # Step 1: Get a quote
+            amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
+            logging.info(f"Attempt {attempt + 1}/{max_retries}: Getting quote for buying {token_address} with {amount_lamports} lamports ({amount_sol} SOL)")
             
-            # Create a transaction object from bytes
-            transaction = Transaction.from_bytes(tx_bytes)
+            quote_data = jupiter_handler.get_quote(
+                input_mint=SOL_TOKEN_ADDRESS,
+                output_mint=token_address,
+                amount=str(amount_lamports),
+                slippage_bps="1000"  # 10% slippage to ensure transaction goes through
+            )
             
-            # Get fresh blockhash
-            logging.info("Getting recent blockhash...")
-            blockhash_response = wallet._rpc_call("getLatestBlockhash", [{"commitment": "confirmed"}])
+            if quote_data is None:
+                logging.error(f"Failed to get quote for buying {token_address} on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+                
+            logging.info(f"Successfully got quote for buying {token_address}")
             
-            if 'result' not in blockhash_response or 'value' not in blockhash_response['result'] or 'blockhash' not in blockhash_response['result']['value']:
-                logging.error(f"Invalid blockhash response: {blockhash_response}")
+            # Step 2: Prepare swap transaction
+            logging.info(f"Preparing swap transaction for {token_address}")
+            
+            swap_data = jupiter_handler.prepare_swap_transaction(
+                quote_data=quote_data,
+                user_public_key=str(wallet.public_key)
+            )
+            
+            if swap_data is None:
+                logging.error(f"Failed to prepare swap transaction for {token_address} on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+                
+            logging.info(f"Successfully prepared swap transaction for {token_address}")
+            
+            # Step 3: Deserialize transaction
+            transaction = jupiter_handler.deserialize_transaction(swap_data)
+            
+            if transaction is None:
+                logging.error(f"Failed to deserialize transaction for {token_address} on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
                 return False
             
-            blockhash = blockhash_response["result"]["value"]["blockhash"]
-            logging.info(f"Got blockhash: {blockhash}")
+            # Step 4: Sign and submit the transaction
+            logging.info(f"Signing and submitting transaction for {token_address}")
             
-            # Sign the transaction with our wallet
-            from solders.hash import Hash
-            blockhash_obj = Hash.from_string(blockhash)
+            signature = wallet.sign_and_submit_transaction(transaction)
             
-            signed_tx = Transaction.new_signed_with_payer(
-                instructions=transaction.message.instructions,
-                payer=wallet.public_key,
-                signing_keypairs=[wallet.keypair],
-                recent_blockhash=blockhash_obj
-            )
-            
-            # Serialize the signed transaction
-            serialized_signed_tx = base64.b64encode(signed_tx.serialize()).decode("utf-8")
-            
-            # Submit the signed transaction
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_signed_tx, 
-                {
-                    "encoding": "base64", 
-                    "skipPreflight": False,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 5
-                }
-            ])
-            
-            if "result" in response:
-                signature = response["result"]
+            if signature:
                 logging.info(f"Transaction submitted successfully: {signature}")
                 # Record buy timestamp
                 token_buy_timestamps[token_address] = time.time()
                 buy_successes += 1
                 return True
             else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
-                else:
-                    logging.error(f"Failed to submit transaction - unexpected response format")
+                logging.error(f"Failed to submit transaction for {token_address} on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
                 return False
                 
         except Exception as e:
-            logging.error(f"Error signing/submitting transaction: {str(e)}")
+            logging.error(f"Error buying {token_address} on attempt {attempt + 1}: {str(e)}")
             logging.error(traceback.format_exc())
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
             return False
-        
-    except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
+    
+    logging.error(f"Failed to buy {token_address} after {max_retries} attempts")
+    return False
 
 def sell_token(token_address: str, percentage: int = 100) -> bool:
-    """Sell a percentage of token holdings using Jupiter API."""
+    """Sell a percentage of token holdings with improved error handling."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
+    max_retries = CONFIG['RETRY_ATTEMPTS']
+    retry_delay = CONFIG['RETRY_DELAY']
     
     logging.info(f"Starting sell process for {token_address} - Percentage: {percentage}%")
     
@@ -1576,130 +1243,145 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             return False
     
     # Real trading logic for production mode
-    try:
-        global wallet, jupiter_handler
-        
-        if wallet is None or jupiter_handler is None:
-            logging.error("Wallet or Jupiter handler not initialized")
-            return False
-        
-        # Step 1: Find token account
-        logging.info(f"Finding token accounts for {token_address}")
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        token_accounts = []
-        if 'result' in response and 'value' in response['result']:
-            token_accounts = response['result']['value']
-            logging.info(f"Found {len(token_accounts)} token accounts for {token_address}")
+    for attempt in range(max_retries):
+        try:
+            global wallet, jupiter_handler
             
-            if ULTRA_DIAGNOSTICS and token_accounts:
-                try:
-                    first_account = token_accounts[0]
-                    if 'account' in first_account and 'data' in first_account['account'] and 'parsed' in first_account['account']['data']:
-                        parsed = first_account['account']['data']['parsed']
-                        if 'info' in parsed and 'tokenAmount' in parsed['info']:
-                            amount = parsed['info']['tokenAmount'].get('amount', 'unknown')
-                            decimals = parsed['info']['tokenAmount'].get('decimals', 'unknown')
-                            logging.info(f"Token account has {amount} tokens (decimals: {decimals})")
-                except Exception as e:
-                    logging.error(f"Error examining token account: {str(e)}")
-        else:
-            logging.error(f"No token accounts found for {token_address}")
-            if 'error' in response:
-                logging.error(f"RPC error: {json.dumps(response['error'])}")
-            return False
-        
-        if not token_accounts:
-            logging.error(f"No token account found for {token_address}")
-            return False
-        
-        # For simplicity, use the first token account
-        token_account = token_accounts[0]
-        token_amount = None
-        
-        # Extract token amount from account data
-        if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
-            parsed_data = token_account['account']['data']['parsed']
-            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                token_amount_info = parsed_data['info']['tokenAmount']
-                if 'amount' in token_amount_info:
-                    token_amount = token_amount_info['amount']
-                    logging.info(f"Found token amount: {token_amount}")
-        
-        if token_amount is None:
-            logging.error(f"Could not determine token amount for {token_address}")
-            return False
-        
-        # Calculate amount to sell based on percentage
-        amount_to_sell = int(int(token_amount) * percentage / 100)
-        logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
-        
-        if amount_to_sell <= 0:
-            logging.error(f"Invalid amount to sell for {token_address}: {amount_to_sell}")
-            return False
-        
-        # Step 2: Get a quote
-        logging.info(f"Getting quote for selling {amount_to_sell} tokens of {token_address}")
-        quote_data = jupiter_handler.get_quote(
-            input_mint=token_address,
-            output_mint=SOL_TOKEN_ADDRESS,
-            amount=str(amount_to_sell),
-            slippage_bps="1000"  # 10% slippage to ensure transaction goes through
-        )
-        
-        if quote_data is None:
-            logging.error(f"Failed to get quote for selling {token_address}")
-            return False
+            if wallet is None or jupiter_handler is None:
+                logging.error("Wallet or Jupiter handler not initialized")
+                return False
             
-        logging.info(f"Successfully got quote for selling {token_address}")
-        
-        # Step 3: Prepare swap transaction
-        logging.info(f"Preparing swap transaction for selling {token_address}")
-        swap_data = jupiter_handler.prepare_swap_transaction(
-            quote_data=quote_data,
-            user_public_key=str(wallet.public_key)
-        )
-        
-        if swap_data is None:
-            logging.error(f"Failed to prepare swap transaction for selling {token_address}")
-            return False
+            # Step 1: Find token account
+            logging.info(f"Attempt {attempt + 1}/{max_retries}: Finding token accounts for {token_address}")
+            response = wallet._rpc_call("getTokenAccountsByOwner", [
+                str(wallet.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
             
-        logging.info(f"Successfully prepared swap transaction for selling {token_address}")
-        
-        # Step 4: Deserialize the transaction
-        logging.info(f"Deserializing transaction for selling {token_address}")
-        transaction = jupiter_handler.deserialize_transaction(swap_data)
-        
-        if transaction is None:
-            logging.error(f"Failed to deserialize transaction for selling {token_address}")
-            return False
-            
-        logging.info(f"Successfully deserialized transaction for selling {token_address}")
-        
-        # Step 5: Sign and submit the transaction
-        logging.info(f"Signing and submitting transaction for selling {token_address}")
-        signature = wallet.sign_and_submit_transaction(transaction)
-        
-        if signature:
-            if percentage == 100:
-                logging.info(f"Successfully sold 100% of {token_address} - Signature: {signature}")
+            token_accounts = []
+            if 'result' in response and 'value' in response['result']:
+                token_accounts = response['result']['value']
+                logging.info(f"Found {len(token_accounts)} token accounts for {token_address}")
             else:
-                logging.info(f"Successfully sold {percentage}% of {token_address} - Signature: {signature}")
+                logging.error(f"No token accounts found for {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
             
-            sell_successes += 1
-            return True
-        else:
-            logging.error(f"Failed to submit transaction for selling {token_address}")
+            if not token_accounts:
+                logging.error(f"No token account found for {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+            
+            # For simplicity, use the first token account
+            token_account = token_accounts[0]
+            token_amount = None
+            
+            # Extract token amount from account data
+            if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
+                parsed_data = token_account['account']['data']['parsed']
+                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                    token_amount_info = parsed_data['info']['tokenAmount']
+                    if 'amount' in token_amount_info:
+                        token_amount = token_amount_info['amount']
+                        logging.info(f"Found token amount: {token_amount}")
+            
+            if token_amount is None:
+                logging.error(f"Could not determine token amount for {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+            
+            # Calculate amount to sell based on percentage
+            amount_to_sell = int(int(token_amount) * percentage / 100)
+            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
+            
+            if amount_to_sell <= 0:
+                logging.error(f"Invalid amount to sell for {token_address}: {amount_to_sell}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+            
+            # Step 2: Get a quote
+            logging.info(f"Getting quote for selling {amount_to_sell} tokens of {token_address}")
+            quote_data = jupiter_handler.get_quote(
+                input_mint=token_address,
+                output_mint=SOL_TOKEN_ADDRESS,
+                amount=str(amount_to_sell),
+                slippage_bps="1000"  # 10% slippage to ensure transaction goes through
+            )
+            
+            if quote_data is None:
+                logging.error(f"Failed to get quote for selling {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+                
+            logging.info(f"Successfully got quote for selling {token_address}")
+            
+            # Step 3: Prepare swap transaction
+            logging.info(f"Preparing swap transaction for selling {token_address}")
+            swap_data = jupiter_handler.prepare_swap_transaction(
+                quote_data=quote_data,
+                user_public_key=str(wallet.public_key)
+            )if swap_data is None:
+                logging.error(f"Failed to prepare swap transaction for selling {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+                
+            logging.info(f"Successfully prepared swap transaction for selling {token_address}")
+            
+            # Step 4: Deserialize the transaction
+            logging.info(f"Deserializing transaction for selling {token_address}")
+            transaction = jupiter_handler.deserialize_transaction(swap_data)
+            
+            if transaction is None:
+                logging.error(f"Failed to deserialize transaction for selling {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+                
+            logging.info(f"Successfully deserialized transaction for selling {token_address}")
+            
+            # Step 5: Sign and submit the transaction
+            logging.info(f"Signing and submitting transaction for selling {token_address}")
+            signature = wallet.sign_and_submit_transaction(transaction)
+            
+            if signature:
+                if percentage == 100:
+                    logging.info(f"Successfully sold 100% of {token_address} - Signature: {signature}")
+                else:
+                    logging.info(f"Successfully sold {percentage}% of {token_address} - Signature: {signature}")
+                
+                sell_successes += 1
+                return True
+            else:
+                logging.error(f"Failed to submit transaction for selling {token_address}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                return False
+            
+        except Exception as e:
+            logging.error(f"Error selling {token_address} on attempt {attempt + 1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+                continue
             return False
-        
-    except Exception as e:
-        logging.error(f"Error selling {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
+    
+    logging.error(f"Failed to sell {token_address} after {max_retries} attempts")
+    return False
 
 def monitor_token_price(token_address: str) -> None:
     """Monitor a token's price and execute the trading strategy."""
@@ -1781,39 +1463,6 @@ def monitor_token_price(token_address: str) -> None:
     except Exception as e:
         logging.error(f"Error monitoring token {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
-
-def startup_test_buy():
-    """Perform a test buy of BONK at startup to verify trading works."""
-    if CONFIG['SIMULATION_MODE']:
-        logging.info("Skipping startup test buy in simulation mode")
-        return
-    
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK token
-    
-    logging.info("======= STARTUP TEST =======")
-    logging.info(f"Attempting to buy BONK token as startup test")
-    
-    # Try to buy a small amount of BONK
-    test_amount = CONFIG['BUY_AMOUNT_SOL'] / 5  # Use 1/5 of normal buy amount
-    
-    result = buy_token(bonk_address, test_amount)
-    
-    if result:
-        logging.info("STARTUP TEST PASSED - Successfully bought BONK!")
-        # Add to monitored tokens
-        initial_price = get_token_price(bonk_address)
-        if initial_price:
-            monitored_tokens[bonk_address] = {
-                'initial_price': initial_price,
-                'highest_price': initial_price,
-                'partial_profit_taken': False,
-                'buy_time': time.time()
-            }
-    else:
-        logging.error("STARTUP TEST FAILED - Could not buy BONK!")
-        logging.error("This suggests there may be issues with the trading functionality.")
-    
-    logging.info("======= END TEST =======")
 
 def trading_loop():
     """Main trading loop."""
@@ -1932,8 +1581,6 @@ def find_tradable_tokens():
     global last_api_call_time
     last_api_call_time = time.time()  # Reset timer
     
-    # Don't try to modify api_call_delay here
-    
     # Create a list of additional tokens to check
     additional_tokens = [
         {"symbol": "COPE", "address": "8HGyAAB1yoM1ttS7pXjHMa3dukTFGQggnFFH3hJZgzQh", "tradable": True},
@@ -1956,6 +1603,9 @@ def find_tradable_tokens():
                 logging.info(f"{token['symbol']} ({token['address']}) is TRADABLE")
             else:
                 logging.info(f"{token['symbol']} ({token['address']}) is NOT tradable")
+            
+            # Add delay to avoid rate limiting
+            time.sleep(delay_between_calls)
     
     # If no tradable tokens found, check the additional tokens
     if tradable_count == 0:
@@ -1968,6 +1618,9 @@ def find_tradable_tokens():
                 KNOWN_TOKENS.append(token)
                 tradable_count += 1
                 logging.info(f"Added new tradable token: {token['symbol']} ({token['address']})")
+            
+            # Add delay to avoid rate limiting
+            time.sleep(delay_between_calls)
     
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
