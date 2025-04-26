@@ -1415,16 +1415,13 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         logging.info(f"Preparing swap transaction for {token_address}")
         
         # For Jupiter v6 API, the payload format is different
+        # Remove mutually exclusive parameters
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto",
-            "useSharedAccounts": True,
-            # Add parameters to reduce transaction size
-            "feeAccount": str(wallet.public_key),
-            "computeUnitPriceMicroLamports": 1,
             "asLegacyTransaction": False
         }
         
@@ -1461,8 +1458,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 {
                     "encoding": "base64", 
                     "skipPreflight": True,
-                    "preflightCommitment": "processed",  # Changed from "confirmed" to "processed"
-                    "maxRetries": 2  # Reduced from 5 to 2
+                    "preflightCommitment": "processed",
+                    "maxRetries": 3
                 }
             ])
             
@@ -1478,12 +1475,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                     error_message = response.get("error", {}).get("message", "Unknown error")
                     error_code = response.get("error", {}).get("code", "Unknown code")
                     logging.error(f"Transaction error: {error_message} (Code: {error_code})")
-                    
-                    # Handle specific error cases
-                    if error_code == -32007:  # Request is too big
-                        logging.error("Transaction too large - attempting to reduce size")
-                        # Try alternative submission methods or reduce transaction size
-                        return False
                 else:
                     logging.error(f"Failed to submit transaction - unexpected response format")
                 return False
@@ -1492,6 +1483,11 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"Error submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
+                
+    except Exception as e:
+        logging.error(f"Error buying {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
                 
     except Exception as e:
         logging.error(f"Error buying {token_address}: {str(e)}")
