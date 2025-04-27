@@ -1414,14 +1414,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 2: Prepare swap transaction
         logging.info(f"Preparing swap transaction for {token_address}")
         
-        # For Jupiter v6 API, the payload format is different
+        # For Jupiter v6 API, request a legacy transaction for easier signing
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto",
-            "asLegacyTransaction": False
+            "asLegacyTransaction": True  # Request legacy transaction format
         }
         
         last_api_call_time = time.time()
@@ -1443,7 +1443,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         logging.info(f"Successfully prepared swap transaction for {token_address}")
         
-        # Step 3: Sign and submit the transaction - FIXED VERSION
+        # Step 3: Sign and submit the transaction
         logging.info(f"Signing and submitting transaction for {token_address}")
         
         try:
@@ -1451,13 +1451,32 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Submit with proper signing
+            # Decode and sign the transaction
+            tx_bytes = base64.b64decode(serialized_tx)
+            
+            # Deserialize the transaction
+            from solders.transaction import Transaction
+            from io import BytesIO
+            
+            try:
+                transaction = Transaction.from_bytes(tx_bytes)
+            except:
+                transaction = Transaction.deserialize(BytesIO(tx_bytes))
+            
+            # Sign the transaction with our wallet's keypair
+            transaction.sign([wallet.keypair])
+            
+            # Serialize the signed transaction
+            signed_tx = base64.b64encode(transaction.serialize()).decode('utf-8')
+            
+            # Submit with skipPreflight to avoid signature verification issues
             response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
+                signed_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,
-                    "preflightCommitment": "processed"
+                    "skipPreflight": True,  # Important: Skip preflight checks
+                    "preflightCommitment": "processed",
+                    "maxRetries": 3
                 }
             ])
             
