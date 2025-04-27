@@ -1279,15 +1279,7 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     else:
         logging.error("Failed at step 3: Could not get Jupiter quote")
         return False
-    
-    # Step 4: Prepare swap transaction
-    logging.info("Step 4: Preparing swap transaction")
-    swap_data = jupiter_handler.prepare_swap_transaction(
-        quote_data=quote_data,
-        user_public_key=str(wallet.public_key)
-    )
-    
-    if swap_data:
+        if swap_data:
         logging.info(f"Swap data received with keys: {list(swap_data.keys())}")
     else:
         logging.error("Failed at step 4: Could not prepare swap transaction")
