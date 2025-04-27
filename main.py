@@ -1296,23 +1296,23 @@ def force_buy_bonk():
     """Force buy BONK token to test trading functionality."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
 
-def force_buy_bonk():
-    """Force buy BONK token to test trading functionality."""
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+def force_buy_usdc():
+    """Force buy USDC token to test trading functionality."""
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC on Solana
     
     logging.info("=" * 50)
-    logging.info("FORCE BUYING BONK TOKEN")
+    logging.info("FORCE BUYING USDC TOKEN")
     logging.info("=" * 50)
     
-    # First verify BONK is actually tradable
-    is_tradable = check_token_tradability(bonk_address)
+    # First verify USDC is actually tradable
+    is_tradable = check_token_tradability(usdc_address)
     if not is_tradable:
-        logging.error("BONK token is not tradable on Jupiter! Trying a different token...")
+        logging.error("USDC token is not tradable on Jupiter! Trying a different token...")
         
         # Try a different token from our updated list
         for token in KNOWN_TOKENS:
             if token.get("tradable", False) and token["address"] != SOL_TOKEN_ADDRESS:
-                logging.info(f"Trying to buy {token['symbol']} instead of BONK...")
+                logging.info(f"Trying to buy {token['symbol']} instead of USDC...")
                 
                 if buy_token(token["address"], CONFIG['BUY_AMOUNT_SOL']):
                     initial_price = get_token_price(token["address"])
@@ -1332,20 +1332,20 @@ def force_buy_bonk():
         logging.error("Failed to buy any test token - Check logs for errors")
         return False
     
-    # If BONK is tradable, proceed with the buy
-    if buy_token(bonk_address, CONFIG['BUY_AMOUNT_SOL']):
-        initial_price = get_token_price(bonk_address)
+    # If USDC is tradable, proceed with the buy
+    if buy_token(usdc_address, CONFIG['BUY_AMOUNT_SOL']):
+        initial_price = get_token_price(usdc_address)
         if initial_price:
-            monitored_tokens[bonk_address] = {
+            monitored_tokens[usdc_address] = {
                 'initial_price': initial_price,
                 'highest_price': initial_price,
                 'partial_profit_taken': False,
                 'buy_time': time.time()
             }
-            logging.info(f"Successfully bought and monitoring BONK at {initial_price}")
+            logging.info(f"Successfully bought and monitoring USDC at {initial_price}")
             return True
     
-    logging.error("Failed to buy BONK - Check logs for errors")
+    logging.error("Failed to buy USDC - Check logs for errors")
     return False
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
@@ -1941,9 +1941,9 @@ def main():
             logging.warning("No tradable tokens found in KNOWN_TOKENS list!")
             logging.warning("Bot will continue but may not be able to execute trades")
         
-        # Force buy BONK or another tradable token as a test
+        # Force buy USDC or another tradable token as a test
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_bonk()
+        force_buy_usdc()  # Changed from force_buy_bonk() to force_buy_usdc()
         
         # Continue with normal trading loop
         trading_loop()
