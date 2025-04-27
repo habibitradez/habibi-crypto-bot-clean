@@ -41,9 +41,9 @@ CONFIG = {
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x target
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Take half at 50% gain
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '30')),  # Wider stop for volatile new coins
-    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),  # Change from 5 to 30
+    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '5')),  # Change from 5 to 30
     'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),  # Change from 1 to 5
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),  # Change from 1000 to 5000
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),  # Change from 1000 to 5000
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '10')),  # More positions with smaller amounts
     'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Keep small to minimize rug risk
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
@@ -1661,8 +1661,8 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
         logging.error(f"Error selling {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
         return False
-        
-        def force_sell_all_positions():
+
+def force_sell_all_positions():  # THIS IS CORRECT - SAME LEVEL AS OTHER FUNCTIONS
     """Force sell all current positions."""
     logging.info("Force selling all current positions...")
     
@@ -1730,11 +1730,11 @@ def monitor_token_price(token_address: str) -> None:
                 monitored_tokens[token_address]['partial_profit_taken'] = True
         
         # Quick time-based exit (5 minutes)
-        if time_elapsed_minutes >= 5:
-            logging.info(f"TIME EXIT: Selling {token_address} after {time_elapsed_minutes:.1f} minutes")
-            sell_token(token_address, 100)
-            del monitored_tokens[token_address]
-            return
+         if time_elapsed_minutes >= 5:  # Changed from 30 to 5
+        logging.info(f"TIME EXIT: Selling {token_address} after {time_elapsed_minutes:.1f} minutes")
+        sell_token(token_address, 100)
+        del monitored_tokens[token_address]
+        return
             
     except Exception as e:
         logging.error(f"Error monitoring {token_address}: {str(e)}")
