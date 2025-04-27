@@ -41,9 +41,9 @@ CONFIG = {
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x target
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Take half at 50% gain
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '30')),  # Wider stop for volatile new coins
-    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '5')),  # Very quick exit - 5 minutes max
-    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '1')),  # Faster cooldown for quick trades
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),  # Check every second for fast exits
+    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),  # Change from 5 to 30
+    'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),  # Change from 1 to 5
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),  # Change from 1000 to 5000
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '10')),  # More positions with smaller amounts
     'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Keep small to minimize rug risk
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
@@ -1566,11 +1566,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
     """Improved sell function for rapid exits."""
     global sell_attempts, sell_successes
     
-    MAX_RETRIES = 3
-    SLIPPAGE_INCREMENT = 500  # Increase slippage by 5% each retry
-    
     sell_attempts += 1
-    
     logging.info(f"Starting sell process for {token_address} - Percentage: {percentage}%")
     
     if CONFIG['SIMULATION_MODE']:
@@ -1588,83 +1584,95 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             logging.error(f"[SIMULATION] Failed to sell {token_address}: Could not determine price")
             return False
     
-    # Try up to MAX_RETRIES times with increasing slippage
-    for attempt in range(MAX_RETRIES):
-        try:
-            slippage = 1000 + (attempt * SLIPPAGE_INCREMENT)  # 10%, 15%, 20%
-            logging.info(f"Sell attempt {attempt + 1} with {slippage/100}% slippage")
-            
-            # Get token accounts
-            response = wallet._rpc_call("getTokenAccountsByOwner", [
-                str(wallet.public_key),
-                {"mint": token_address},
-                {"encoding": "jsonParsed"}
-            ])
-            
-            if 'result' not in response or not response['result']['value']:
-                logging.error(f"No token account found for {token_address}")
-                return False
-            
-            token_account = response['result']['value'][0]
-            token_amount = token_account['account']['data']['parsed']['info']['tokenAmount']['amount']
-            amount_to_sell = int(int(token_amount) * percentage / 100)
-            
-            if amount_to_sell <= 0:
-                logging.error(f"Zero amount to sell for {token_address}")
-                return False
-            
-            # Get quote with higher slippage
-            quote_data = jupiter_handler.get_quote(
-                input_mint=token_address,
-                output_mint=SOL_TOKEN_ADDRESS,
-                amount=str(amount_to_sell),
-                slippage_bps=str(slippage)
-            )
-            
-            if not quote_data:
-                continue  # Try next attempt
-            
-            # Prepare and submit transaction
-            swap_payload = {
-                "quoteResponse": quote_data,
-                "userPublicKey": str(wallet.public_key),
-                "wrapUnwrapSOL": True
+    try:
+        # Get token accounts
+        response = wallet._rpc_call("getTokenAccountsByOwner", [
+            str(wallet.public_key),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        if 'result' not in response or not response['result']['value']:
+            logging.error(f"No token account found for {token_address}")
+            return False
+        
+        token_account = response['result']['value'][0]
+        token_amount = token_account['account']['data']['parsed']['info']['tokenAmount']['amount']
+        amount_to_sell = int(int(token_amount) * percentage / 100)
+        
+        if amount_to_sell <= 0:
+            logging.error(f"Zero amount to sell for {token_address}")
+            return False
+        
+        # Get quote with higher slippage
+        quote_data = jupiter_handler.get_quote(
+            input_mint=token_address,
+            output_mint=SOL_TOKEN_ADDRESS,
+            amount=str(amount_to_sell),
+            slippage_bps="1000"  # 10% slippage
+        )
+        
+        if not quote_data:
+            logging.error(f"Failed to get quote for selling {token_address}")
+            return False
+        
+        # Prepare and submit transaction
+        swap_payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapUnwrapSOL": True
+        }
+        
+        swap_response = requests.post(
+            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
+            json=swap_payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap transaction: {swap_response.status_code}")
+            return False
+        
+        swap_data = swap_response.json()
+        serialized_tx = swap_data["swapTransaction"]
+        
+        # Submit transaction directly - don't try to sign!
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "preflightCommitment": "processed"
             }
+        ])
+        
+        if "result" in response:
+            logging.info(f"Successfully sold {percentage}% of {token_address}")
+            sell_successes += 1
+            return True
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
+            return False
             
-            swap_response = requests.post(
-                f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-                json=swap_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-            
-            if swap_response.status_code != 200:
-                continue  # Try next attempt
-            
-            swap_data = swap_response.json()
-            serialized_tx = swap_data["swapTransaction"]
-            
-            # Submit transaction
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "preflightCommitment": "processed"
-                }
-            ])
-            
-            if "result" in response:
-                logging.info(f"Successfully sold {percentage}% of {token_address}")
-                sell_successes += 1
-                return True
-                
-        except Exception as e:
-            logging.error(f"Sell attempt {attempt + 1} failed: {str(e)}")
-            time.sleep(0.5)  # Brief delay between retries
+    except Exception as e:
+        logging.error(f"Error selling {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+        
+        def force_sell_all_positions():
+    """Force sell all current positions."""
+    logging.info("Force selling all current positions...")
     
-    logging.error(f"All sell attempts failed for {token_address}")
-    return False
+    for token_address in list(monitored_tokens.keys()):
+        logging.info(f"Force selling {token_address}")
+        if sell_token(token_address):
+            logging.info(f"Successfully force sold {token_address}")
+            del monitored_tokens[token_address]
+        else:
+            logging.error(f"Failed to force sell {token_address}")
 
 # UPDATED MONITOR FUNCTION for fast 2x exits
 def monitor_token_price(token_address: str) -> None:
@@ -1902,15 +1910,18 @@ def main():
             logging.warning("No tradable tokens found in KNOWN_TOKENS list!")
             logging.warning("Bot will continue but may not be able to execute trades")
         
+        # Force sell all existing positions first
+        logging.info("Force selling all existing positions...")
+        force_sell_all_positions()
+        
         # Force buy USDC or another tradable token as a test
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_usdc()  # Changed from force_buy_bonk() to force_buy_usdc()
+        force_buy_usdc()
         
         # Continue with normal trading loop
         trading_loop()
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
-
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
