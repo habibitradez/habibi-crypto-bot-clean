@@ -1357,94 +1357,13 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
-        token_price = get_token_price(token_address)
-        if token_price:
-            estimated_tokens = amount_sol / token_price
-            logging.info(f"[SIMULATION] Auto-bought {estimated_tokens:.2f} tokens of {token_address} for {amount_sol} SOL")
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
-            return False
+        # ... existing simulation code ...
     
     # Real trading logic for production mode using solders
     try:
-        global wallet, jupiter_handler
+        # ... existing quote and swap preparation code ...
         
-        if wallet is None or jupiter_handler is None:
-            logging.error("Wallet or Jupiter handler not initialized")
-            return False
-            
-        # Step 1: Get a quote
-        amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
-        logging.info(f"Getting quote for buying {token_address} with {amount_lamports} lamports ({amount_sol} SOL)")
-        
-        # Manual rate limiting for quote request
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before quote request")
-            time.sleep(sleep_time)
-        
-        # Get the quote with rate limiting
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
-        }
-        
-        last_api_call_time = time.time()
-        quote_response = requests.get(quote_url, params=quote_params, timeout=10)
-        
-        if quote_response.status_code == 200:
-            quote_data = quote_response.json()
-        else:
-            logging.error(f"Failed to get quote for buying {token_address}: {quote_response.status_code} - {quote_response.text}")
-            return False
-        
-        if "outAmount" not in quote_data and "data" not in quote_data:
-            logging.error(f"Invalid quote response for {token_address}: {json.dumps(quote_data)}")
-            return False
-            
-        logging.info(f"Successfully got quote for buying {token_address}")
-        
-        # Step 2: Prepare swap transaction
-        logging.info(f"Preparing swap transaction for {token_address}")
-        
-        # For Jupiter v6 API, the payload format is different
-        # Remove mutually exclusive parameters
-        swap_payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True,
-            "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto",
-            "asLegacyTransaction": False
-        }
-        
-        last_api_call_time = time.time()
-        swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-            json=swap_payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap transaction: {swap_response.status_code} - {swap_response.text}")
-            return False
-            
-        swap_data = swap_response.json()
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response does not contain transaction: {json.dumps(swap_data)}")
-            return False
-            
-        logging.info(f"Successfully prepared swap transaction for {token_address}")
-        
-        # Step 3: Sign and submit the transaction
+        # Step 3: Sign and submit the transaction - FIXED VERSION
         logging.info(f"Signing and submitting transaction for {token_address}")
         
         try:
@@ -1452,29 +1371,44 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Submit the transaction with optimized parameters
+            # Decode the transaction and sign it with our wallet
+            from solders.transaction import VersionedTransaction
+            import base64
+            
+            # Get the transaction bytes
+            tx_bytes = base64.b64decode(serialized_tx)
+            
+            # Deserialize into a transaction object
+            transaction = VersionedTransaction.from_bytes(tx_bytes)
+            
+            # Sign the transaction with our wallet
+            transaction.sign([wallet.keypair], wallet.get_latest_blockhash())
+            
+            # Serialize the signed transaction
+            signed_tx_bytes = transaction.to_bytes()
+            signed_tx_base64 = base64.b64encode(signed_tx_bytes).decode('utf-8')
+            
+            # Submit the signed transaction
             response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
+                signed_tx_base64,
                 {
-                    "encoding": "base64", 
-                    "skipPreflight": True,
-                    "preflightCommitment": "processed",
-                    "maxRetries": 3
+                    "encoding": "base64",
+                    "skipPreflight": False,
+                    "preflightCommitment": "processed"
                 }
             ])
             
             if "result" in response:
                 signature = response["result"]
                 logging.info(f"Transaction submitted successfully: {signature}")
-                # Record buy timestamp
+                # This should now be a real signature, not all 1's
                 token_buy_timestamps[token_address] = time.time()
                 buy_successes += 1
                 return True
             else:
                 if "error" in response:
                     error_message = response.get("error", {}).get("message", "Unknown error")
-                    error_code = response.get("error", {}).get("code", "Unknown code")
-                    logging.error(f"Transaction error: {error_message} (Code: {error_code})")
+                    logging.error(f"Transaction error: {error_message}")
                 else:
                     logging.error(f"Failed to submit transaction - unexpected response format")
                 return False
@@ -1483,16 +1417,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"Error submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return False
-                
-    except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
-                
-    except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
 
 def sell_token(token_address: str, percentage: int = 100) -> bool:
     """Sell a percentage of token holdings using Jupiter API."""
