@@ -1457,6 +1457,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             # Deserialize the transaction
             from solders.transaction import Transaction
             from io import BytesIO
+            from solders.hash import Hash
             
             try:
                 transaction = Transaction.from_bytes(tx_bytes)
@@ -1467,12 +1468,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
             
             if "result" in blockhash_response and "value" in blockhash_response["result"]:
-                recent_blockhash = blockhash_response["result"]["value"]["blockhash"]
+                recent_blockhash_str = blockhash_response["result"]["value"]["blockhash"]
+                # Convert string to solders.hash.Hash object
+                recent_blockhash = Hash.from_string(recent_blockhash_str)
             else:
                 logging.error("Failed to get recent blockhash")
                 return False
             
-            # Sign the transaction with recent blockhash
+            # Sign the transaction with recent blockhash (as Hash object)
             transaction.sign([wallet.keypair], recent_blockhash)
             
             # Serialize the signed transaction
