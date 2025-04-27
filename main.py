@@ -1463,8 +1463,17 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             except:
                 transaction = Transaction.deserialize(BytesIO(tx_bytes))
             
-            # Sign the transaction with our wallet's keypair
-            transaction.sign([wallet.keypair])
+            # Get recent blockhash before signing
+            blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+            
+            if "result" in blockhash_response and "value" in blockhash_response["result"]:
+                recent_blockhash = blockhash_response["result"]["value"]["blockhash"]
+            else:
+                logging.error("Failed to get recent blockhash")
+                return False
+            
+            # Sign the transaction with recent blockhash
+            transaction.sign([wallet.keypair], recent_blockhash)
             
             # Serialize the signed transaction
             signed_tx = base64.b64encode(transaction.serialize()).decode('utf-8')
