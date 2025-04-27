@@ -1783,6 +1783,18 @@ def trading_loop():
                 
                 last_status_time = time.time()
             
+            # Check for stale positions first
+            def force_sell_stale_positions():
+    """Force sell positions held too long."""
+    current_time = time.time()
+    for token_address, token_data in list(monitored_tokens.items()):
+        time_held = (current_time - token_data['buy_time']) / 3600  # in hours
+        if time_held > 2:  # Force sell after 2 hours
+            logging.warning(f"FORCE SELLING: {token_address} held for {time_held:.1f} hours")
+            sell_token(token_address)
+            if token_address in monitored_tokens:
+                del monitored_tokens[token_address]
+            
             # Monitor tokens we're already trading
             for token_address in list(monitored_tokens.keys()):
                 monitor_token_price(token_address)
