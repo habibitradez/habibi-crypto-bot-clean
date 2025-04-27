@@ -1478,8 +1478,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             # Sign the transaction with recent blockhash (as Hash object)
             transaction.sign([wallet.keypair], recent_blockhash)
             
-            # Serialize the signed transaction
-            signed_tx = base64.b64encode(transaction.serialize()).decode('utf-8')
+            # Serialize the signed transaction using the correct method
+            signed_tx = base64.b64encode(bytes(transaction)).decode('utf-8')
             
             # Submit with skipPreflight to avoid signature verification issues
             response = wallet._rpc_call("sendTransaction", [
