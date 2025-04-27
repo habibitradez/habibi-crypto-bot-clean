@@ -1393,7 +1393,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
             "amount": str(amount_lamports),
-            "slippageBps": "1000"  # 10% slippage to ensure transaction goes through
+            "slippageBps": "1000"  # 10% slippage
         }
         
         last_api_call_time = time.time()
@@ -1405,23 +1405,20 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"Failed to get quote for buying {token_address}: {quote_response.status_code} - {quote_response.text}")
             return False
         
-        if "outAmount" not in quote_data and "data" not in quote_data:
+        if "outAmount" not in quote_data:
             logging.error(f"Invalid quote response for {token_address}: {json.dumps(quote_data)}")
             return False
             
         logging.info(f"Successfully got quote for buying {token_address}")
         
-        # Step 2: Prepare swap transaction
+        # Step 2: Prepare swap transaction with minimal payload
         logging.info(f"Preparing swap transaction for {token_address}")
         
-        # For Jupiter v6 API, request a legacy transaction for easier signing
+        # Minimal payload to avoid "request too big" error
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True,
-            "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto",
-            "asLegacyTransaction": True  # Request legacy transaction format
+            "wrapUnwrapSOL": True
         }
         
         last_api_call_time = time.time()
@@ -1451,44 +1448,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx = swap_data["swapTransaction"]
             logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
             
-            # Decode and sign the transaction
-            tx_bytes = base64.b64decode(serialized_tx)
-            
-            # Deserialize the transaction
-            from solders.transaction import Transaction
-            from io import BytesIO
-            from solders.hash import Hash
-            
-            try:
-                transaction = Transaction.from_bytes(tx_bytes)
-            except:
-                transaction = Transaction.deserialize(BytesIO(tx_bytes))
-            
-            # Get recent blockhash before signing
-            blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
-            
-            if "result" in blockhash_response and "value" in blockhash_response["result"]:
-                recent_blockhash_str = blockhash_response["result"]["value"]["blockhash"]
-                # Convert string to solders.hash.Hash object
-                recent_blockhash = Hash.from_string(recent_blockhash_str)
-            else:
-                logging.error("Failed to get recent blockhash")
-                return False
-            
-            # Sign the transaction with recent blockhash (as Hash object)
-            transaction.sign([wallet.keypair], recent_blockhash)
-            
-            # Serialize the signed transaction using the correct method
-            signed_tx = base64.b64encode(bytes(transaction)).decode('utf-8')
-            
-            # Submit with skipPreflight to avoid signature verification issues
+            # Jupiter transactions are usually pre-signed except for user signature
+            # Just submit directly without modifying
             response = wallet._rpc_call("sendTransaction", [
-                signed_tx,
+                serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": True,  # Important: Skip preflight checks
-                    "preflightCommitment": "processed",
-                    "maxRetries": 3
+                    "skipPreflight": True,
+                    "preflightCommitment": "processed"
                 }
             ])
             
@@ -1501,7 +1468,12 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             else:
                 if "error" in response:
                     error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
+                    error_code = response.get("error", {}).get("code", "Unknown code")
+                    logging.error(f"Transaction error: {error_message} (Code: {error_code})")
+                    
+                    # Handle specific error cases
+                    if error_code == -32007:  # Request is too big
+                        logging.error("Transaction too large - this might be a network issue")
                 else:
                     logging.error(f"Failed to submit transaction - unexpected response format")
                 return False
