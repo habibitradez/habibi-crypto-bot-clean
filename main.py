@@ -1212,6 +1212,34 @@ def get_latest_pumpfun_tokens() -> List[Dict]:
         logging.error(f"Error fetching pump.fun tokens: {str(e)}")
         return []
 
+def scan_for_new_tokens_pumpfun() -> List[str]:
+    """Scan pump.fun for newly launched tokens."""
+    global tokens_scanned
+    
+    logging.info("Scanning pump.fun for newly launched tokens...")
+    potential_tokens = []
+    
+    # Get recent tokens from pump.fun
+    recent_tokens = get_latest_pumpfun_tokens()
+    
+    for token in recent_tokens:
+        # Extract token address
+        if "address" in token:
+            token_address = token["address"]
+            # Check if it's new (launched in last 5 minutes)
+            if "launchTime" in token:
+                launch_time = token["launchTime"]
+                current_time = int(time.time() * 1000)  # Convert to milliseconds
+                age_minutes = (current_time - launch_time) / (1000 * 60)
+                
+                if age_minutes <= 5:  # Only tokens less than 5 minutes old
+                    logging.info(f"Found new token on pump.fun: {token_address} (age: {age_minutes:.2f} minutes)")
+                    potential_tokens.append(token_address)
+                    tokens_scanned += 1
+    
+    logging.info(f"Found {len(potential_tokens)} new tokens on pump.fun in the last 5 minutes")
+    return potential_tokens
+    
 # Update your trading_loop function to include pump.fun scanning
 def trading_loop():
     """Main trading loop with pump.fun integration."""
