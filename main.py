@@ -1667,7 +1667,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
                 "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
                 "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
-                "prioritizationFeeLamports": 1000000  # CRITICAL: Add 0.001 SOL priority fee
+                "prioritizationFeeLamports": 1000000,  # CRITICAL: Add 0.001 SOL priority fee
                 "onlyDirectRoutes": "true"  # Add this line for simpler routes
             },
             headers={"Content-Type": "application/json"},
