@@ -665,9 +665,9 @@ def get_token_price(token_address: str) -> Optional[float]:
     logging.error(f"All price retrieval methods failed for {token_address}")
     return None
     
-    def get_latest_pumpfun_tokens() -> List[Dict]:
+   def get_latest_pumpfun_tokens() -> List[Dict]:
     """Get the most recent tokens launched on pump.fun."""
-    try:  # This line and everything below needs to be indented
+    try:
         logging.info("Fetching recent tokens from pump.fun...")
         
         response = requests.get(
