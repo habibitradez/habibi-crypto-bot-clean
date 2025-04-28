@@ -712,7 +712,7 @@ def get_token_details(token_address: str) -> Optional[Dict]:
         logging.error(f"Error getting token details: {str(e)}")
         return None
     
-    def handle_api_error(response, endpoint: str) -> bool:
+def handle_api_error(response, endpoint: str) -> bool:
     """Handle API errors with improved diagnostics."""
     if response.status_code == 429:
         logging.warning(f"Rate limited on {endpoint} despite paid plan! Retrying once...")
