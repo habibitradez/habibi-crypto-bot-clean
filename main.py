@@ -1625,10 +1625,11 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             return False
     
     try:
-        # Use 90% of specified amount to leave room for fees and rent
-        amount_lamports = int(amount_sol * 0.9 * 1000000000)
+        # Use 80% of specified amount to leave room for fees and rent
+        # IMPORTANT: Reduce the amount to create smaller transactions
+        amount_lamports = int(amount_sol * 0.6 * 1000000000)  # Only use 60% of specified amount
         
-        # Step 1: Get quote
+        # Step 1: Get quote with simplified routing
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
         
         time_since_last_call = time.time() - last_api_call_time
@@ -1642,7 +1643,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000"  # Increased to 20% slippage for better success
+                "slippageBps": "2000",  # 20% slippage for better success
+                "onlyDirectRoutes": "true",  # Force simple direct routes
+                "maxAccounts": "5"  # Limit the number of accounts in the transaction
             },
             timeout=10
         )
@@ -1667,7 +1670,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
                 "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
                 "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
-                "prioritizationFeeLamports": 1000000,  # CRITICAL: Add 0.001 SOL priority fee
+                "feeAccount": str(wallet.public_key),  # Use your main account for fees
+                "prioritizationFeeLamports": "auto",  # CRITICAL: Add 0.001 SOL priority fee
                 "onlyDirectRoutes": "true"  # Add this line for simpler routes
             },
             headers={"Content-Type": "application/json"},
