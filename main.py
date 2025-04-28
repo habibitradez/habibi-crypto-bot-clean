@@ -665,7 +665,7 @@ def get_token_price(token_address: str) -> Optional[float]:
     logging.error(f"All price retrieval methods failed for {token_address}")
     return None
     
-   def get_latest_pumpfun_tokens() -> List[Dict]:
+def get_latest_pumpfun_tokens() -> List[Dict]:
     """Get the most recent tokens launched on pump.fun."""
     try:
         logging.info("Fetching recent tokens from pump.fun...")
@@ -683,6 +683,10 @@ def get_token_price(token_address: str) -> Optional[float]:
         else:
             logging.error(f"Failed to get tokens from pump.fun: {response.status_code}")
             return []
+            
+    except Exception as e:
+        logging.error(f"Error fetching pump.fun tokens: {str(e)}")
+        return []
             
     except Exception as e:
         logging.error(f"Error fetching pump.fun tokens: {str(e)}")
