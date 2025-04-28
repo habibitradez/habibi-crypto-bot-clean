@@ -1980,7 +1980,7 @@ def main():
         
         # Force buy USDC or another tradable token as a test
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_usdc()
+        force_buy_token()
         
         # Continue with normal trading loop
         trading_loop()
