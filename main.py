@@ -1730,11 +1730,11 @@ def monitor_token_price(token_address: str) -> None:
                 monitored_tokens[token_address]['partial_profit_taken'] = True
         
         # Quick time-based exit (5 minutes)
-         if time_elapsed_minutes >= 5:  # Changed from 30 to 5
-        logging.info(f"TIME EXIT: Selling {token_address} after {time_elapsed_minutes:.1f} minutes")
-        sell_token(token_address, 100)
-        del monitored_tokens[token_address]
-        return
+        if time_elapsed_minutes >= 5:  # This line should be indented to match the other 'if' statements
+            logging.info(f"TIME EXIT: Selling {token_address} after {time_elapsed_minutes:.1f} minutes")
+            sell_token(token_address, 100)
+            del monitored_tokens[token_address]
+            return
             
     except Exception as e:
         logging.error(f"Error monitoring {token_address}: {str(e)}")
