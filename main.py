@@ -667,7 +667,7 @@ def get_token_price(token_address: str) -> Optional[float]:
     
     def get_latest_pumpfun_tokens() -> List[Dict]:
     """Get the most recent tokens launched on pump.fun."""
-    try:
+    try:  # This line and everything below needs to be indented
         logging.info("Fetching recent tokens from pump.fun...")
         
         response = requests.get(
