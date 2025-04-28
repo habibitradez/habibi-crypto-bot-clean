@@ -1668,6 +1668,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
                 "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
                 "prioritizationFeeLamports": 1000000  # CRITICAL: Add 0.001 SOL priority fee
+                "onlyDirectRoutes": "true"  # Add this line for simpler routes
             },
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -1690,7 +1691,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx,
             {
                 "encoding": "base64", 
-                "skipPreflight": False,  # CHANGED: Don't skip preflight to catch errors
+                "skipPreflight": true,  # CHANGED: Don't skip preflight to catch errors
                 "preflightCommitment": "confirmed",
                 "maxRetries": 5
             }
