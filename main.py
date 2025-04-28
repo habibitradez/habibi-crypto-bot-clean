@@ -1579,117 +1579,80 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         return False
 
 # IMPROVED SELL FUNCTION with better retry logic and error handling
-def sell_token(token_address: str, percentage: int = 100) -> bool:
-    """Improved sell function with enhanced logging."""
-    global sell_attempts, sell_successes
+def buy_token(token_address: str, amount_sol: float) -> bool:
+    """Buy a token using simplified transaction handling based on the working Discord bot."""
+    global buy_attempts, buy_successes, last_api_call_time, api_call_delay
     
-    sell_attempts += 1
-    logging.info(f"===== STARTING SELL PROCESS =====")
-    logging.info(f"Token to sell: {token_address}")
-    logging.info(f"Percentage to sell: {percentage}%")
-    logging.info(f"Wallet address: {wallet.public_key}")
+    buy_attempts += 1
+    
+    logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
-        # ... simulation code ...
-        pass
-    
-    try:
-        # Step 1: Get token accounts with detailed logging
-        logging.info(f"Step 1: Getting token accounts for {token_address}")
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
-        
-        if 'result' not in response or not response['result']['value']:
-            logging.error(f"No token account found for {token_address}")
-            logging.error(f"Full response: {json.dumps(response, indent=2)}")
-            return False
-        
-        token_account = response['result']['value'][0]
-        token_amount = token_account['account']['data']['parsed']['info']['tokenAmount']['amount']
-        amount_to_sell = int(int(token_amount) * percentage / 100)
-        
-        logging.info(f"Token amount in wallet: {token_amount}")
-        logging.info(f"Amount to sell: {amount_to_sell}")
-        
-        if amount_to_sell <= 0:
-            logging.error(f"Zero amount to sell for {token_address}")
-            return False
-        
-        # Step 2: Get quote with logging
-        logging.info(f"Step 2: Getting quote for selling {amount_to_sell} tokens")
-        quote_data = jupiter_handler.get_quote(
-            input_mint=token_address,
-            output_mint=SOL_TOKEN_ADDRESS,
-            amount=str(amount_to_sell),
-            slippage_bps="1000"
-        )
-        
-        if not quote_data:
-            logging.error(f"Failed to get quote for selling {token_address}")
-            return False
-        
-        logging.info(f"Quote received: {json.dumps(quote_data, indent=2)}")
-        
-        # Step 3: Prepare transaction with logging
-        logging.info(f"Step 3: Preparing swap transaction")
-        swap_payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True
-        }
-        
-        swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-            json=swap_payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        logging.info(f"Swap response status: {swap_response.status_code}")
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap transaction: {swap_response.status_code}")
-            logging.error(f"Response: {swap_response.text}")
-            return False
-        
-        swap_data = swap_response.json()
-        serialized_tx = swap_data["swapTransaction"]
-        
-        # Step 4: Submit transaction with logging
-        logging.info(f"Step 4: Submitting transaction")
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "preflightCommitment": "processed"
-            }
-        ])
-        
-        logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Transaction submitted successfully: {signature}")
-            logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
-            sell_successes += 1
+        # Simulation mode unchanged
+        token_price = get_token_price(token_address)
+        if token_price:
+            estimated_tokens = amount_sol / token_price
+            logging.info(f"[SIMULATION] Auto-bought {estimated_tokens:.2f} tokens of {token_address} for {amount_sol} SOL")
+            token_buy_timestamps[token_address] = time.time()
+            buy_successes += 1
             return True
         else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
-                logging.error(f"Full error: {json.dumps(response.get('error'), indent=2)}")
+            logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
+            return False
+    
+    # Real trading logic using Discord bot approach
+    try:
+        # Validate inputs
+        if wallet is None:
+            logging.error("Wallet not initialized")
             return False
             
-    except Exception as e:
-        logging.error(f"Exception in sell_token: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
+        # Sanitize token address 
+        token_address = token_address.strip()
+        if not re.match(r"[1-9A-HJ-NP-Za-km-z]{32,44}", token_address):
+            logging.error(f"Invalid token address format: {token_address}")
+            return False
+            
+        # Calculate amount in lamports
+        amount_lamports = int(amount_sol * 1000000000)
+        
+        # Direct Jupiter quote API call
+        logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
+        
+        # Apply rate limiting
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            time.sleep(api_call_delay - time_since_last_call)
+        
+        last_api_call_time = time.time()
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        quote_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": str(amount_lamports),
+            "slippageBps": "1000",
+            "onlyDirectRoutes": "true"  # Added for simpler routing
+        }
+        
+        quote_response = requests.get(quote_url, params=quote_params, timeout=10)
+        
+        if quote_response.status_code != 200:
+            logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
+            return False
+        
+        quote_data = quote_response.json()
+        if "routePlan" not in quote_data or "outAmount" not in quote_data:
+            logging.error(f"No swap route available: {quote_data}")
+            return False
+            
+        logging.info(f"Quote received: SOL → {token_address}, out amount: {quote_data.get('outAmount')}")
+        
+        # Prepare transaction data
+        swap_payload = {
+            "userPublicKey": str(wallet.public_key),
+            "wrapUnwrapSOL": True,
+            "quoteResponse": quote_data,
+            "computeUnitPriceMicroLamports":
 
 def force_sell_all_positions():  # THIS IS CORRECT - SAME LEVEL AS OTHER FUNCTIONS
     """Force sell all current positions."""
