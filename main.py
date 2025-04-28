@@ -1665,8 +1665,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
-                "computeUnitPriceMicroLamports": 10000,  # CRITICAL: Add explicit priority fees
-                "computeUnitsLimit": 800000,  # CRITICAL: Add compute unit limit
                 "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
                 "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
                 "prioritizationFeeLamports": 1000000  # CRITICAL: Add 0.001 SOL priority fee
