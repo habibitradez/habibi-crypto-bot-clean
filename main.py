@@ -1369,58 +1369,54 @@ def force_buy_bonk():
     logging.error("Failed to buy BONK - Check logs for errors")
     return False
 
-def force_buy_usdc():
-    """Force buy USDC token to test trading functionality."""
-    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC on Solana
+def force_buy_token():
+    """Force buy a token to test trading functionality by trying multiple tokens in sequence."""
+    # List of tokens to try, in order of preference
+    tokens_to_try = [
+        {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"},
+        {"symbol": "JUP", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"},
+        {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU"},
+        {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"},
+        {"symbol": "ORCA", "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE"},
+        {"symbol": "RAY", "address": "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R"}
+    ]
     
     logging.info("=" * 50)
-    logging.info("FORCE BUYING USDC TOKEN")
+    logging.info("ATTEMPTING TO BUY A TEST TOKEN")
     logging.info("=" * 50)
     
-    # First verify USDC is actually tradable
-    is_tradable = check_token_tradability(usdc_address)
-    if not is_tradable:
-        logging.error("USDC token is not tradable on Jupiter! Trying a different token...")
+    for token in tokens_to_try:
+        symbol = token["symbol"]
+        address = token["address"]
         
-        # Try a different token from our updated list
-        for token in KNOWN_TOKENS:
-            if token.get("tradable", False) and token["address"] != SOL_TOKEN_ADDRESS:
-                logging.info(f"Trying to buy {token['symbol']} instead of USDC...")
-                
-                if buy_token(token["address"], CONFIG['BUY_AMOUNT_SOL']):
-                    initial_price = get_token_price(token["address"])
-                    if initial_price:
-                        monitored_tokens[token["address"]] = {
-                            'initial_price': initial_price,
-                            'highest_price': initial_price,
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
-                        }
-                        logging.info(f"Successfully bought and monitoring {token['symbol']} at {initial_price}")
-                        return True
-                
-                # If we've tried one token and failed, continue to the next
-                logging.warning(f"Failed to buy {token['symbol']}, trying next token...")
+        logging.info(f"Trying to buy {symbol} ({address})...")
         
-        logging.error("Failed to buy any test token - Check logs for errors")
-        return False
+        # First verify if token is tradable
+        is_tradable = check_token_tradability(address)
+        if not is_tradable:
+            logging.warning(f"{symbol} is not tradable on Jupiter - trying next token")
+            continue
+        
+        # If tradable, try to buy it
+        logging.info(f"{symbol} is tradable! Attempting to buy...")
+        
+        if buy_token(address, CONFIG['BUY_AMOUNT_SOL']):
+            initial_price = get_token_price(address)
+            if initial_price:
+                monitored_tokens[address] = {
+                    'initial_price': initial_price,
+                    'highest_price': initial_price,
+                    'partial_profit_taken': False,
+                    'buy_time': time.time()
+                }
+                logging.info(f"SUCCESS! Bought and monitoring {symbol} at {initial_price}")
+                return True
+        
+        logging.warning(f"Failed to buy {symbol} - trying next token")
     
-    # If USDC is tradable, proceed with the buy
-    if buy_token(usdc_address, CONFIG['BUY_AMOUNT_SOL']):
-        initial_price = get_token_price(usdc_address)
-        if initial_price:
-            monitored_tokens[usdc_address] = {
-                'initial_price': initial_price,
-                'highest_price': initial_price,
-                'partial_profit_taken': False,
-                'buy_time': time.time()
-            }
-            logging.info(f"Successfully bought and monitoring USDC at {initial_price}")
-            return True
-    
-    logging.error("Failed to buy USDC - Check logs for errors")
+    logging.error("Failed to buy any test token after trying all options")
     return False
-
+    
 import re  # Make sure to add this import at the top if it's not there
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
@@ -1450,8 +1446,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error("Wallet not initialized")
             return False
             
-        # Calculate amount in lamports
-        amount_lamports = int(amount_sol * 1000000000)
+        # Calculate amount in lamports - use slightly less to account for fees
+        amount_lamports = int(amount_sol * 0.99 * 1000000000)  # 99% of specified amount
         
         # Step 1: Get Jupiter quote
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
@@ -1485,19 +1481,14 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         logging.info(f"Quote received: SOL → {token_address}, out amount: {quote_data.get('outAmount')}")
         
-        # Step 2: Prepare swap transaction
+        # Step 2: Prepare swap transaction with minimal payload
         swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        
-        # Simplified payload structure to avoid deserialization errors
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "asLegacyTransaction": True
         }
-        
-        # Log the payload for debugging
-        logging.info(f"Swap payload structure: {json.dumps(swap_payload, indent=2)[:200]}...")
         
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
@@ -1510,26 +1501,25 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                                      timeout=10)
         
         if swap_response.status_code != 200:
-            logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text}")
+            logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text[:200]}")
             return False
             
         swap_data = swap_response.json()
         if "swapTransaction" not in swap_data:
-            logging.error(f"No swap transaction in response: {json.dumps(swap_data)}")
+            logging.error(f"No swap transaction in response: {swap_data}")
             return False
         
-        # Step 3: Submit transaction directly
+        # Step 3: Submit transaction directly (without deserializing)
         serialized_tx = swap_data["swapTransaction"]
         logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
         
-        # Submit transaction
+        # Submit transaction with skipPreflight=true
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64", 
-                "skipPreflight": True,  # Skip preflight for higher success rate
-                "preflightCommitment": "confirmed",
-                "maxRetries": 3
+                "skipPreflight": True,  # Skip preflight to avoid rejections
+                "preflightCommitment": "confirmed"
             }
         ])
         
@@ -1543,11 +1533,10 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.info(f"Transaction submitted successfully: {signature}")
             logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
             
-            # Record successful transaction
+            # Record successful buy
             token_buy_timestamps[token_address] = time.time()
             buy_successes += 1
             return True
-            
         else:
             if "error" in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
