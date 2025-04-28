@@ -1718,7 +1718,7 @@ def tiny_buy_test():
         logging.error(f"RPC TEST: Error in test: {str(e)}")
         return False
         
-        def test_sol_transfer():
+def test_sol_transfer():
     """Test a basic SOL transfer to see if any transactions work with this RPC provider."""
     logging.info("RPC TEST: Testing basic SOL transfer")
     
@@ -1737,7 +1737,6 @@ def tiny_buy_test():
         
         # Create a basic transaction
         from solders.message import Message
-        from solders.transaction import VersionedTransaction
         
         # Get a recent blockhash
         blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
