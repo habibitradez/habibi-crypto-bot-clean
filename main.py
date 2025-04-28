@@ -1431,7 +1431,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
-        # Simulation mode unchanged
+        # Simulation mode code unchanged
         token_price = get_token_price(token_address)
         if token_price:
             estimated_tokens = amount_sol / token_price
@@ -1443,9 +1443,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
             return False
     
-    # Real trading logic using Discord bot approach
+    # Real trading logic
     try:
-        # Validate inputs
+        # Validate wallet
         if wallet is None:
             logging.error("Wallet not initialized")
             return False
@@ -1492,8 +1492,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote_data,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True  # Important: Using legacy transaction format
+            "asLegacyTransaction": True,  # Important: Using legacy transaction format
+            "prioritizationFeeLamports": "auto",  # Added for better transaction priority
+            "dynamicComputeUnitLimit": True  # Added for better transaction success
         }
         
         time_since_last_call = time.time() - last_api_call_time
@@ -1544,7 +1545,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             confirmed = False
             for i in range(5):  # Try 5 times
                 logging.info(f"Waiting for confirmation (attempt {i+1}/5)...")
-                time.sleep(5)  # Wait longer between checks
+                time.sleep(2)  # Wait between checks
                 
                 status_response = wallet._rpc_call("getSignatureStatuses", [
                     [signature],
@@ -1563,7 +1564,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
             # Check token balance - try multiple times
             for i in range(3):
-                time.sleep(5)  # Wait before checking
+                time.sleep(2)  # Wait before checking
                 logging.info(f"Checking token balance (attempt {i+1}/3)...")
                 token_accounts = wallet.get_token_accounts(token_address)
                 
@@ -1680,8 +1681,9 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote_data,
-            "computeUnitPriceMicroLamports": 0,
-            "asLegacyTransaction": True  # Important: Using legacy transaction format
+            "asLegacyTransaction": True,  # Important: Using legacy transaction format
+            "prioritizationFeeLamports": "auto",  # Added for better transaction priority
+            "dynamicComputeUnitLimit": True  # Added for better transaction success
         }
         
         time_since_last_call = time.time() - last_api_call_time
@@ -1732,7 +1734,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             confirmed = False
             for i in range(5):  # Try 5 times
                 logging.info(f"Waiting for confirmation (attempt {i+1}/5)...")
-                time.sleep(5)  # Wait longer between checks
+                time.sleep(2)  # Wait between checks
                 
                 status_response = wallet._rpc_call("getSignatureStatuses", [
                     [signature],
@@ -1751,7 +1753,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             
             # Verify the tokens were actually sold - check token balance after sale
             for i in range(3):
-                time.sleep(5)  # Wait before checking
+                time.sleep(2)  # Wait before checking
                 logging.info(f"Verifying token sale (attempt {i+1}/3)...")
                 new_token_accounts = wallet.get_token_accounts(token_address)
                 
