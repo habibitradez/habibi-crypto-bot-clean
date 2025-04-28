@@ -1531,70 +1531,54 @@ def buy_bonk_minimal():
         # Calculate minimal amount in lamports
         amount_lamports = int(tiny_amount * 1000000000)
         
-        # Get basic quote with minimal parameters
+        # Get basic quote
         quote_response = requests.get(
             f"{CONFIG['JUPITER_API_URL']}/v6/quote",
             params={
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": bonk_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000"
-                # No other constraints
+                "slippageBps": "2000"  # Higher slippage for better success
             },
             timeout=10
         )
         
         if quote_response.status_code != 200:
-            logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
+            logging.error(f"Quote API failed: {quote_response.status_code}")
             return False
         
         quote_data = quote_response.json()
         
-        # Create minimal swap request
+        # Create absolutely minimal swap transaction
         swap_response = requests.post(
             f"{CONFIG['JUPITER_API_URL']}/v6/swap",
             json={
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "asLegacyTransaction": True,
-                "wrapUnwrapSOL": True,
-                # No other parameters to keep it simple
+                "wrapUnwrapSOL": True
             },
             headers={"Content-Type": "application/json"},
             timeout=10
         )
         
         if swap_response.status_code != 200:
-            logging.error(f"Swap API failed: {swap_response.status_code} - {swap_response.text[:200]}")
+            logging.error(f"Swap API failed: {swap_response.status_code}")
             return False
         
         swap_data = swap_response.json()
-        if "swapTransaction" not in swap_data:
-            logging.error(f"No transaction in swap response: {swap_data}")
-            return False
-        
-        # Submit with absolute minimal parameters
         serialized_tx = swap_data["swapTransaction"]
+        
+        # Submit with absolutely minimal parameters
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
-                "encoding": "base64", 
-                "skipPreflight": true,
-                "preflightCommitment": "confirmed",
+                "encoding": "base64"
             }
         ])
         
         if "result" in response:
             signature = response["result"]
             logging.info(f"Transaction submitted: {signature}")
-            
-            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                logging.error("Transaction failed - received dummy signature")
-                return False
-                
-            # Simple check for success
-            token_buy_timestamps[bonk_address] = time.time()
-            buy_successes += 1
             return True
         else:
             return False
@@ -1602,6 +1586,7 @@ def buy_bonk_minimal():
     except Exception as e:
         logging.error(f"Error in minimal BONK buy: {str(e)}")
         return False
+        
 def force_buy_token():
     """Force buy a token to test trading functionality by trying multiple tokens in sequence."""
     # List of tokens to try, in order of preference
