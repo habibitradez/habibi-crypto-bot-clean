@@ -1717,6 +1717,82 @@ def tiny_buy_test():
     except Exception as e:
         logging.error(f"RPC TEST: Error in test: {str(e)}")
         return False
+        
+        def test_sol_transfer():
+    """Test a basic SOL transfer to see if any transactions work with this RPC provider."""
+    logging.info("RPC TEST: Testing basic SOL transfer")
+    
+    try:
+        # Create a simple SOL transfer instruction to your own wallet
+        # This is the simplest possible transaction type
+        
+        amount_lamports = 100000  # Just 0.0001 SOL
+        transfer_instruction = transfer(
+            TransferParams(
+                from_pubkey=wallet.public_key,
+                to_pubkey=wallet.public_key,  # Send to self
+                lamports=amount_lamports
+            )
+        )
+        
+        # Create a basic transaction
+        from solders.message import Message
+        from solders.transaction import VersionedTransaction
+        
+        # Get a recent blockhash
+        blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+        blockhash = blockhash_response["result"]["value"]["blockhash"]
+        
+        # Create legacy transaction
+        message = Message.new_with_blockhash(
+            [transfer_instruction], 
+            wallet.public_key,
+            blockhash
+        )
+        
+        # Sign the transaction
+        transaction = Transaction(
+            message=message,
+            signatures=[wallet.keypair.sign_message(message.serialize())]
+        )
+        
+        # Try different submission methods
+        configs_to_try = [
+            {"name": "Minimal", "params": {"encoding": "base64"}},
+            {"name": "WithFees", "params": {"encoding": "base64", "maxRetries": 3, "skipPreflight": True}}
+        ]
+        
+        for config in configs_to_try:
+            logging.info(f"RPC TEST: Trying SOL transfer with configuration: {config['name']}")
+            
+            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx,
+                config["params"]
+            ])
+            
+            if "result" in response:
+                signature = response["result"]
+                if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error(f"RPC TEST: SOL transfer - Received dummy signature")
+                else:
+                    logging.info(f"RPC TEST: SOL transfer SUCCEEDED with configuration {config['name']} - Signature: {signature}")
+                    logging.info(f"FOUND WORKING CONFIGURATION for basic transactions: {config['params']}")
+                    return True
+            else:
+                if "error" in response:
+                    error_data = response.get("error", {})
+                    error_message = error_data.get("message", "Unknown")
+                    error_code = error_data.get("code", "Unknown")
+                    logging.error(f"RPC TEST: SOL transfer - Error: {error_message} (Code: {error_code})")
+        
+        logging.error("RPC TEST: All SOL transfer configurations failed")
+        return False
+            
+    except Exception as e:
+        logging.error(f"RPC TEST: Error in SOL transfer test: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
 
 def force_buy_token():
     """Force buy a token to test trading functionality by trying multiple tokens in sequence."""
@@ -1831,7 +1907,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
-                "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
+                "wrapUnwrapSOL": False,  # CRITICAL: Enable SOL wrapping
             },
             headers={"Content-Type": "application/json"},
             timeout=10
