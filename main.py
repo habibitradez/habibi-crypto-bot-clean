@@ -1532,35 +1532,35 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 }
             ])
             
-  if "result" in response:
-    signature = response["result"]  # This line needs to be indented
-    logging.info(f"Transaction submitted successfully: {signature}")
-    logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
-    
-    # Wait and verify transaction
-    time.sleep(5)
-    
-    # Check transaction status
-    status_response = wallet._rpc_call("getSignatureStatuses", [[signature]])
-    
-    logging.info(f"Transaction status: {json.dumps(status_response, indent=2)}")
-    
-    if "result" in status_response and status_response["result"]["value"]:
-        confirmation_status = status_response["result"]["value"][0]
-        if confirmation_status and "confirmationStatus" in confirmation_status:
-            logging.info(f"Confirmation status: {confirmation_status['confirmationStatus']}")
-            if confirmation_status.get("err"):
-                logging.error(f"Transaction failed on-chain: {confirmation_status['err']}")
-                return False
-    
-    # Check token balance
-    time.sleep(2)
-    token_accounts = wallet.get_token_accounts(token_address)
-    logging.info(f"Token accounts after purchase: {json.dumps(token_accounts, indent=2)}")
-    
-    token_buy_timestamps[token_address] = time.time()
-    buy_successes += 1
-    return True
+if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted successfully: {signature}")
+                logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
+                
+                # Wait and verify transaction
+                time.sleep(5)
+                
+                # Check transaction status
+                status_response = wallet._rpc_call("getSignatureStatuses", [[signature]])
+                
+                logging.info(f"Transaction status: {json.dumps(status_response, indent=2)}")
+                
+                if "result" in status_response and status_response["result"]["value"]:
+                    confirmation_status = status_response["result"]["value"][0]
+                    if confirmation_status and "confirmationStatus" in confirmation_status:
+                        logging.info(f"Confirmation status: {confirmation_status['confirmationStatus']}")
+                        if confirmation_status.get("err"):
+                            logging.error(f"Transaction failed on-chain: {confirmation_status['err']}")
+                            return False
+                
+                # Check token balance
+                time.sleep(2)
+                token_accounts = wallet.get_token_accounts(token_address)
+                logging.info(f"Token accounts after purchase: {json.dumps(token_accounts, indent=2)}")
+                
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                return True
             else:
                 if "error" in response:
                     error_message = response.get("error", {}).get("message", "Unknown error")
