@@ -48,9 +48,10 @@ CONFIG = {
     'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Keep small to minimize rug risk
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
-    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))
-}
-
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '3000'))
+    'PUMPFUN_API_URL': 'https://api-metis.jup.ag/pump',  # Pump.fun API endpoint through Metis
+    'PUMPFUN_SCAN_INTERVAL_SEC': int(os.environ.get('PUMPFUN_SCAN_INTERVAL_SEC', '10'))
+})
 # Diagnostics flag - set to True for very verbose logging
 ULTRA_DIAGNOSTICS = True
 
@@ -84,7 +85,7 @@ MEME_TOKEN_PATTERNS = [
 # --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
-api_call_delay = 1.5  # Start with 1.5 seconds between calls (40 calls/min)
+api_call_delay = 0.1  # Start with 1.5 seconds between calls (40 calls/min)
 
 # Track tokens we're monitoring
 monitored_tokens = {}
@@ -663,6 +664,89 @@ def get_token_price(token_address: str) -> Optional[float]:
     
     logging.error(f"All price retrieval methods failed for {token_address}")
     return None
+    
+    def get_latest_pumpfun_tokens() -> List[Dict]:
+    """Get the most recent tokens launched on pump.fun."""
+    try:
+        logging.info("Fetching recent tokens from pump.fun...")
+        
+        response = requests.get(
+            f"{CONFIG['PUMPFUN_API_URL']}/latest",
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            tokens = response.json()
+            logging.info(f"Found {len(tokens)} recent tokens on pump.fun")
+            return tokens
+        else:
+            logging.error(f"Failed to get tokens from pump.fun: {response.status_code}")
+            return []
+            
+    except Exception as e:
+        logging.error(f"Error fetching pump.fun tokens: {str(e)}")
+        return []
+
+def get_token_details(token_address: str) -> Optional[Dict]:
+    """Get detailed information about a token from pump.fun."""
+    try:
+        response = requests.get(
+            f"{CONFIG['PUMPFUN_API_URL']}/token/{token_address}",
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            return token_data
+        else:
+            logging.warning(f"Failed to get token details for {token_address}: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error getting token details: {str(e)}")
+        return None
+    
+    def handle_api_error(response, endpoint: str) -> bool:
+    """Handle API errors with improved diagnostics."""
+    if response.status_code == 429:
+        logging.warning(f"Rate limited on {endpoint} despite paid plan! Retrying once...")
+        time.sleep(1)  # Brief wait
+        return True  # Should retry
+        
+    elif response.status_code == 403:
+        logging.error(f"Authentication error on {endpoint}. Check your Metis API key configuration")
+        return False  # Should not retry
+        
+    elif response.status_code >= 500:
+        logging.warning(f"Server error on {endpoint}: {response.status_code}. Will retry")
+        time.sleep(2)
+        return True  # Should retry
+        
+    else:
+        logging.error(f"API error on {endpoint}: {response.status_code} - {response.text[:200]}")
+        return False  # Should not retry
+        
+def get_token_details(token_address: str) -> Optional[Dict]:
+    """Get detailed information about a token from pump.fun."""
+    try:
+        response = requests.get(
+            f"{CONFIG['PUMPFUN_API_URL']}/token/{token_address}",
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            token_data = response.json()
+            return token_data
+        else:
+            logging.warning(f"Failed to get token details for {token_address}: {response.status_code}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error getting token details: {str(e)}")
+        return None
 
 def initialize():
     """Initialize the bot and verify connectivity."""
@@ -1104,6 +1188,98 @@ def scan_for_new_tokens() -> List[str]:
     # If no tradable tokens at all, return all potential tokens as a last resort
     logging.info(f"No tradable tokens found, returning all {len(potential_tokens)} potential tokens")
     return potential_tokens
+    
+def scan_for_new_tokens_pumpfun() -> List[str]:
+    """Scan pump.fun for newly launched tokens."""
+    global tokens_scanned
+    
+    logging.info("Scanning pump.fun for newly launched tokens...")
+    potential_tokens = []
+    
+    # Get recent tokens from pump.fun
+    recent_tokens = get_latest_pumpfun_tokens()
+    
+    for token in recent_tokens:
+        # Extract token address
+        if "address" in token:
+            token_address = token["address"]
+            # Check if it's new (launched in last 5 minutes)
+            if "launchTime" in token:
+                launch_time = token["launchTime"]
+                current_time = int(time.time() * 1000)  # Convert to milliseconds
+                age_minutes = (current_time - launch_time) / (1000 * 60)
+                
+                if age_minutes <= 5:  # Only tokens less than 5 minutes old
+                    logging.info(f"Found new token on pump.fun: {token_address} (age: {age_minutes:.2f} minutes)")
+                    potential_tokens.append(token_address)
+                    tokens_scanned += 1
+    
+    logging.info(f"Found {len(potential_tokens)} new tokens on pump.fun in the last 5 minutes")
+    return potential_tokens
+
+# Update your trading_loop function to include pump.fun scanning
+def trading_loop():
+    """Main trading loop with pump.fun integration."""
+    global iteration_count, last_status_time, errors_encountered, api_call_delay
+    
+    logging.info("Starting enhanced trading loop with pump.fun integration")
+    
+    while True:
+        iteration_count += 1
+        
+        try:
+            # Print status every 5 minutes
+            if time.time() - last_status_time > 300:
+                # Status logging unchanged
+                pass
+            
+            # Force sell stale positions
+            force_sell_stale_positions()
+            
+            # Monitor existing positions
+            for token_address in list(monitored_tokens.keys()):
+                monitor_token_price(token_address)
+                time.sleep(0.2)  # Faster with paid API
+            
+            # Look for new tokens if we have capacity
+            if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
+                # IMPORTANT NEW PART: First check pump.fun for the newest tokens
+                new_pump_tokens = scan_for_new_tokens_pumpfun()
+                
+                for token_address in new_pump_tokens:
+                    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
+                        break
+                    
+                    # Skip tokens we're already monitoring
+                    if token_address in monitored_tokens:
+                        continue
+                        
+                    # Check cooldown
+                    if token_address in token_buy_timestamps:
+                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                            continue
+                    
+                    # Quick check and buy for tokens from pump.fun
+                    if check_token_liquidity(token_address):
+                        logging.info(f"SNIPING new pump.fun token: {token_address}")
+                        if buy_token(token_address, CONFIG['BUY_AMOUNT_SOL']):
+                            logging.info(f"Successfully sniped new pump.fun token: {token_address}")
+                            time.sleep(1)  # Brief delay between buys
+                
+                # If we still have capacity, use regular blockchain scanning as backup
+                if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
+                    # Original scanning code unchanged
+                    new_tokens = scan_for_new_launches()
+                    # Rest unchanged
+                    pass
+            
+            # Faster iteration for quick trades
+            time.sleep(0.5)  # Check twice per second with paid API
+            
+        except Exception as e:
+            # Error handling unchanged
+            pass
 
 def check_token_tradability(token_address: str) -> bool:
     """Check if a token is tradable on Jupiter API."""
