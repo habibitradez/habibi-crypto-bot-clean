@@ -1715,11 +1715,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
-                "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
                 "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
-                "feeAccount": str(wallet.public_key),  # Use your main account for fees
-                "prioritizationFeeLamports": "auto",  # CRITICAL: Add 0.001 SOL priority fee
-                "onlyDirectRoutes": "true"  # Add this line for simpler routes
             },
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -1743,7 +1739,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             {
                 "encoding": "base64", 
                 "skipPreflight": True,  # CHANGED: Don't skip preflight to catch errors
-                "preflightCommitment": "confirmed",
+                "preflightCommitment": "processed",
                 "maxRetries": 5
             }
         ])
