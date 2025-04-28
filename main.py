@@ -1520,40 +1520,88 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
     return True
 
-def force_buy_bonk():
-    """Force buy BONK token to test trading functionality."""
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+def buy_bonk_minimal():
+    """Special function to buy a minimal amount of BONK with simplified parameters."""
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    tiny_amount = 0.03  # Just 0.03 SOL - super small test amount
     
-    logging.info("=" * 50)
-    logging.info("FORCE BUYING BONK TOKEN")
-    logging.info("=" * 50)
+    logging.info(f"Attempting minimal BONK purchase with {tiny_amount} SOL")
     
-    # Try with a smaller amount than usual
-    test_amount = CONFIG['BUY_AMOUNT_SOL'] * 0.5  # Only use half the normal amount
-    
-    # First check if BONK is tradable
-    is_tradable = check_token_tradability(bonk_address)
-    if not is_tradable:
-        logging.warning("BONK token is not tradable on Jupiter!")
-        # Return false but don't try others - specific error is more useful for debugging
-        return False
-    
-    # If BONK is tradable, proceed with the buy
-    if buy_token(bonk_address, test_amount):
-        initial_price = get_token_price(bonk_address)
-        if initial_price:
-            monitored_tokens[bonk_address] = {
-                'initial_price': initial_price,
-                'highest_price': initial_price,
-                'partial_profit_taken': False,
-                'buy_time': time.time()
+    try:
+        # Calculate minimal amount in lamports
+        amount_lamports = int(tiny_amount * 1000000000)
+        
+        # Get basic quote with minimal parameters
+        quote_response = requests.get(
+            f"{CONFIG['JUPITER_API_URL']}/v6/quote",
+            params={
+                "inputMint": SOL_TOKEN_ADDRESS,
+                "outputMint": bonk_address,
+                "amount": str(amount_lamports),
+                "slippageBps": "2000"
+                # No other constraints
+            },
+            timeout=10
+        )
+        
+        if quote_response.status_code != 200:
+            logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
+            return False
+        
+        quote_data = quote_response.json()
+        
+        # Create minimal swap request
+        swap_response = requests.post(
+            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
+            json={
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "asLegacyTransaction": True,
+                "wrapUnwrapSOL": True,
+                # No other parameters to keep it simple
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Swap API failed: {swap_response.status_code} - {swap_response.text[:200]}")
+            return False
+        
+        swap_data = swap_response.json()
+        if "swapTransaction" not in swap_data:
+            logging.error(f"No transaction in swap response: {swap_data}")
+            return False
+        
+        # Submit with absolute minimal parameters
+        serialized_tx = swap_data["swapTransaction"]
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64", 
+                "skipPreflight": true,
+                "preflightCommitment": "confirmed",
             }
-            logging.info(f"Successfully bought and monitoring BONK at {initial_price}")
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted: {signature}")
+            
+            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                logging.error("Transaction failed - received dummy signature")
+                return False
+                
+            # Simple check for success
+            token_buy_timestamps[bonk_address] = time.time()
+            buy_successes += 1
             return True
-    
-    logging.error("Failed to buy BONK - Check logs for errors")
-    return False
-
+        else:
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in minimal BONK buy: {str(e)}")
+        return False
 def force_buy_token():
     """Force buy a token to test trading functionality by trying multiple tokens in sequence."""
     # List of tokens to try, in order of preference
