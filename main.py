@@ -193,37 +193,37 @@ class SolanaWallet:
             logging.error(traceback.format_exc())
             return 0.0
     
-def _rpc_call(self, method: str, params: List) -> Dict:
-    """Make an RPC call to the Solana network."""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params
-    }
-    
-    if ULTRA_DIAGNOSTICS:
-        logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
+    def _rpc_call(self, method: str, params: List) -> Dict:
+        """Make an RPC call to the Solana network."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params
+        }
         
-    # Update headers with QuickNode optimized settings
-    headers = {
-        "Content-Type": "application/json",
-        # No need for QB-CLIENT-ID since you don't have one
-    }
-    
-    response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
-    
-    if response.status_code == 200:
-        response_data = response.json()
-        
-        if 'error' in response_data:
-            logging.error(f"RPC error in response: {response_data['error']}")
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
             
-        return response_data
-    else:
-        error_text = f"RPC call failed with status {response.status_code}: {response.text}"
-        logging.error(error_text)
-        raise Exception(error_text)
+        # Update headers with QuickNode optimized settings
+        headers = {
+            "Content-Type": "application/json",
+            # No need for QB-CLIENT-ID since you don't have one
+        }
+        
+        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            
+            if 'error' in response_data:
+                logging.error(f"RPC error in response: {response_data['error']}")
+                
+            return response_data
+        else:
+            error_text = f"RPC call failed with status {response.status_code}: {response.text}"
+            logging.error(error_text)
+            raise Exception(error_text)
     
     def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
