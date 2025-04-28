@@ -1579,61 +1579,70 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         return False
 
 # IMPROVED SELL FUNCTION with better retry logic and error handling
-def buy_token(token_address: str, amount_sol: float) -> bool:
-    """Buy a token using simplified transaction handling based on the working Discord bot."""
-    global buy_attempts, buy_successes, last_api_call_time, api_call_delay
+def sell_token(token_address: str, percentage: int = 100) -> bool:
+    """Sell token using direct Jupiter API approach that mirrors the working buy function."""
+    global sell_attempts, sell_successes, last_api_call_time, api_call_delay
     
-    buy_attempts += 1
-    
-    logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
+    sell_attempts += 1
+    logging.info(f"===== STARTING SELL PROCESS =====")
+    logging.info(f"Token to sell: {token_address}")
+    logging.info(f"Percentage to sell: {percentage}%")
     
     if CONFIG['SIMULATION_MODE']:
-        # Simulation mode unchanged
-        token_price = get_token_price(token_address)
-        if token_price:
-            estimated_tokens = amount_sol / token_price
-            logging.info(f"[SIMULATION] Auto-bought {estimated_tokens:.2f} tokens of {token_address} for {amount_sol} SOL")
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
-            return False
+        # Simulation mode code unchanged
+        logging.info(f"[SIMULATION] Sold {percentage}% of {token_address}")
+        sell_successes += 1
+        return True
     
-    # Real trading logic using Discord bot approach
     try:
-        # Validate inputs
+        # Validate wallet
         if wallet is None:
             logging.error("Wallet not initialized")
             return False
-            
-        # Sanitize token address 
-        token_address = token_address.strip()
-        if not re.match(r"[1-9A-HJ-NP-Za-km-z]{32,44}", token_address):
-            logging.error(f"Invalid token address format: {token_address}")
-            return False
-            
-        # Calculate amount in lamports
-        amount_lamports = int(amount_sol * 1000000000)
         
-        # Direct Jupiter quote API call
-        logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
+        # Step 1: Find token account and amount
+        logging.info(f"Getting token accounts for {token_address}")
+        token_accounts = wallet.get_token_accounts(token_address)
+        
+        if not token_accounts or len(token_accounts) == 0:
+            logging.error(f"No token accounts found for {token_address}")
+            return False
+        
+        # Get token amount from the first account
+        token_account = token_accounts[0]
+        
+        try:
+            token_amount = int(token_account['account']['data']['parsed']['info']['tokenAmount']['amount'])
+            logging.info(f"Token amount in wallet: {token_amount}")
+        except (KeyError, ValueError, TypeError) as e:
+            logging.error(f"Failed to get token amount: {str(e)}")
+            return False
+        
+        if token_amount <= 0:
+            logging.error(f"Zero token balance for {token_address}")
+            return False
+        
+        # Calculate amount to sell
+        amount_to_sell = int(token_amount * percentage / 100)
+        logging.info(f"Amount to sell: {amount_to_sell} ({percentage}% of {token_amount})")
         
         # Apply rate limiting
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
             time.sleep(api_call_delay - time_since_last_call)
         
-        last_api_call_time = time.time()
+        # Step 2: Get Jupiter quote for selling
         quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
         quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
+            "inputMint": token_address,  
+            "outputMint": SOL_TOKEN_ADDRESS,  # Selling back to SOL
+            "amount": str(amount_to_sell),
             "slippageBps": "1000",
             "onlyDirectRoutes": "true"  # Added for simpler routing
         }
         
+        last_api_call_time = time.time()
+        logging.info(f"Getting quote: {token_address} → SOL, amount: {amount_to_sell}")
         quote_response = requests.get(quote_url, params=quote_params, timeout=10)
         
         if quote_response.status_code != 200:
@@ -1641,18 +1650,84 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             return False
         
         quote_data = quote_response.json()
-        if "routePlan" not in quote_data or "outAmount" not in quote_data:
-            logging.error(f"No swap route available: {quote_data}")
+        if "outAmount" not in quote_data:
+            logging.error(f"Invalid quote response: {quote_data}")
             return False
             
-        logging.info(f"Quote received: SOL → {token_address}, out amount: {quote_data.get('outAmount')}")
+        logging.info(f"Quote received successfully")
         
-        # Prepare transaction data
+        # Step 3: Prepare swap transaction
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
         swap_payload = {
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
             "quoteResponse": quote_data,
-            "computeUnitPriceMicroLamports":
+            "computeUnitPriceMicroLamports": 0,
+            "asLegacyTransaction": True  # Important: Using legacy transaction format
+        }
+        
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            time.sleep(api_call_delay - time_since_last_call)
+            
+        last_api_call_time = time.time()
+        logging.info(f"Preparing swap transaction for selling {token_address}")
+        swap_response = requests.post(swap_url, json=swap_payload, 
+                                     headers={"Content-Type": "application/json"}, 
+                                     timeout=10)
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text[:200]}")
+            return False
+            
+        swap_data = swap_response.json()
+        if "swapTransaction" not in swap_data:
+            logging.error(f"No swap transaction in response: {swap_data}")
+            return False
+        
+        # Step 4: Submit transaction directly (without deserializing)
+        serialized_tx = swap_data["swapTransaction"]
+        logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+        
+        # Submit transaction with skipPreflight=true
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,  # Skip preflight for higher success rate
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            # Check for dummy signature (all 1's)
+            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                logging.error("Transaction failed - received dummy signature")
+                return False
+                
+            logging.info(f"Transaction submitted successfully: {signature}")
+            logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
+            
+            # Wait briefly for transaction to propagate
+            time.sleep(2)
+            
+            # Record successful sell
+            sell_successes += 1
+            return True
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                error_code = response.get("error", {}).get("code", "Unknown code")
+                logging.error(f"Transaction error: {error_message} (Code: {error_code})")
+            else:
+                logging.error(f"Failed to submit transaction - unexpected response format")
+            return False
+    
+    except Exception as e:
+        logging.error(f"Error selling {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
 
 def force_sell_all_positions():  # THIS IS CORRECT - SAME LEVEL AS OTHER FUNCTIONS
     """Force sell all current positions."""
