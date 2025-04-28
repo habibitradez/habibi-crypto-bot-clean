@@ -1516,67 +1516,61 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 3: Sign and submit the transaction
         logging.info(f"Signing and submitting transaction for {token_address}")
         
-        try:
-            # Extract the serialized transaction (already in base64)
-            serialized_tx = swap_data["swapTransaction"]
-            logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+        # Extract the serialized transaction (already in base64)
+        serialized_tx = swap_data["swapTransaction"]
+        logging.info(f"Got serialized transaction (length: {len(serialized_tx)})")
+        
+        # Jupiter transactions are usually pre-signed except for user signature
+        # Just submit directly without modifying
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted successfully: {signature}")
+            logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
             
-            # Jupiter transactions are usually pre-signed except for user signature
-            # Just submit directly without modifying
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "preflightCommitment": "processed"
-                }
-            ])
+            # Wait and verify transaction
+            time.sleep(5)
             
-if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
+            # Check transaction status
+            status_response = wallet._rpc_call("getSignatureStatuses", [[signature]])
+            
+            logging.info(f"Transaction status: {json.dumps(status_response, indent=2)}")
+            
+            if "result" in status_response and status_response["result"]["value"]:
+                confirmation_status = status_response["result"]["value"][0]
+                if confirmation_status and "confirmationStatus" in confirmation_status:
+                    logging.info(f"Confirmation status: {confirmation_status['confirmationStatus']}")
+                    if confirmation_status.get("err"):
+                        logging.error(f"Transaction failed on-chain: {confirmation_status['err']}")
+                        return False
+            
+            # Check token balance
+            time.sleep(2)
+            token_accounts = wallet.get_token_accounts(token_address)
+            logging.info(f"Token accounts after purchase: {json.dumps(token_accounts, indent=2)}")
+            
+            token_buy_timestamps[token_address] = time.time()
+            buy_successes += 1
+            return True
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                error_code = response.get("error", {}).get("code", "Unknown code")
+                logging.error(f"Transaction error: {error_message} (Code: {error_code})")
                 
-                # Wait and verify transaction
-                time.sleep(5)
-                
-                # Check transaction status
-                status_response = wallet._rpc_call("getSignatureStatuses", [[signature]])
-                
-                logging.info(f"Transaction status: {json.dumps(status_response, indent=2)}")
-                
-                if "result" in status_response and status_response["result"]["value"]:
-                    confirmation_status = status_response["result"]["value"][0]
-                    if confirmation_status and "confirmationStatus" in confirmation_status:
-                        logging.info(f"Confirmation status: {confirmation_status['confirmationStatus']}")
-                        if confirmation_status.get("err"):
-                            logging.error(f"Transaction failed on-chain: {confirmation_status['err']}")
-                            return False
-                
-                # Check token balance
-                time.sleep(2)
-                token_accounts = wallet.get_token_accounts(token_address)
-                logging.info(f"Token accounts after purchase: {json.dumps(token_accounts, indent=2)}")
-                
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                return True
+                # Handle specific error cases
+                if error_code == -32007:  # Request is too big
+                    logging.error("Transaction too large - this might be a network issue")
             else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    error_code = response.get("error", {}).get("code", "Unknown code")
-                    logging.error(f"Transaction error: {error_message} (Code: {error_code})")
-                    
-                    # Handle specific error cases
-                    if error_code == -32007:  # Request is too big
-                        logging.error("Transaction too large - this might be a network issue")
-                else:
-                    logging.error(f"Failed to submit transaction - unexpected response format")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error submitting transaction: {str(e)}")
-            logging.error(traceback.format_exc())
+                logging.error(f"Failed to submit transaction - unexpected response format")
             return False
             
     except Exception as e:
@@ -1597,6 +1591,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
     
     if CONFIG['SIMULATION_MODE']:
         # ... simulation code ...
+        pass
     
     try:
         # Step 1: Get token accounts with detailed logging
