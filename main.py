@@ -48,7 +48,7 @@ CONFIG = {
     'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Keep small to minimize rug risk
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
-    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '3000'))
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '3000')),
     'PUMPFUN_API_URL': 'https://api-metis.jup.ag/pump',  # Pump.fun API endpoint through Metis
     'PUMPFUN_SCAN_INTERVAL_SEC': int(os.environ.get('PUMPFUN_SCAN_INTERVAL_SEC', '10'))
 }
