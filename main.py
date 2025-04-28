@@ -1533,11 +1533,34 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             ])
             
             if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                return True
+    signature = response["result"]
+    logging.info(f"Transaction submitted successfully: {signature}")
+    logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
+    
+    # Wait and verify transaction
+    time.sleep(5)
+    
+    # Check transaction status
+    status_response = wallet._rpc_call("getSignatureStatuses", [[signature]])
+    
+    logging.info(f"Transaction status: {json.dumps(status_response, indent=2)}")
+    
+    if "result" in status_response and status_response["result"]["value"]:
+        confirmation_status = status_response["result"]["value"][0]
+        if confirmation_status and "confirmationStatus" in confirmation_status:
+            logging.info(f"Confirmation status: {confirmation_status['confirmationStatus']}")
+            if confirmation_status.get("err"):
+                logging.error(f"Transaction failed on-chain: {confirmation_status['err']}")
+                return False
+    
+    # Check token balance
+    time.sleep(2)
+    token_accounts = wallet.get_token_accounts(token_address)
+    logging.info(f"Token accounts after purchase: {json.dumps(token_accounts, indent=2)}")
+    
+    token_buy_timestamps[token_address] = time.time()
+    buy_successes += 1
+    return True
             else:
                 if "error" in response:
                     error_message = response.get("error", {}).get("message", "Unknown error")
@@ -1563,60 +1586,62 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
 
 # IMPROVED SELL FUNCTION with better retry logic and error handling
 def sell_token(token_address: str, percentage: int = 100) -> bool:
-    """Improved sell function for rapid exits."""
+    """Improved sell function with enhanced logging."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
-    logging.info(f"Starting sell process for {token_address} - Percentage: {percentage}%")
+    logging.info(f"===== STARTING SELL PROCESS =====")
+    logging.info(f"Token to sell: {token_address}")
+    logging.info(f"Percentage to sell: {percentage}%")
+    logging.info(f"Wallet address: {wallet.public_key}")
     
     if CONFIG['SIMULATION_MODE']:
-        token_price = get_token_price(token_address)
-        if token_price:
-            current_value = CONFIG['BUY_AMOUNT_SOL']
-            if percentage == 100:
-                logging.info(f"[SIMULATION] Sold 100% of {token_address} for {current_value} SOL")
-            else:
-                partial_value = current_value * (percentage / 100)
-                logging.info(f"[SIMULATION] Sold {percentage}% of {token_address} for {partial_value} SOL")
-            sell_successes += 1
-            return True
-        else:
-            logging.error(f"[SIMULATION] Failed to sell {token_address}: Could not determine price")
-            return False
+        # ... simulation code ...
     
     try:
-        # Get token accounts
+        # Step 1: Get token accounts with detailed logging
+        logging.info(f"Step 1: Getting token accounts for {token_address}")
         response = wallet._rpc_call("getTokenAccountsByOwner", [
             str(wallet.public_key),
             {"mint": token_address},
             {"encoding": "jsonParsed"}
         ])
         
+        logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
+        
         if 'result' not in response or not response['result']['value']:
             logging.error(f"No token account found for {token_address}")
+            logging.error(f"Full response: {json.dumps(response, indent=2)}")
             return False
         
         token_account = response['result']['value'][0]
         token_amount = token_account['account']['data']['parsed']['info']['tokenAmount']['amount']
         amount_to_sell = int(int(token_amount) * percentage / 100)
         
+        logging.info(f"Token amount in wallet: {token_amount}")
+        logging.info(f"Amount to sell: {amount_to_sell}")
+        
         if amount_to_sell <= 0:
             logging.error(f"Zero amount to sell for {token_address}")
             return False
         
-        # Get quote with higher slippage
+        # Step 2: Get quote with logging
+        logging.info(f"Step 2: Getting quote for selling {amount_to_sell} tokens")
         quote_data = jupiter_handler.get_quote(
             input_mint=token_address,
             output_mint=SOL_TOKEN_ADDRESS,
             amount=str(amount_to_sell),
-            slippage_bps="1000"  # 10% slippage
+            slippage_bps="1000"
         )
         
         if not quote_data:
             logging.error(f"Failed to get quote for selling {token_address}")
             return False
         
-        # Prepare and submit transaction
+        logging.info(f"Quote received: {json.dumps(quote_data, indent=2)}")
+        
+        # Step 3: Prepare transaction with logging
+        logging.info(f"Step 3: Preparing swap transaction")
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
@@ -1630,14 +1655,18 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             timeout=10
         )
         
+        logging.info(f"Swap response status: {swap_response.status_code}")
+        
         if swap_response.status_code != 200:
             logging.error(f"Failed to prepare swap transaction: {swap_response.status_code}")
+            logging.error(f"Response: {swap_response.text}")
             return False
         
         swap_data = swap_response.json()
         serialized_tx = swap_data["swapTransaction"]
         
-        # Submit transaction directly - don't try to sign!
+        # Step 4: Submit transaction with logging
+        logging.info(f"Step 4: Submitting transaction")
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
@@ -1647,18 +1676,23 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
             }
         ])
         
+        logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
+        
         if "result" in response:
-            logging.info(f"Successfully sold {percentage}% of {token_address}")
+            signature = response["result"]
+            logging.info(f"Transaction submitted successfully: {signature}")
+            logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
             sell_successes += 1
             return True
         else:
             if "error" in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
                 logging.error(f"Transaction error: {error_message}")
+                logging.error(f"Full error: {json.dumps(response.get('error'), indent=2)}")
             return False
             
     except Exception as e:
-        logging.error(f"Error selling {token_address}: {str(e)}")
+        logging.error(f"Exception in sell_token: {str(e)}")
         logging.error(traceback.format_exc())
         return False
 
