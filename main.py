@@ -1799,7 +1799,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
         logging.error(f"Error selling {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
         return False
-
+        
 def force_sell_all_positions():  # THIS IS CORRECT - SAME LEVEL AS OTHER FUNCTIONS
     """Force sell all current positions."""
     logging.info("Force selling all current positions...")
