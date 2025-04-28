@@ -1534,8 +1534,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
             if "result" in response:
     signature = response["result"]
-    logging.info(f"Transaction submitted successfully: {signature}")
-    logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
+        logging.info(f"Transaction submitted successfully: {signature}")
+        logging.info(f"Check transaction on Solscan: https://solscan.io/tx/{signature}")
     
     # Wait and verify transaction
     time.sleep(5)
