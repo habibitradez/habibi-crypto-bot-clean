@@ -1645,7 +1645,6 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "amount": str(amount_lamports),
                 "slippageBps": "2000",  # 20% slippage for better success
                 "onlyDirectRoutes": "true",  # Force simple direct routes
-                "maxAccounts": "5"  # Limit the number of accounts in the transaction
             },
             timeout=10
         )
