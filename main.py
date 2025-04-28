@@ -51,7 +51,7 @@ CONFIG = {
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '3000'))
     'PUMPFUN_API_URL': 'https://api-metis.jup.ag/pump',  # Pump.fun API endpoint through Metis
     'PUMPFUN_SCAN_INTERVAL_SEC': int(os.environ.get('PUMPFUN_SCAN_INTERVAL_SEC', '10'))
-})
+}
 # Diagnostics flag - set to True for very verbose logging
 ULTRA_DIAGNOSTICS = True
 
