@@ -1691,7 +1691,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             serialized_tx,
             {
                 "encoding": "base64", 
-                "skipPreflight": true,  # CHANGED: Don't skip preflight to catch errors
+                "skipPreflight": True,  # CHANGED: Don't skip preflight to catch errors
                 "preflightCommitment": "confirmed",
                 "maxRetries": 5
             }
