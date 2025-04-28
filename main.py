@@ -1631,6 +1631,93 @@ def debug_buy_bonk():
         logging.error(traceback.format_exc())
         return False
         
+def tiny_buy_test():
+    """Super minimal test with tiny amount to check RPC provider requirements."""
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    micro_amount = 0.01  # Just 0.01 SOL - extremely small test amount
+    
+    logging.info(f"RPC TEST: Attempting minimal BONK purchase with {micro_amount} SOL")
+    
+    try:
+        # Get super simple quote
+        amount_lamports = int(micro_amount * 1000000000)
+        quote_response = requests.get(
+            f"{CONFIG['JUPITER_API_URL']}/v6/quote",
+            params={
+                "inputMint": SOL_TOKEN_ADDRESS,
+                "outputMint": bonk_address,
+                "amount": str(amount_lamports),
+                "slippageBps": "2000"
+            },
+            timeout=10
+        )
+        
+        if quote_response.status_code != 200:
+            logging.error(f"RPC TEST: Quote API failed: {quote_response.status_code}")
+            return False
+        
+        quote_data = quote_response.json()
+        
+        # Create absolutely minimal swap payload
+        swap_response = requests.post(
+            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
+            json={
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"RPC TEST: Swap API failed: {swap_response.status_code}")
+            return False
+        
+        swap_data = swap_response.json()
+        serialized_tx = swap_data["swapTransaction"]
+        
+        # Try different RPC submission configurations
+        configs_to_try = [
+            {"name": "Basic", "params": {"encoding": "base64"}},
+            {"name": "SkipPreflight", "params": {"encoding": "base64", "skipPreflight": True}},
+            {"name": "Processed", "params": {"encoding": "base64", "preflightCommitment": "processed"}},
+            {"name": "SkipPreflight+Processed", "params": {"encoding": "base64", "skipPreflight": True, "preflightCommitment": "processed"}},
+            {"name": "WithRetries", "params": {"encoding": "base64", "skipPreflight": True, "preflightCommitment": "processed", "maxRetries": 5}}
+        ]
+        
+        for config in configs_to_try:
+            logging.info(f"RPC TEST: Trying configuration: {config['name']}")
+            
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx,
+                config["params"]
+            ])
+            
+            if "result" in response:
+                signature = response["result"]
+                if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error(f"RPC TEST: Configuration {config['name']} - Received dummy signature")
+                else:
+                    logging.info(f"RPC TEST: SUCCESS with configuration {config['name']} - Signature: {signature}")
+                    logging.info(f"FOUND WORKING CONFIGURATION: {config['params']}")
+                    return True
+            else:
+                if "error" in response:
+                    error_data = response.get("error", {})
+                    error_message = error_data.get("message", "Unknown")
+                    error_code = error_data.get("code", "Unknown")
+                    logging.error(f"RPC TEST: Configuration {config['name']} - Error: {error_message} (Code: {error_code})")
+                else:
+                    logging.error(f"RPC TEST: Configuration {config['name']} - Unexpected response")
+        
+        logging.error("RPC TEST: All configurations failed")
+        return False
+            
+    except Exception as e:
+        logging.error(f"RPC TEST: Error in test: {str(e)}")
+        return False
+
 def force_buy_token():
     """Force buy a token to test trading functionality by trying multiple tokens in sequence."""
     # List of tokens to try, in order of preference
@@ -2270,6 +2357,9 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
+        # Test if Jupiter API plan upgrade is active
+        logging.info("Testing Jupiter API plan status...")
+        
         # First check which tokens are actually tradable
         logging.info("Checking which tokens are tradable before starting trading...")
         has_tradable_tokens = find_tradable_tokens()
@@ -2282,7 +2372,11 @@ def main():
         logging.info("Force selling all existing positions...")
         force_sell_all_positions()
         
-        # Force buy a token as a test - CHANGED FROM force_buy_usdc() to force_buy_token()
+        # Test different RPC configurations
+        logging.info("Testing RPC provider requirements...")
+        tiny_buy_test()
+        
+        # Force buy a token as a test
         logging.info("Attempting to force buy a token as startup test")
         force_buy_token()
         
