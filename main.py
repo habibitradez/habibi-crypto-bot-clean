@@ -1520,71 +1520,115 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
     return True
 
-def buy_bonk_minimal():
-    """Special function to buy a minimal amount of BONK with simplified parameters."""
+def debug_buy_bonk():
+    """Debug function to analyze transaction structure when buying BONK."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-    tiny_amount = 0.03  # Just 0.03 SOL - super small test amount
+    tiny_amount = 0.03  # Small test amount
     
-    logging.info(f"Attempting minimal BONK purchase with {tiny_amount} SOL")
+    logging.info(f"DEBUG: Starting detailed transaction analysis for BONK purchase")
     
     try:
-        # Calculate minimal amount in lamports
+        # Calculate amount in lamports
         amount_lamports = int(tiny_amount * 1000000000)
         
-        # Get basic quote
+        # Step 1: Get quote and log complete response
+        logging.info(f"DEBUG: Getting quote for SOL → {bonk_address}, amount: {amount_lamports}")
         quote_response = requests.get(
             f"{CONFIG['JUPITER_API_URL']}/v6/quote",
             params={
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": bonk_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000"  # Higher slippage for better success
+                "slippageBps": "500"
             },
             timeout=10
         )
         
         if quote_response.status_code != 200:
-            logging.error(f"Quote API failed: {quote_response.status_code}")
+            logging.error(f"DEBUG: Quote API failed: {quote_response.status_code} - {quote_response.text}")
             return False
         
         quote_data = quote_response.json()
+        logging.info(f"DEBUG: Quote response structure: {json.dumps(quote_data, indent=2)[:1000]}...")
         
-        # Create absolutely minimal swap transaction
+        # Step 2: Create swap transaction and log complete request/response
+        logging.info(f"DEBUG: Preparing swap transaction")
+        swap_payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapUnwrapSOL": True
+        }
+        logging.info(f"DEBUG: Swap payload structure: {json.dumps(swap_payload, indent=2)[:1000]}...")
+        
         swap_response = requests.post(
             f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-            json={
-                "quoteResponse": quote_data,
-                "userPublicKey": str(wallet.public_key),
-                "wrapUnwrapSOL": True
-            },
+            json=swap_payload,
             headers={"Content-Type": "application/json"},
             timeout=10
         )
         
         if swap_response.status_code != 200:
-            logging.error(f"Swap API failed: {swap_response.status_code}")
+            logging.error(f"DEBUG: Swap API failed: {swap_response.status_code} - {swap_response.text}")
             return False
         
         swap_data = swap_response.json()
-        serialized_tx = swap_data["swapTransaction"]
+        logging.info(f"DEBUG: Swap response keys: {list(swap_data.keys())}")
         
-        # Submit with absolutely minimal parameters
+        # Step 3: Analyze transaction
+        serialized_tx = swap_data["swapTransaction"]
+        logging.info(f"DEBUG: Serialized transaction length: {len(serialized_tx)}")
+        logging.info(f"DEBUG: Transaction preview: {serialized_tx[:100]}...")
+        
+        # Step 4: Get wallet information
+        balance = wallet.get_balance()
+        logging.info(f"DEBUG: Current wallet balance: {balance} SOL")
+        
+        # Step 5: Log transaction fee structure if available
+        if "feeStructure" in swap_data:
+            logging.info(f"DEBUG: Fee structure: {json.dumps(swap_data['feeStructure'], indent=2)}")
+        
+        # Step 6: Submit with minimal parameters and detailed logging
+        logging.info(f"DEBUG: Submitting transaction")
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
-                "encoding": "base64"
+                "encoding": "base64",
+                "skipPreflight": True,
+                "preflightCommitment": "processed"
             }
         ])
         
+        # Step 7: Analyze response in detail
         if "result" in response:
             signature = response["result"]
-            logging.info(f"Transaction submitted: {signature}")
-            return True
-        else:
-            return False
+            logging.info(f"DEBUG: Transaction submitted with signature: {signature}")
             
+            # Check for dummy signature
+            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                logging.error("DEBUG: Received dummy signature")
+                
+                # Try to get detailed error information
+                status_response = wallet._rpc_call("getTransaction", [
+                    signature,
+                    {"encoding": "json"}
+                ])
+                logging.error(f"DEBUG: Transaction status details: {json.dumps(status_response, indent=2)}")
+            
+            return signature != "1111111111111111111111111111111111111111111111111111111111111111"
+        else:
+            if "error" in response:
+                error_data = response.get("error", {})
+                error_message = error_data.get("message", "Unknown")
+                error_code = error_data.get("code", "Unknown")
+                logging.error(f"DEBUG: Transaction error: {error_message} (Code: {error_code})")
+                logging.error(f"DEBUG: Full error data: {json.dumps(error_data, indent=2)}")
+            else:
+                logging.error(f"DEBUG: Unexpected response format: {json.dumps(response, indent=2)}")
+            return False
+    
     except Exception as e:
-        logging.error(f"Error in minimal BONK buy: {str(e)}")
+        logging.error(f"DEBUG: Error in transaction debug process: {str(e)}")
+        logging.error(traceback.format_exc())
         return False
         
 def force_buy_token():
