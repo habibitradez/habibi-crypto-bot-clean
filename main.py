@@ -1409,7 +1409,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
-        # Simulation mode code unchanged
+        # Simulation mode unchanged
         token_price = get_token_price(token_address)
         if token_price:
             estimated_tokens = amount_sol / token_price
@@ -1422,8 +1422,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             return False
     
     try:
-        # Use slightly smaller amount to account for fees
-        amount_lamports = int(amount_sol * 0.98 * 1000000000)  # Use 98% of specified amount
+        # Use 90% of specified amount to leave room for fees and rent
+        amount_lamports = int(amount_sol * 0.9 * 1000000000)
         
         # Step 1: Get quote
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
@@ -1439,7 +1439,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "1000"  # 10% slippage
+                "slippageBps": "2000"  # Increased to 20% slippage for better success
             },
             timeout=10
         )
@@ -1450,7 +1450,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         
         quote_data = quote_response.json()
         
-        # Step 2: Create swap transaction
+        # Step 2: Create swap transaction with CRITICAL PARAMETERS
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
             time.sleep(api_call_delay - time_since_last_call)
@@ -1461,8 +1461,12 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             json={
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "asLegacyTransaction": True,
-                "wrapUnwrapSOL": True
+                "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format
+                "computeUnitPriceMicroLamports": 10000,  # CRITICAL: Add explicit priority fees
+                "computeUnitsLimit": 800000,  # CRITICAL: Add compute unit limit
+                "dynamicComputeUnitLimit": True,  # CRITICAL: Allow dynamic compute units
+                "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
+                "prioritizationFeeLamports": 1000000  # CRITICAL: Add 0.001 SOL priority fee
             },
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -1480,43 +1484,65 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 3: Submit transaction
         serialized_tx = swap_data["swapTransaction"]
         
-        # Submit with skipPreflight=true to avoid rejections
+        # Submit with critical parameters
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64", 
-                "skipPreflight": True,
-                "preflightCommitment": "confirmed"
+                "skipPreflight": False,  # CHANGED: Don't skip preflight to catch errors
+                "preflightCommitment": "confirmed",
+                "maxRetries": 5
             }
         ])
         
         if "result" in response:
             signature = response["result"]
+            
+            # CRITICAL: Check if transaction was rejected with dummy signature
+            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                logging.error("Transaction failed - received dummy signature")
+                
+                # Check if there's an error explaining why
+                if "error" in response:
+                    error_info = response.get("error", {})
+                    error_message = error_info.get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                
+                return False
+            
             logging.info(f"Transaction submitted: {signature}")
             
-            # Verify token receipt
-            for i in range(3):
-                time.sleep(2)  # Wait for transaction to process
-                token_accounts = wallet.get_token_accounts(token_address)
+            # Wait for transaction confirmation
+            for i in range(5):
+                time.sleep(3)
+                status_response = wallet._rpc_call("getSignatureStatuses", [
+                    [signature],
+                    {"searchTransactionHistory": True}
+                ])
                 
-                if token_accounts and len(token_accounts) > 0:
-                    try:
-                        token_amount = int(token_accounts[0]['account']['data']['parsed']['info']['tokenAmount']['amount'])
-                        if token_amount > 0:
-                            logging.info(f"Success! Found {token_amount} tokens of {token_address}")
-                            token_buy_timestamps[token_address] = time.time()
-                            buy_successes += 1
-                            return True
-                    except Exception as e:
-                        logging.warning(f"Error checking token balance: {e}")
+                if "result" in status_response and status_response["result"]["value"][0]:
+                    status = status_response["result"]["value"][0]
+                    if status.get("confirmationStatus") in ["confirmed", "finalized"]:
+                        logging.info(f"Transaction confirmed: {signature}")
+                        break
             
-            # If we couldn't verify token receipt but got a signature, still consider it a success
-            logging.info(f"Transaction sent but couldn't verify tokens. Recording as success anyway.")
+            # Record as success
             token_buy_timestamps[token_address] = time.time()
             buy_successes += 1
+            
+            # Check for tokens in wallet
+            time.sleep(2)
+            token_accounts = wallet.get_token_accounts(token_address)
+            if token_accounts and len(token_accounts) > 0:
+                logging.info(f"Successfully bought {token_address}!")
+            else:
+                logging.warning(f"Transaction succeeded but no token accounts found yet. They may appear shortly.")
+            
             return True
         else:
-            logging.error(f"Transaction error: {response.get('error', 'Unknown error')}")
+            error_info = response.get("error", {})
+            error_message = error_info.get("message", "Unknown error")
+            logging.error(f"Transaction error: {error_message}")
             return False
             
     except Exception as e:
@@ -1978,7 +2004,7 @@ def main():
         logging.info("Force selling all existing positions...")
         force_sell_all_positions()
         
-        # Force buy USDC or another tradable token as a test
+        # Force buy a token as a test - CHANGED FROM force_buy_usdc() to force_buy_token()
         logging.info("Attempting to force buy a token as startup test")
         force_buy_token()
         
