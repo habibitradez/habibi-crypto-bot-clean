@@ -188,37 +188,37 @@ class SolanaWallet:
             logging.error(traceback.format_exc())
             return 0.0
     
-def _rpc_call(self, method: str, params: List) -> Dict:
-    """Make an RPC call to the Solana network."""
-    payload = {
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": method,
-        "params": params
-    }
+    def _rpc_call(self, method: str, params: List) -> Dict:
+        """Make an RPC call to the Solana network."""
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": method,
+            "params": params
+        }
     
-    if ULTRA_DIAGNOSTICS:
-        logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
         
-    # Update headers with QuickNode optimized settings
-    headers = {
-        "Content-Type": "application/json",
-        # No need for QB-CLIENT-ID since you don't have one
-    }
+        # Update headers with QuickNode optimized settings
+        headers = {
+            "Content-Type": "application/json",
+            # No need for QB-CLIENT-ID since you don't have one
+        }
     
-    response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
+        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
     
-    if response.status_code == 200:
-        response_data = response.json()
+        if response.status_code == 200:
+            response_data = response.json()
         
         if 'error' in response_data:
             logging.error(f"RPC error in response: {response_data['error']}")
             
-        return response_data
-    else:
-        error_text = f"RPC call failed with status {response.status_code}: {response.text}"
-        logging.error(error_text)
-        raise Exception(error_text)
+            return response_data
+        else:
+            error_text = f"RPC call failed with status {response.status_code}: {response.text}"
+            logging.error(error_text)
+            raise Exception(error_text)
     
     def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
@@ -260,33 +260,33 @@ def _rpc_call(self, method: str, params: List) -> Dict:
             logging.error(traceback.format_exc())
             return None
     
-def get_token_accounts(self, token_address: str) -> List[dict]:
-    """Get token accounts owned by this wallet for a specific token."""
-    try:
-        logging.info(f"Getting token accounts for {token_address}...")
-        response = self._rpc_call("getTokenAccountsByOwner", [
-            str(self.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
+    def get_token_accounts(self, token_address: str) -> List[dict]:
+        """Get token accounts owned by this wallet for a specific token."""
+        try:
+            logging.info(f"Getting token accounts for {token_address}...")
+            response = self._rpc_call("getTokenAccountsByOwner", [
+                str(self.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
         
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
             
-        if 'result' in response and 'value' in response['result']:
-            accounts = response['result']['value']
-            logging.info(f"Found {len(accounts)} token accounts for {token_address}")
-            return accounts
+            if 'result' in response and 'value' in response['result']:
+                accounts = response['result']['value']
+                logging.info(f"Found {len(accounts)} token accounts for {token_address}")
+                return accounts
             
-        logging.warning(f"No token accounts found for {token_address} or unexpected response format")
-        return []
-    except Exception as e:
-        logging.error(f"Error getting token accounts: {str(e)}")
-        logging.error(traceback.format_exc())
-        return []
+            logging.warning(f"No token accounts found for {token_address} or unexpected response format")
+            return []
+        except Exception as e:
+            logging.error(f"Error getting token accounts: {str(e)}")
+            logging.error(traceback.format_exc())
+            return []
 
-class JupiterSwapHandler:
-    """Handler for Jupiter API swap transactions."""
+    class JupiterSwapHandler:
+        """Handler for Jupiter API swap transactions."""
     
     def __init__(self, jupiter_api_url: str):
         """Initialize the Jupiter swap handler.
