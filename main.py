@@ -152,7 +152,7 @@ class SolanaWallet:
         
         self.public_key = self.keypair.pubkey()
         
-    def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
+def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
     """Create a Solana keypair from a base58 encoded private key string."""
     if ULTRA_DIAGNOSTICS:
         logging.info(f"Creating keypair from private key (length: {len(private_key)})")
