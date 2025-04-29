@@ -200,7 +200,7 @@ def get_balance(self) -> float:
     
 def _rpc_call(self, method: str, params: List) -> Dict:
     """Make an RPC call to the Solana network."""
-        payload = {
+    payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": method,
