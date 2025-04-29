@@ -153,23 +153,28 @@ class SolanaWallet:
         self.public_key = self.keypair.pubkey()
         
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
-        """Create a Solana keypair from a base58 encoded private key string."""
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Creating keypair from private key (length: {len(private_key)})")
-            
-        secret_bytes = base58.b58decode(private_key)
+    """Create a Solana keypair from a base58 encoded private key string."""
+    if ULTRA_DIAGNOSTICS:
+        logging.info(f"Creating keypair from private key (length: {len(private_key)})")
         
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Secret bytes length: {len(secret_bytes)}")
-            
-        if len(secret_bytes) == 64:
-            logging.info("Using 64-byte secret key")
-            return Keypair.from_bytes(secret_bytes)
-        elif len(secret_bytes) == 32:
-            logging.info("Using 32-byte seed")
-            return Keypair.from_seed(secret_bytes)
-        else:
-            raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
+    # Make sure we're working with a base58 encoded string
+    if not all(c in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in private_key):
+        logging.error("Private key contains invalid base58 characters")
+        raise ValueError("Invalid base58 characters in private key")
+        
+    secret_bytes = base58.b58decode(private_key)
+    
+    if ULTRA_DIAGNOSTICS:
+        logging.info(f"Secret bytes length: {len(secret_bytes)}")
+        
+    if len(secret_bytes) == 64:
+        logging.info("Using 64-byte secret key")
+        return Keypair.from_bytes(secret_bytes)
+    elif len(secret_bytes) == 32:
+        logging.info("Using 32-byte seed")
+        return Keypair.from_seed(secret_bytes)
+    else:
+        raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
     
     def get_balance(self) -> float:
         """Get the SOL balance of the wallet in SOL units."""
