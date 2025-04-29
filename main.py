@@ -128,23 +128,19 @@ KNOWN_TOKENS = [
 ]
 
 class SolanaWallet:
-    """Solana wallet implementation for the trading bot."""
-    
-    def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
-        """Initialize a Solana wallet using solders library."""
+    def __init__(self, private_key=None, rpc_url=None):
         self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
+        self.keypair = None
         
-        # Initialize the keypair
         if private_key:
             self.keypair = self._create_keypair_from_private_key(private_key)
         else:
-            # Get private key from environment or config
             private_key_env = CONFIG['WALLET_PRIVATE_KEY']
             if private_key_env:
                 self.keypair = self._create_keypair_from_private_key(private_key_env)
             else:
-                raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
-        
+                raise ValueError("No private key provided.")
+                
         self.public_key = self.keypair.pubkey()
         
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
