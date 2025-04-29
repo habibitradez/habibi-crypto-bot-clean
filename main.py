@@ -201,25 +201,25 @@ def get_balance(self) -> float:
 def _rpc_call(self, method: str, params: List) -> Dict:
     """Make an RPC call to the Solana network."""
     payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params
-        }
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params
+    }
+    
+    if ULTRA_DIAGNOSTICS:
+        logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
         
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
-            
-        # Update headers with QuickNode optimized settings
-        headers = {
-            "Content-Type": "application/json",
-            # No need for QB-CLIENT-ID since you don't have one
-        }
-        
-        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
-        
-        if response.status_code == 200:
-            response_data = response.json()
+    # Update headers with QuickNode optimized settings
+    headers = {
+        "Content-Type": "application/json",
+        # No need for QB-CLIENT-ID since you don't have one
+    }
+    
+    response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
+    
+    if response.status_code == 200:
+        response_data = response.json()
             
             if 'error' in response_data:
                 logging.error(f"RPC error in response: {response_data['error']}")
