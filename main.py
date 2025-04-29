@@ -179,24 +179,24 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
 def get_balance(self) -> float:
     """Get the SOL balance of the wallet in SOL units."""
     try:
-            logging.info("Getting wallet balance...")
-            response = self._rpc_call("getBalance", [str(self.public_key)])
+        logging.info("Getting wallet balance...")
+        response = self._rpc_call("getBalance", [str(self.public_key)])
+        
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Balance response: {json.dumps(response, indent=2)}")
             
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Balance response: {json.dumps(response, indent=2)}")
-                
-            if 'result' in response and 'value' in response['result']:
-                # Convert lamports to SOL (1 SOL = 10^9 lamports)
-                balance = response['result']['value'] / 1_000_000_000
-                logging.info(f"Wallet balance: {balance} SOL")
-                return balance
-            
-            logging.error(f"Unexpected balance response format: {response}")
-            return 0.0
-            except Exception as e:
-            logging.error(f"Error getting wallet balance: {str(e)}")
-            logging.error(traceback.format_exc())
-            return 0.0
+        if 'result' in response and 'value' in response['result']:
+            # Convert lamports to SOL (1 SOL = 10^9 lamports)
+            balance = response['result']['value'] / 1_000_000_000
+            logging.info(f"Wallet balance: {balance} SOL")
+            return balance
+        
+        logging.error(f"Unexpected balance response format: {response}")
+        return 0.0
+    except Exception as e:
+        logging.error(f"Error getting wallet balance: {str(e)}")
+        logging.error(traceback.format_exc())
+        return 0.0
     
 def _rpc_call(self, method: str, params: List) -> Dict:
     """Make an RPC call to the Solana network."""
