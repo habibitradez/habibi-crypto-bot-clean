@@ -2528,10 +2528,20 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
+        # First test basic transaction functionality
+        logging.info("Testing basic transaction capability...")
+        basic_tx_success = test_simple_sol_transfer()
+        
+        if not basic_tx_success:
+            logging.error("CRITICAL ERROR: Cannot sign basic transactions!")
+            logging.error("This suggests an issue with wallet setup or RPC provider permissions.")
+            return  # Exit early if basic transactions don't work
+        
+        # Continue with the rest of your code...
         # Test if Jupiter API plan upgrade is active
         logging.info("Testing Jupiter API plan status...")
         
-        # First check which tokens are actually tradable
+        # First check which tokens are tradable
         logging.info("Checking which tokens are tradable before starting trading...")
         has_tradable_tokens = find_tradable_tokens()
         
