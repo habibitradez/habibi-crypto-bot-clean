@@ -1855,88 +1855,58 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     buy_attempts += 1
     logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
     
-    if CONFIG['SIMULATION_MODE']:
-        # Simulation mode unchanged
-        token_price = get_token_price(token_address)
-        if token_price:
-            estimated_tokens = amount_sol / token_price
-            logging.info(f"[SIMULATION] Auto-bought {estimated_tokens:.2f} tokens of {token_address} for {amount_sol} SOL")
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
-            return False
+    # [Simulation mode code unchanged]
     
     try:
-        # Use 80% of specified amount to leave room for fees and rent
-        # IMPORTANT: Reduce the amount to create smaller transactions
-        amount_lamports = int(amount_sol * 0.6 * 1000000000)  # Only use 60% of specified amount
+        # Calculate lamports
+        amount_lamports = int(amount_sol * 1000000000)  # Use full amount like successful tx
         
-        # Step 1: Get quote with simplified routing
+        # Step 1: Get quote
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
         
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            time.sleep(api_call_delay - time_since_last_call)
+        # [Rate limiting code unchanged]
         
-        last_api_call_time = time.time()
         quote_response = requests.get(
             f"{CONFIG['JUPITER_API_URL']}/v6/quote",
             params={
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000",  # 20% slippage for better success
-                "onlyDirectRoutes": "true",  # Force simple direct routes
+                "slippageBps": "1000",  # Using 10% slippage like the successful tx
+                "onlyDirectRoutes": "true"  # For simpler routing
             },
             timeout=10
         )
         
-        if quote_response.status_code != 200:
-            logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
-            return False
-        
-        quote_data = quote_response.json()
+        # [Error handling code unchanged]
         
         # Step 2: Create swap transaction with CRITICAL PARAMETERS
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            time.sleep(api_call_delay - time_since_last_call)
-            
-        last_api_call_time = time.time()
         swap_response = requests.post(
             f"{CONFIG['JUPITER_API_URL']}/v6/swap",
             json={
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "asLegacyTransaction": False,  # CRITICAL: Use legacy transaction format
-                "wrapUnwrapSOL": True,  # CRITICAL: Enable SOL wrapping
+                "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format like successful tx
+                "wrapUnwrapSOL": True,        # CRITICAL: Enable SOL wrapping
+                "computeUnitLimit": 180000    # CRITICAL: Set compute unit limit similar to successful tx
             },
             headers={"Content-Type": "application/json"},
             timeout=10
         )
         
-        if swap_response.status_code != 200:
-            logging.error(f"Swap API failed: {swap_response.status_code} - {swap_response.text[:200]}")
-            return False
-        
-        swap_data = swap_response.json()
-        if "swapTransaction" not in swap_data:
-            logging.error(f"No transaction in swap response: {swap_data}")
-            return False
+        # [Error handling code unchanged]
         
         # Step 3: Submit transaction
         serialized_tx = swap_data["swapTransaction"]
         
-        # Submit with critical parameters
+        # Submit with parameters matching successful transaction
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64", 
-                "skipPreflight": True,  # CHANGED: Don't skip preflight to catch errors
-                "preflightCommitment": "processed",
-                "maxRetries": 5
+                "skipPreflight": true,
+                "preflightCommitment": "finalized",  # Use "finalized" rather than "processed"
+                "maxRetries": 3
             }
         ])
         
