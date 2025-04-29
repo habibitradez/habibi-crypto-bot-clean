@@ -272,28 +272,28 @@ def _rpc_call(self, method: str, params: List) -> Dict:
     
 def get_token_accounts(self, token_address: str) -> List[dict]:
     """Get token accounts owned by this wallet for a specific token."""
-        try:
-            logging.info(f"Getting token accounts for {token_address}...")
-            response = self._rpc_call("getTokenAccountsByOwner", [
-                str(self.public_key),
-                {"mint": token_address},
-                {"encoding": "jsonParsed"}
-            ])
+    try:
+        logging.info(f"Getting token accounts for {token_address}...")
+        response = self._rpc_call("getTokenAccountsByOwner", [
+            str(self.public_key),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
             
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Token accounts response: {json.dumps(response, indent=2)}")
-                
-            if 'result' in response and 'value' in response['result']:
-                accounts = response['result']['value']
-                logging.info(f"Found {len(accounts)} token accounts for {token_address}")
-                return accounts
-                
-            logging.warning(f"No token accounts found for {token_address} or unexpected response format")
-            return []
-        except Exception as e:
-            logging.error(f"Error getting token accounts: {str(e)}")
-            logging.error(traceback.format_exc())
-            return []
+        if 'result' in response and 'value' in response['result']:
+            accounts = response['result']['value']
+            logging.info(f"Found {len(accounts)} token accounts for {token_address}")
+            return accounts
+            
+        logging.warning(f"No token accounts found for {token_address} or unexpected response format")
+        return []
+    except Exception as e:
+        logging.error(f"Error getting token accounts: {str(e)}")
+        logging.error(traceback.format_exc())
+        return []
 
 class JupiterSwapHandler:
     """Handler for Jupiter API swap transactions."""
