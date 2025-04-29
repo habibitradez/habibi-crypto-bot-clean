@@ -1848,6 +1848,93 @@ def force_buy_token():
     
 import re  # Make sure to add this import at the top if it's not there
 
+def test_simple_sol_transfer():
+    """Test a basic SOL self-transfer to verify wallet signing capability."""
+    try:
+        logging.info("Testing wallet signing capability with simple SOL transfer...")
+        amount = 100  # Just 0.0000001 SOL (100 lamports)
+        
+        # Get a recent blockhash
+        blockhash_response = requests.post(
+            CONFIG['SOLANA_RPC_URL'],
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getLatestBlockhash"
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if blockhash_response.status_code != 200:
+            logging.error(f"Failed to get recent blockhash: {blockhash_response.status_code}")
+            return False
+            
+        blockhash_data = blockhash_response.json()
+        blockhash = blockhash_data["result"]["value"]["blockhash"]
+        
+        # Create transfer instruction
+        from solders.message import Message
+        from solders.system_program import transfer, TransferParams
+        
+        transfer_instruction = transfer(
+            TransferParams(
+                from_pubkey=wallet.public_key,
+                to_pubkey=wallet.public_key,  # Transfer to self
+                lamports=amount
+            )
+        )
+        
+        # Create transaction message
+        message = Message.new_with_blockhash(
+            [transfer_instruction],
+            wallet.public_key,
+            blockhash
+        )
+        
+        # Create and sign transaction
+        tx = Transaction(
+            message=message,
+            signatures=[wallet.keypair.sign_message(message.serialize())]
+        )
+        
+        # Serialize and submit
+        serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
+        
+        response = requests.post(
+            CONFIG['SOLANA_RPC_URL'],
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [
+                    serialized_tx,
+                    {"encoding": "base64", "skipPreflight": True}
+                ]
+            },
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        response_data = response.json()
+        
+        if "result" in response_data:
+            signature = response_data["result"]
+            logging.info(f"Simple SOL transfer successful! Signature: {signature}")
+            logging.info("Wallet signing capability confirmed.")
+            return True
+        else:
+            error = response_data.get("error", {})
+            error_message = error.get("message", "Unknown error")
+            logging.error(f"Simple SOL transfer failed: {error_message}")
+            logging.error("Wallet signing capability test failed.")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error testing SOL transfer: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+
 def buy_token(token_address: str, amount_sol: float) -> bool:
     """Buy a token using Jupiter API with direct transaction submission approach."""
     global buy_attempts, buy_successes, last_api_call_time, api_call_delay
@@ -1869,8 +1956,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             return False
     
     try:
-        # Calculate lamports
-        amount_lamports = int(amount_sol * 1000000000)  # Use full amount like successful tx
+        # Use smaller amount for testing
+        amount_sol = 0.01  # Try with just 0.01 SOL
+        amount_lamports = int(amount_sol * 1000000000)
         
         # Step 1: Get quote
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
@@ -1886,8 +1974,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "1000",  # Using 10% slippage like the successful tx
-                "onlyDirectRoutes": "true"  # For simpler routing
+                "slippageBps": "1000"  # Using 10% slippage
             },
             timeout=10
         )
@@ -1896,10 +1983,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
             return False
         
-        # Add this line that was missing
         quote_data = quote_response.json()
         
-        # Step 2: Create swap transaction with CRITICAL PARAMETERS
+        # Step 2: Create swap transaction with absolute minimal parameters
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
             time.sleep(api_call_delay - time_since_last_call)
@@ -1910,9 +1996,8 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             json={
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "asLegacyTransaction": True,  # CRITICAL: Use legacy transaction format like successful tx
-                "wrapUnwrapSOL": True,        # CRITICAL: Enable SOL wrapping
-                "computeUnitLimit": 180000    # CRITICAL: Set compute unit limit similar to successful tx
+                "wrapUnwrapSOL": True
+                # No other parameters - keep it absolute minimal
             },
             headers={"Content-Type": "application/json"},
             timeout=10
@@ -1927,63 +2012,26 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"No transaction in swap response: {swap_data}")
             return False
         
-        # Step 3: Submit transaction
+        # Step 3: Submit transaction with bare minimum parameters
         serialized_tx = swap_data["swapTransaction"]
         
-        # Submit with parameters matching successful transaction
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
-            {
-                "encoding": "base64", 
-                "skipPreflight": True,
-                "preflightCommitment": "finalized",  # Use "finalized" rather than "processed"
-                "maxRetries": 3
-            }
+            {"encoding": "base64", "skipPreflight": True}
         ])
         
         if "result" in response:
             signature = response["result"]
             
-            # CRITICAL: Check if transaction was rejected with dummy signature
             if signature == "1111111111111111111111111111111111111111111111111111111111111111":
                 logging.error("Transaction failed - received dummy signature")
-                
-                # Check if there's an error explaining why
-                if "error" in response:
-                    error_info = response.get("error", {})
-                    error_message = error_info.get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
-                
                 return False
             
             logging.info(f"Transaction submitted: {signature}")
             
-            # Wait for transaction confirmation
-            for i in range(5):
-                time.sleep(3)
-                status_response = wallet._rpc_call("getSignatureStatuses", [
-                    [signature],
-                    {"searchTransactionHistory": True}
-                ])
-                
-                if "result" in status_response and status_response["result"]["value"][0]:
-                    status = status_response["result"]["value"][0]
-                    if status.get("confirmationStatus") in ["confirmed", "finalized"]:
-                        logging.info(f"Transaction confirmed: {signature}")
-                        break
-            
             # Record as success
             token_buy_timestamps[token_address] = time.time()
             buy_successes += 1
-            
-            # Check for tokens in wallet
-            time.sleep(2)
-            token_accounts = wallet.get_token_accounts(token_address)
-            if token_accounts and len(token_accounts) > 0:
-                logging.info(f"Successfully bought {token_address}!")
-            else:
-                logging.warning(f"Transaction succeeded but no token accounts found yet. They may appear shortly.")
-            
             return True
         else:
             error_info = response.get("error", {})
