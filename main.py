@@ -1871,7 +1871,11 @@ def test_simple_sol_transfer():
             return False
             
         blockhash_data = blockhash_response.json()
-        blockhash = blockhash_data["result"]["value"]["blockhash"]
+        blockhash_str = blockhash_data["result"]["value"]["blockhash"]
+        
+        # Convert string blockhash to Hash object
+        from solders.hash import Hash
+        blockhash = Hash.from_string(blockhash_str)
         
         # Create transfer instruction
         from solders.message import Message
@@ -1933,156 +1937,6 @@ def test_simple_sol_transfer():
     except Exception as e:
         logging.error(f"Error testing SOL transfer: {str(e)}")
         logging.error(traceback.format_exc())
-        return False
-
-def buy_token(token_address: str, amount_sol: float) -> bool:
-    """Buy a token using Jupiter API with direct transaction submission approach."""
-    global buy_attempts, buy_successes, last_api_call_time, api_call_delay
-    
-    buy_attempts += 1
-    logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
-    
-    if CONFIG['SIMULATION_MODE']:
-        # Simulation mode unchanged
-        token_price = get_token_price(token_address)
-        if token_price:
-            estimated_tokens = amount_sol / token_price
-            logging.info(f"[SIMULATION] Auto-bought {estimated_tokens:.2f} tokens of {token_address} for {amount_sol} SOL")
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            logging.error(f"[SIMULATION] Failed to buy {token_address}: Could not determine price")
-            return False
-    
-    try:
-        # Use smaller amount for testing
-        test_amount = 0.01  # Just 0.01 SOL for testing
-        amount_lamports = int(test_amount * 1000000000)
-        
-        # Step 1: Get quote
-        logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
-        
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
-            time.sleep(sleep_time)
-        
-        last_api_call_time = time.time()
-        quote_response = requests.get(
-            f"{CONFIG['JUPITER_API_URL']}/v6/quote",
-            params={
-                "inputMint": SOL_TOKEN_ADDRESS,
-                "outputMint": token_address,
-                "amount": str(amount_lamports),
-                "slippageBps": "1000"  # Using 10% slippage
-            },
-            timeout=10
-        )
-        
-        # Handle rate limiting with exponential backoff
-        if quote_response.status_code == 429:
-            backoff_time = min(api_call_delay * 2, 10)  # Double the delay but cap at 10 seconds
-            logging.warning(f"Rate limited (429). Backing off for {backoff_time} seconds...")
-            time.sleep(backoff_time)
-            
-            # Retry the request
-            last_api_call_time = time.time()
-            quote_response = requests.get(
-                f"{CONFIG['JUPITER_API_URL']}/v6/quote",
-                params={
-                    "inputMint": SOL_TOKEN_ADDRESS,
-                    "outputMint": token_address,
-                    "amount": str(amount_lamports),
-                    "slippageBps": "1000"
-                },
-                timeout=10
-            )
-        
-        if quote_response.status_code != 200:
-            logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
-            return False
-        
-        quote_data = quote_response.json()
-        
-        # Step 2: Create swap transaction with absolute minimal parameters
-        time_since_last_call = time.time() - last_api_call_time
-        if time_since_last_call < api_call_delay:
-            sleep_time = api_call_delay - time_since_last_call
-            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
-            time.sleep(sleep_time)
-            
-        last_api_call_time = time.time()
-        swap_response = requests.post(
-            f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-            json={
-                "quoteResponse": quote_data,
-                "userPublicKey": str(wallet.public_key),
-                "wrapUnwrapSOL": True
-                # No other parameters - keep it absolute minimal
-            },
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        # Handle rate limiting with exponential backoff
-        if swap_response.status_code == 429:
-            backoff_time = min(api_call_delay * 2, 10)  # Double the delay but cap at 10 seconds
-            logging.warning(f"Rate limited (429). Backing off for {backoff_time} seconds...")
-            time.sleep(backoff_time)
-            
-            # Retry the request
-            last_api_call_time = time.time()
-            swap_response = requests.post(
-                f"{CONFIG['JUPITER_API_URL']}/v6/swap",
-                json={
-                    "quoteResponse": quote_data,
-                    "userPublicKey": str(wallet.public_key),
-                    "wrapUnwrapSOL": True
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Swap API failed: {swap_response.status_code} - {swap_response.text[:200]}")
-            return False
-        
-        swap_data = swap_response.json()
-        if "swapTransaction" not in swap_data:
-            logging.error(f"No transaction in swap response: {swap_data}")
-            return False
-        
-        # Step 3: Submit transaction with bare minimum parameters
-        serialized_tx = swap_data["swapTransaction"]
-        
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {"encoding": "base64", "skipPreflight": True}
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            
-            if signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                logging.error("Transaction failed - received dummy signature")
-                return False
-            
-            logging.info(f"Transaction submitted: {signature}")
-            
-            # Record as success
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            return True
-        else:
-            error_info = response.get("error", {})
-            error_message = error_info.get("message", "Unknown error")
-            logging.error(f"Transaction error: {error_message}")
-            return False
-            
-    except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
         return False
         
 # IMPROVED SELL FUNCTION with better retry logic and error handling
