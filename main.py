@@ -178,7 +178,7 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
     
 def get_balance(self) -> float:
     """Get the SOL balance of the wallet in SOL units."""
-        try:
+    try:
             logging.info("Getting wallet balance...")
             response = self._rpc_call("getBalance", [str(self.public_key)])
             
