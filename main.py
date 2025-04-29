@@ -127,7 +127,8 @@ KNOWN_TOKENS = [
     {"symbol": "RENDER", "address": "RNDRxx6LYgjvGdgkTKYbJ3y4KMqZyWawN7GpfSZJT3z", "tradable": True}
 ]
 
-class SolanaWallet:
+class MySolanaWallet(SolanaWallet):
+    pass
     def __init__(self, private_key=None, rpc_url=None):
         self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
         self.keypair = None
@@ -766,7 +767,7 @@ def initialize():
                 masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
                 logging.info(f"Using private key: {masked_key}")
                 
-            wallet = SolanaWallet(private_key=CONFIG['WALLET_PRIVATE_KEY'], rpc_url=CONFIG['SOLANA_RPC_URL'])
+            wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'], CONFIG['SOLANA_RPC_URL'])
             
             # Check wallet balance
             balance = wallet.get_balance()
