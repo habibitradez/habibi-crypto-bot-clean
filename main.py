@@ -130,7 +130,7 @@ KNOWN_TOKENS = [
 class SolanaWallet:
     """Solana wallet implementation for the trading bot."""
     
-    def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
+def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
         """Initialize a Solana wallet using solders library.
         
         Args:
@@ -176,8 +176,8 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
     else:
         raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
     
-    def get_balance(self) -> float:
-        """Get the SOL balance of the wallet in SOL units."""
+def get_balance(self) -> float:
+    """Get the SOL balance of the wallet in SOL units."""
         try:
             logging.info("Getting wallet balance...")
             response = self._rpc_call("getBalance", [str(self.public_key)])
@@ -198,8 +198,8 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
             logging.error(traceback.format_exc())
             return 0.0
     
-    def _rpc_call(self, method: str, params: List) -> Dict:
-        """Make an RPC call to the Solana network."""
+def _rpc_call(self, method: str, params: List) -> Dict:
+    """Make an RPC call to the Solana network."""
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -270,8 +270,8 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
             logging.error(traceback.format_exc())
             return None
     
-    def get_token_accounts(self, token_address: str) -> List[dict]:
-        """Get token accounts owned by this wallet for a specific token."""
+def get_token_accounts(self, token_address: str) -> List[dict]:
+    """Get token accounts owned by this wallet for a specific token."""
         try:
             logging.info(f"Getting token accounts for {token_address}...")
             response = self._rpc_call("getTokenAccountsByOwner", [
