@@ -152,11 +152,6 @@ def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
     if ULTRA_DIAGNOSTICS:
         logging.info(f"Creating keypair from private key (length: {len(private_key)})")
         
-    # Make sure we're working with a base58 encoded string
-    if not all(c in "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz" for c in private_key):
-        logging.error("Private key contains invalid base58 characters")
-        raise ValueError("Invalid base58 characters in private key")
-        
     secret_bytes = base58.b58decode(private_key)
     
     if ULTRA_DIAGNOSTICS:
