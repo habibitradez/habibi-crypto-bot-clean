@@ -193,7 +193,7 @@ def get_balance(self) -> float:
             
             logging.error(f"Unexpected balance response format: {response}")
             return 0.0
-        except Exception as e:
+            except Exception as e:
             logging.error(f"Error getting wallet balance: {str(e)}")
             logging.error(traceback.format_exc())
             return 0.0
