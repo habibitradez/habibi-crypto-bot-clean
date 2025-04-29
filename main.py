@@ -1957,15 +1957,17 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
     
     try:
         # Use smaller amount for testing
-        amount_sol = 0.01  # Try with just 0.01 SOL
-        amount_lamports = int(amount_sol * 1000000000)
+        test_amount = 0.01  # Just 0.01 SOL for testing
+        amount_lamports = int(test_amount * 1000000000)
         
         # Step 1: Get quote
         logging.info(f"Getting quote for SOL → {token_address}, amount: {amount_lamports} lamports")
         
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
-            time.sleep(api_call_delay - time_since_last_call)
+            sleep_time = api_call_delay - time_since_last_call
+            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
+            time.sleep(sleep_time)
         
         last_api_call_time = time.time()
         quote_response = requests.get(
@@ -1979,6 +1981,25 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             timeout=10
         )
         
+        # Handle rate limiting with exponential backoff
+        if quote_response.status_code == 429:
+            backoff_time = min(api_call_delay * 2, 10)  # Double the delay but cap at 10 seconds
+            logging.warning(f"Rate limited (429). Backing off for {backoff_time} seconds...")
+            time.sleep(backoff_time)
+            
+            # Retry the request
+            last_api_call_time = time.time()
+            quote_response = requests.get(
+                f"{CONFIG['JUPITER_API_URL']}/v6/quote",
+                params={
+                    "inputMint": SOL_TOKEN_ADDRESS,
+                    "outputMint": token_address,
+                    "amount": str(amount_lamports),
+                    "slippageBps": "1000"
+                },
+                timeout=10
+            )
+        
         if quote_response.status_code != 200:
             logging.error(f"Quote API failed: {quote_response.status_code} - {quote_response.text[:200]}")
             return False
@@ -1988,7 +2009,9 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
         # Step 2: Create swap transaction with absolute minimal parameters
         time_since_last_call = time.time() - last_api_call_time
         if time_since_last_call < api_call_delay:
-            time.sleep(api_call_delay - time_since_last_call)
+            sleep_time = api_call_delay - time_since_last_call
+            logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
+            time.sleep(sleep_time)
             
         last_api_call_time = time.time()
         swap_response = requests.post(
@@ -2002,6 +2025,25 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             headers={"Content-Type": "application/json"},
             timeout=10
         )
+        
+        # Handle rate limiting with exponential backoff
+        if swap_response.status_code == 429:
+            backoff_time = min(api_call_delay * 2, 10)  # Double the delay but cap at 10 seconds
+            logging.warning(f"Rate limited (429). Backing off for {backoff_time} seconds...")
+            time.sleep(backoff_time)
+            
+            # Retry the request
+            last_api_call_time = time.time()
+            swap_response = requests.post(
+                f"{CONFIG['JUPITER_API_URL']}/v6/swap",
+                json={
+                    "quoteResponse": quote_data,
+                    "userPublicKey": str(wallet.public_key),
+                    "wrapUnwrapSOL": True
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
         
         if swap_response.status_code != 200:
             logging.error(f"Swap API failed: {swap_response.status_code} - {swap_response.text[:200]}")
