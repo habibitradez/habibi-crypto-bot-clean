@@ -129,8 +129,7 @@ KNOWN_TOKENS = [
 
 class SolanaWallet:
     """Solana wallet implementation for the trading bot."""
-    
-def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
+    def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
     """Initialize a Solana wallet using solders library."""
     self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
     
