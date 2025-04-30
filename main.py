@@ -1954,7 +1954,7 @@ def force_sell_all_positions():
 
 def tiny_buy_test():
     try:
-        from bot.trading import execute_buy_token
+        from trading import execute_buy_token  # ✅ assume trading.py is in root, not under bot/
         from solders.pubkey import Pubkey
 
         test_token = {
@@ -1963,7 +1963,7 @@ def tiny_buy_test():
         }
 
         logging.info("⚠️ [tiny_buy_test] Running tiny buy test with BONK...")
-        success = execute_buy_token(test_token["mint"], 0.001)
+        success = execute_buy_token(test_token["mint"], 0.001)  # Buy 0.001 SOL worth
         if success:
             logging.info("✅ [tiny_buy_test] Tiny buy test successful!")
         else:
