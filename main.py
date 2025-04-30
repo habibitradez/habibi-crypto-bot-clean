@@ -2298,21 +2298,9 @@ def find_tradable_tokens():
 def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
-    logging.info(f"Using config: {json.dumps({k: v for k, v in CONFIG.items() if k != 'WALLET_PRIVATE_KEY'}, indent=2)}")
     
     if initialize():
-        # Test basic transaction capability first
-        logging.info("Testing basic SOL transfer capability...")
-        sol_transfer_success = test_simple_sol_transfer()
-        
-        if not sol_transfer_success:
-            logging.error("CRITICAL: Basic SOL transfers failing - wallet signing may be compromised!")
-            logging.error("Please check wallet initialization and RPC provider settings.")
-        else:
-            logging.info("Basic SOL transfer test successful - wallet signing works correctly!")
-        
-        # Continue with the rest of your code...
-        # First check which tokens are tradable
+        # First check which tokens are actually tradable
         logging.info("Checking which tokens are tradable before starting trading...")
         has_tradable_tokens = find_tradable_tokens()
         
@@ -2320,17 +2308,9 @@ def main():
             logging.warning("No tradable tokens found in KNOWN_TOKENS list!")
             logging.warning("Bot will continue but may not be able to execute trades")
         
-        # Force sell all existing positions first
-        logging.info("Force selling all existing positions...")
-        force_sell_all_positions()
-        
-        # Test different RPC configurations
-        logging.info("Testing RPC provider requirements...")
-        tiny_buy_test()
-        
-        # Force buy a token as a test
+        # Force buy USDC or another tradable token as a test
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_token()
+        force_buy_usdc()  # Changed from force_buy_bonk() to force_buy_usdc()
         
         # Continue with normal trading loop
         trading_loop()
@@ -2340,3 +2320,4 @@ def main():
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
+
