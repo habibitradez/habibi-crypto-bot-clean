@@ -1491,14 +1491,24 @@ def simulate_transaction(serialized_tx: str) -> bool:
         logging.error(f"Error simulating transaction: {str(e)}")
         return False
 
-def direct_jupiter_swap(input_mint: str, output_mint: str, amount: str) -> bool:
-    """Make a direct swap using the Jupiter API."""
+def direct_jupiter_swap_with_protection():
+    """Test direct Jupiter swap with MEV protection."""
+    logging.info("=== TESTING DIRECT JUPITER SWAP WITH MEV PROTECTION ===")
+    
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    sol_address = "So11111111111111111111111111111111111111112"
+    
+    # Amount in lamports
+    amount = "50000000"  # 0.05 SOL
+    
+    logging.info(f"Attempting protected Jupiter swap: {amount} lamports SOL → BONK")
+    
     try:
         # 1. Get quote
         quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
         params = {
-            "inputMint": input_mint,
-            "outputMint": output_mint,
+            "inputMint": sol_address,
+            "outputMint": bonk_address,
             "amount": amount,
             "slippageBps": "1000",
             "swapMode": "ExactIn"
@@ -1510,6 +1520,7 @@ def direct_jupiter_swap(input_mint: str, output_mint: str, amount: str) -> bool:
             return False
             
         quote_data = quote_response.json()
+        logging.info(f"Got quote - expected output amount: {quote_data.get('outAmount')}")
         
         # 2. Get swap transaction
         swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
@@ -1517,8 +1528,8 @@ def direct_jupiter_swap(input_mint: str, output_mint: str, amount: str) -> bool:
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
-            "prioritizationFeeLamports": 500000,
-            "computeUnitPriceMicroLamports": 1000,  # Set explicit compute unit price
+            "prioritizationFeeLamports": 500000,  # 0.0005 SOL priority fee
+            "computeUnitPriceMicroLamports": 1000,
             "dynamicComputeUnitLimit": True
         }
         
@@ -1534,35 +1545,44 @@ def direct_jupiter_swap(input_mint: str, output_mint: str, amount: str) -> bool:
             return False
             
         swap_data = swap_response.json()
+        serialized_tx = swap_data["swapTransaction"]
         
-        # 3. Submit transaction
-        tx = swap_data["swapTransaction"]
+        # 3. Submit with MEV protection (already active on your endpoint)
+        signature = submit_protected_transaction(serialized_tx)
         
-        # Simulate first
-        if not simulate_transaction(tx):
-            logging.error("Transaction simulation failed")
-            return False
+        if signature:
+            # Wait for confirmation and check status
+            logging.info("Waiting 30 seconds for confirmation...")
+            time.sleep(30)
             
-        response = wallet._rpc_call("sendTransaction", [
-            tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "confirmed"
-            }
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Transaction submitted: {signature}")
-            return True
+            # Check token balance after swap
+            check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                str(wallet.public_key),
+                {"mint": bonk_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            token_amount = 0
+            if 'result' in check_response and 'value' in check_response['result']:
+                accounts = check_response['result']['value']
+                if accounts:
+                    account = accounts[0]
+                    if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+                        parsed_data = account['account']['data']['parsed']
+                        if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                            token_amount_info = parsed_data['info']['tokenAmount']
+                            if 'amount' in token_amount_info:
+                                token_amount = int(token_amount_info['amount'])
+                                logging.info(f"BONK balance after protected swap: {token_amount}")
+            
+            return token_amount > 0
         else:
-            logging.error(f"Failed to submit: {response.get('error')}")
+            logging.error("Failed to submit protected transaction")
             return False
             
     except Exception as e:
-        logging.error(f"Error in direct swap: {str(e)}")
+        logging.error(f"Error in protected swap: {str(e)}")
+        logging.error(traceback.format_exc())
         return False
 
 def buy_token(token_address: str, amount_sol: float) -> bool:
@@ -2280,6 +2300,121 @@ def test_bonk_trading_cycle():
     logging.error("All buy attempts failed to result in a non-zero balance")
     return False
     
+def test_sol_self_transfer():
+    """Test a simple SOL self-transfer to verify basic transaction functionality."""
+    logging.info("=== TESTING BASIC SOL SELF-TRANSFER ===")
+    
+    try:
+        from solders.transaction import Transaction
+        from solders.pubkey import Pubkey
+        from solders.system_program import transfer, TransferParams
+        
+        # Send to your own wallet (self-transfer)
+        to_pubkey = wallet.public_key
+        amount = 10000  # 0.00001 SOL (very small amount)
+        
+        # Get recent blockhash
+        blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+        if 'result' not in blockhash_response or 'value' not in blockhash_response['result']:
+            logging.error("Failed to get recent blockhash")
+            return False
+            
+        recent_blockhash = blockhash_response['result']['value']['blockhash']
+        
+        # Create transfer instruction
+        transfer_ix = transfer(TransferParams(
+            from_pubkey=wallet.public_key, 
+            to_pubkey=to_pubkey,
+            lamports=amount
+        ))
+        
+        # Create and sign transaction
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = recent_blockhash
+        tx.sign([wallet.keypair])
+        
+        # Serialize
+        serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
+        
+        # Submit with standard options
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 3,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"SOL transfer transaction submitted: {signature}")
+            
+            # Check transaction status
+            logging.info("Waiting 10 seconds for confirmation...")
+            time.sleep(10)
+            
+            status_response = wallet._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            if "result" in status_response and status_response["result"]:
+                if status_response["result"].get("meta", {}).get("err") is None:
+                    logging.info(f"SOL transfer confirmed successfully!")
+                    return True
+                else:
+                    error = status_response["result"]["meta"]["err"]
+                    logging.error(f"SOL transfer failed with error: {error}")
+            else:
+                logging.warning("Transaction not confirmed after 10 seconds")
+            
+            return False
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"SOL transfer error: {error_message}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in SOL transfer: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+        
+def submit_protected_transaction(serialized_tx: str) -> Optional[str]:
+    """Submit a transaction with MEV protection through QuickNode."""
+    try:
+        logging.info("Submitting transaction with MEV protection...")
+        
+        # The MEV protection is already active on your endpoint
+        # so you just use your regular RPC call method
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Protected transaction submitted: {signature}")
+            return signature
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Protected transaction error: {error_message}")
+            return None
+            
+    except Exception as e:
+        logging.error(f"Error submitting protected transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
 def test_wallet_functionality():
     """Test basic wallet functionality with a tiny SOL transfer."""
     logging.info("=== TESTING BASIC WALLET FUNCTIONALITY ===")
@@ -2496,23 +2631,18 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Test basic token account creation
-        logging.info("Testing token account creation...")
-        if test_token_account_creation():
-            logging.info("Token account creation test PASSED!")
+        # Test with MEV protection
+        logging.info("Testing Jupiter swap with MEV protection...")
+        if direct_jupiter_swap_with_protection():
+            logging.info("Protected Jupiter swap test PASSED!")
             
-            # Then test the trading cycle
-            logging.info("Testing BONK trading cycle...")
-            if test_bonk_trading_cycle():
-                logging.info("Trading cycle test PASSED! Starting regular trading loop...")
-                trading_loop()
-            else:
-                logging.error("Trading cycle test FAILED. Please check logs and try again.")
+            # Start the trading loop with protection
+            logging.info("Starting protected trading loop...")
+            trading_loop()
         else:
-            logging.error("Token account creation test FAILED.")
+            logging.error("Protected Jupiter swap test FAILED. Check logs for details.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
-
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
