@@ -1912,6 +1912,7 @@ def find_tradable_tokens():
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
 
+   def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
     
@@ -1924,16 +1925,18 @@ def find_tradable_tokens():
             logging.warning("No tradable tokens found in KNOWN_TOKENS list!")
             logging.warning("Bot will continue but may not be able to execute trades")
         
-        # Force buy USDC or another tradable token as a test
+        # Force sell all existing positions first
+        logging.info("Force selling all existing positions...")
+        force_sell_all_positions()
+        
+        # Force buy a token as a test - CHANGED FROM force_buy_usdc() to force_buy_token()
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_usdc()  # Changed from force_buy_bonk() to force_buy_usdc()
+        force_buy_token()
         
         # Continue with normal trading loop
         trading_loop()
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
-
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
-def main():
