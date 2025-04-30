@@ -1467,7 +1467,104 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(f"Error buying token {mint}: {e}")
         logging.error(traceback.format_exc())
         return False
- 
+        
+def simulate_transaction(serialized_tx: str) -> bool:
+    """Simulate a transaction before submitting it."""
+    try:
+        response = wallet._rpc_call("simulateTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "commitment": "confirmed"}
+        ])
+        
+        if "result" in response:
+            result = response["result"]
+            if "err" in result and result["err"] is not None:
+                logging.error(f"Simulation error: {result['err']}")
+                return False
+            
+            logging.info("Transaction simulation successful")
+            return True
+        else:
+            logging.error(f"Simulation failed: {response.get('error', 'Unknown error')}")
+            return False
+    except Exception as e:
+        logging.error(f"Error simulating transaction: {str(e)}")
+        return False
+
+def direct_jupiter_swap(input_mint: str, output_mint: str, amount: str) -> bool:
+    """Make a direct swap using the Jupiter API."""
+    try:
+        # 1. Get quote
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": input_mint,
+            "outputMint": output_mint,
+            "amount": amount,
+            "slippageBps": "1000",
+            "swapMode": "ExactIn"
+        }
+        
+        quote_response = requests.get(quote_url, params=params, timeout=10)
+        if quote_response.status_code != 200:
+            logging.error(f"Failed to get quote: {quote_response.status_code}")
+            return False
+            
+        quote_data = quote_response.json()
+        
+        # 2. Get swap transaction
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapUnwrapSOL": True,
+            "prioritizationFeeLamports": 500000,
+            "computeUnitPriceMicroLamports": 1000,  # Set explicit compute unit price
+            "dynamicComputeUnitLimit": True
+        }
+        
+        swap_response = requests.post(
+            swap_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+            return False
+            
+        swap_data = swap_response.json()
+        
+        # 3. Submit transaction
+        tx = swap_data["swapTransaction"]
+        
+        # Simulate first
+        if not simulate_transaction(tx):
+            logging.error("Transaction simulation failed")
+            return False
+            
+        response = wallet._rpc_call("sendTransaction", [
+            tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted: {signature}")
+            return True
+        else:
+            logging.error(f"Failed to submit: {response.get('error')}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in direct swap: {str(e)}")
+        return False
+
 def buy_token(token_address: str, amount_sol: float) -> bool:
     """Buy a token using Jupiter API with improved transaction handling."""
     global buy_attempts, buy_successes
@@ -1510,7 +1607,7 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
             "wrapUnwrapSOL": True,
-            "prioritizationFeeLamports": 50000,  # Higher priority fee (50,000 lamports)
+            "prioritizationFeeLamports": 500000,  # Higher priority fee (50,000 lamports)
             "dynamicComputeUnitLimit": True      # Let Jupiter calculate compute units
         }
         
