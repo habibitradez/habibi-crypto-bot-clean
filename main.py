@@ -2086,80 +2086,33 @@ def test_bonk_trading_cycle():
     
     logging.info("==== TESTING BONK TRADING CYCLE ====")
     
-    # Step 1: Buy a tiny amount of BONK (0.01 SOL)
-    logging.info("Step 1: Buying BONK")
-    buy_success = buy_token(bonk_address, 0.01)
+    # Start with a larger amount for more reliable transactions
+    buy_amount = 0.05
     
-    if not buy_success:
-        logging.error("Failed to buy BONK")
-        return False
-    
-    # Longer wait time to ensure transaction is confirmed
-    logging.info("Buy transaction submitted. Waiting 30 seconds for confirmation...")
-    time.sleep(30)  # Increased from 10 to 30 seconds
-    
-    # Step 2: Check if we have a balance before selling
-    logging.info("Checking BONK balance before selling...")
-    response = wallet._rpc_call("getTokenAccountsByOwner", [
-        str(wallet.public_key),
-        {"mint": bonk_address},
-        {"encoding": "jsonParsed"}
-    ])
-    
-    token_amount = 0
-    if 'result' in response and 'value' in response['result'] and response['result']['value']:
-        token_account = response['result']['value'][0]
-        if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
-            parsed_data = token_account['account']['data']['parsed']
-            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                token_amount_info = parsed_data['info']['tokenAmount']
-                if 'amount' in token_amount_info:
-                    token_amount = int(token_amount_info['amount'])
-    
-    if token_amount == 0:
-        logging.warning("BONK balance is still 0. Transaction may have failed or not confirmed yet.")
-        logging.warning("Waiting another 30 seconds before trying again...")
-        time.sleep(30)
+    # Try up to 3 different buy amounts if needed
+    for attempt in range(3):
+        logging.info(f"Buy attempt #{attempt+1} with {buy_amount} SOL")
         
-        # Check balance again
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet.public_key),
-            {"mint": bonk_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        if 'result' in response and 'value' in response['result'] and response['result']['value']:
-            token_account = response['result']['value'][0]
-            if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
-                parsed_data = token_account['account']['data']['parsed']
-                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                    token_amount_info = parsed_data['info']['tokenAmount']
-                    if 'amount' in token_amount_info:
-                        token_amount = int(token_amount_info['amount'])
-    
-    logging.info(f"Current BONK balance: {token_amount}")
-    
-    if token_amount == 0:
-        logging.error("Still have zero BONK balance after waiting. Buy transaction likely failed.")
-        
-        # Try buying a larger amount
-        logging.info("Trying another buy with a larger amount (0.05 SOL)...")
-        buy_success = buy_token(bonk_address, 0.05)
+        # Step 1: Buy BONK
+        buy_success = buy_token(bonk_address, buy_amount)
         
         if not buy_success:
-            logging.error("Second buy attempt failed")
-            return False
-            
-        logging.info("Second buy attempt submitted. Waiting 30 seconds...")
-        time.sleep(30)
+            logging.error(f"Buy attempt #{attempt+1} failed")
+            # Increase amount for next attempt
+            buy_amount *= 2
+            continue
         
-        # Check balance again
+        logging.info(f"Buy transaction submitted. Waiting 45 seconds for confirmation...")
+        time.sleep(45)  # Even longer wait to ensure confirmation
+        
+        # Check balance after waiting
         response = wallet._rpc_call("getTokenAccountsByOwner", [
             str(wallet.public_key),
             {"mint": bonk_address},
             {"encoding": "jsonParsed"}
         ])
         
+        token_amount = 0
         if 'result' in response and 'value' in response['result'] and response['result']['value']:
             token_account = response['result']['value'][0]
             if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
@@ -2169,22 +2122,30 @@ def test_bonk_trading_cycle():
                     if 'amount' in token_amount_info:
                         token_amount = int(token_amount_info['amount'])
         
-        logging.info(f"BONK balance after second buy attempt: {token_amount}")
+        logging.info(f"BONK balance after buy: {token_amount}")
         
-        if token_amount == 0:
-            logging.error("Still have zero BONK balance. Cannot continue with sell test.")
-            return False
+        if token_amount > 0:
+            # We have a balance, proceed with selling
+            logging.info(f"Step 2: Selling BONK (balance: {token_amount})")
+            
+            # Wait a bit more before selling to ensure the buy is fully settled
+            time.sleep(15)
+            
+            sell_success = sell_token(bonk_address, 100)  # Sell 100%
+            
+            if not sell_success:
+                logging.error("Failed to sell BONK")
+                return False
+            
+            logging.info("==== BONK TRADING CYCLE COMPLETED SUCCESSFULLY ====")
+            return True
+        else:
+            logging.warning(f"Buy attempt #{attempt+1} confirmed but balance is still 0")
+            # Try with a larger amount in the next attempt
+            buy_amount *= 2
     
-    # Step 3: Sell BONK
-    logging.info(f"Step 3: Selling BONK (balance: {token_amount})")
-    sell_success = sell_token(bonk_address, 100)  # Sell 100%
-    
-    if not sell_success:
-        logging.error("Failed to sell BONK")
-        return False
-    
-    logging.info("==== BONK TRADING CYCLE COMPLETED SUCCESSFULLY ====")
-    return True
+    logging.error("All buy attempts failed to result in a non-zero balance")
+    return False
     
 def main():
     """Main entry point."""
