@@ -219,52 +219,52 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
-    def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
-        """Sign and submit a transaction to the Solana blockchain."""
-        try:
-            logging.info("Signing and submitting transaction...")
+def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
+    """Sign and submit a transaction to the Solana blockchain."""
+    try:
+        logging.info("Signing and submitting transaction...")
 
-            # Check the type of the transaction object
-            transaction_type = type(transaction).__name__
-            logging.info(f"Transaction type: {transaction_type}")  # Log the type
+        # Check the type of the transaction object
+        transaction_type = type(transaction).__name__
+        logging.info(f"Transaction type: {transaction_type}")  # Log the type
 
-            # Serialize and submit transaction
-            logging.info("Serializing and submitting transaction...")
-            if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
-                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-            elif isinstance(transaction, Transaction):
-                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+        # Serialize and submit transaction
+        logging.info("Serializing and submitting transaction...")
+        if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
+            serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+        elif isinstance(transaction, Transaction):
+            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+        else:
+            logging.error(f"Unexpected transaction type: {transaction_type}")
+            return None  # Or raise an exception
+
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
+
+        response = self._rpc_call("sendTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "skipPreflight": False}
+        ])
+
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
+
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted successfully: {signature}")
+            return signature
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
             else:
-                logging.error(f"Unexpected transaction type: {transaction_type}")
-                return None  # Or raise an exception
-
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
-
-            response = self._rpc_call("sendTransaction", [
-                serialized_tx,
-                {"encoding": "base64", "skipPreflight": False}
-            ])
-
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
-
-            if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                return signature
-            else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
-                else:
-                    logging.error(f"Failed to submit transaction - unexpected response format: {response}")
-                return None
-
-        except Exception as e:
-            logging.error(f"Error signing and submitting transaction: {str(e)}")
-            logging.error(traceback.format_exc())
+                logging.error(f"Failed to submit transaction - unexpected response format: {response}")
             return None
+
+    except Exception as e:
+        logging.error(f"Error signing and submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
