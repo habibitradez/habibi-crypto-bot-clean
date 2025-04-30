@@ -1469,7 +1469,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
  
 def buy_token(token_address: str, amount_sol: float) -> bool:
-    """Buy a token using Jupiter API with simplified transaction handling."""
+    """Buy a token using Jupiter API with improved transaction handling."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1502,13 +1502,16 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             return False
             
         quote_data = quote_response.json()
-        logging.info(f"Got quote: 1 SOL = {int(quote_data['outAmount'])/amount_lamports} tokens")
+        out_amount = int(quote_data.get('outAmount', 0))
+        logging.info(f"Got quote: 1 SOL = {out_amount/amount_lamports} tokens")
         
-        # Step 2: Prepare swap transaction
+        # Step 2: Prepare swap transaction with improved settings
         swap_payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True
+            "wrapUnwrapSOL": True,
+            "prioritizationFeeLamports": 50000,  # Higher priority fee (50,000 lamports)
+            "dynamicComputeUnitLimit": True      # Let Jupiter calculate compute units
         }
         
         swap_response = requests.post(
@@ -1524,35 +1527,68 @@ def buy_token(token_address: str, amount_sol: float) -> bool:
             
         swap_data = swap_response.json()
         
-        # Step 3: Submit transaction directly
+        # Step 3: Submit transaction with improved parameters
         serialized_tx = swap_data["swapTransaction"]
         
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64",
-                "skipPreflight": True,  # Skip client-side validation
-                "preflightCommitment": "processed"  # Use faster confirmation
+                "skipPreflight": True,        # Skip client-side validation
+                "maxRetries": 5,              # More retries
+                "preflightCommitment": "confirmed"  # Higher commitment level
             }
         ])
         
         if "result" in response:
             signature = response["result"]
             logging.info(f"Transaction submitted successfully: {signature}")
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
             
-            # Track this token
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
-                }
+            # Check transaction status
+            for attempt in range(5):  # Try up to 5 times
+                logging.info(f"Checking transaction status (attempt {attempt+1}/5)...")
+                time.sleep(10)  # Wait between checks
                 
-            return True
+                status_response = wallet._rpc_call("getTransaction", [
+                    signature,
+                    {"encoding": "json"}
+                ])
+                
+                if "result" in status_response and status_response["result"]:
+                    # Transaction found
+                    if status_response["result"].get("meta", {}).get("err") is None:
+                        logging.info(f"Transaction confirmed successfully!")
+                        token_buy_timestamps[token_address] = time.time()
+                        buy_successes += 1
+                        
+                        # Also verify we have a token balance
+                        check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                            str(wallet.public_key),
+                            {"mint": token_address},
+                            {"encoding": "jsonParsed"}
+                        ])
+                        
+                        if 'result' in check_response and 'value' in check_response['result']:
+                            for account in check_response['result']['value']:
+                                if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+                                    parsed_data = account['account']['data']['parsed']
+                                    if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                                        token_amount_info = parsed_data['info']['tokenAmount']
+                                        if 'amount' in token_amount_info:
+                                            token_amount = int(token_amount_info['amount'])
+                                            logging.info(f"Verified token balance: {token_amount}")
+                                            break
+                        
+                        return True
+                    else:
+                        error = status_response["result"]["meta"]["err"]
+                        logging.error(f"Transaction failed: {error}")
+                        return False
+                else:
+                    logging.info("Transaction not yet confirmed, waiting...")
+            
+            logging.warning("Transaction may have been submitted but couldn't verify confirmation")
+            return True  # Optimistically return True even though we couldn't verify
         else:
             if "error" in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
