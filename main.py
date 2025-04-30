@@ -1492,8 +1492,8 @@ def simulate_transaction(serialized_tx: str) -> bool:
         return False
 
 def direct_jupiter_swap_with_protection():
-    """Test direct Jupiter swap with MEV protection."""
-    logging.info("=== TESTING DIRECT JUPITER SWAP WITH MEV PROTECTION ===")
+    """Test direct Jupiter swap with MEV protection and automatic fees."""
+    logging.info("=== TESTING DIRECT JUPITER SWAP WITH AUTO SETTINGS ===")
     
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
     sol_address = "So11111111111111111111111111111111111111112"
@@ -1501,7 +1501,7 @@ def direct_jupiter_swap_with_protection():
     # Amount in lamports
     amount = "50000000"  # 0.05 SOL
     
-    logging.info(f"Attempting protected Jupiter swap: {amount} lamports SOL → BONK")
+    logging.info(f"Attempting Jupiter swap with auto settings: {amount} lamports SOL → BONK")
     
     try:
         # 1. Get quote
@@ -1510,8 +1510,7 @@ def direct_jupiter_swap_with_protection():
             "inputMint": sol_address,
             "outputMint": bonk_address,
             "amount": amount,
-            "slippageBps": "1000",
-            "swapMode": "ExactIn"
+            "slippageBps": "1000"
         }
         
         quote_response = requests.get(quote_url, params=params, timeout=10)
@@ -1522,20 +1521,19 @@ def direct_jupiter_swap_with_protection():
         quote_data = quote_response.json()
         logging.info(f"Got quote - expected output amount: {quote_data.get('outAmount')}")
         
-        # 2. Get swap transaction
+        # 2. Prepare swap with automatic settings
         swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
         
-        # Simplified payload format based on Jupiter API docs
+        # Simplified payload with automatic fee handling
         payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapAndUnwrapSol": True,  # The correct parameter name
-            "dynamicSlippage": {
-                "maxBps": 1000  # 10% max slippage
-            }
+            "wrapAndUnwrapSol": True,
+            "dynamicComputeUnitLimit": True,  # Auto compute limit instead of max
+            "prioritizationFeeLamports": "auto"  # Auto priority fee
         }
         
-        logging.info(f"Sending swap request with payload keys: {list(payload.keys())}")
+        logging.info(f"Sending swap request with auto settings")
         
         swap_response = requests.post(
             swap_url,
@@ -1556,7 +1554,7 @@ def direct_jupiter_swap_with_protection():
             
         serialized_tx = swap_data["swapTransaction"]
         
-        # 3. Submit transaction with MEV protection (already active on your endpoint)
+        # 3. Submit transaction with MEV protection
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
@@ -1593,7 +1591,7 @@ def direct_jupiter_swap_with_protection():
                             token_amount_info = parsed_data['info']['tokenAmount']
                             if 'amount' in token_amount_info:
                                 token_amount = int(token_amount_info['amount'])
-                                logging.info(f"BONK balance after protected swap: {token_amount}")
+                                logging.info(f"BONK balance after swap: {token_amount}")
             
             return token_amount > 0
         else:
