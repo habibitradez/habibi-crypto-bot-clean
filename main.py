@@ -1912,7 +1912,7 @@ def find_tradable_tokens():
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
 
-   def main():
+def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
     
