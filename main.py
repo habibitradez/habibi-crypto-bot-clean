@@ -219,52 +219,52 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
-def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
-    """Sign and submit a transaction to the Solana blockchain."""
-    try:
-        logging.info("Signing and submitting transaction...")
-
-        # Check the type of the transaction object
-        transaction_type = type(transaction).__name__
-        logging.info(f"Transaction type: {transaction_type}")  # Log the type
-
-        # Serialize and submit transaction
-        logging.info("Serializing and submitting transaction...")
-        if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
-            serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-        elif isinstance(transaction, Transaction):
-            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-        else:
-            logging.error(f"Unexpected transaction type: {transaction_type}")
-            return None  # Or raise an exception
-
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
-
-        response = self._rpc_call("sendTransaction", [
-            serialized_tx,
-            {"encoding": "base64", "skipPreflight": False}
-        ])
-
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
-
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Transaction submitted successfully: {signature}")
-            return signature
-        else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
+ def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
+        """Sign and submit a transaction to the Solana blockchain."""
+        try:
+            logging.info("Signing and submitting transaction...")
+            
+            # Check the type of the transaction object
+            transaction_type = type(transaction).__name__
+            logging.info(f"Transaction type: {transaction_type}")  # Log the type
+            
+            # Serialize and submit transaction
+            logging.info("Serializing and submitting transaction...")
+            if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
+                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+            elif isinstance(transaction, Transaction):
+                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
             else:
-                logging.error(f"Failed to submit transaction - unexpected response format: {response}")
+                logging.error(f"Unexpected transaction type: {transaction_type}")
+                return None  # Or raise an exception
+            
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
+            
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx,
+                {"encoding": "base64", "skipPreflight": False}
+            ])
+            
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
+            
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted successfully: {signature}")
+                return signature
+            else:
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                else:
+                    logging.error(f"Failed to submit transaction - unexpected response format: {response}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            logging.error(traceback.format_exc())
             return None
-
-    except Exception as e:
-        logging.error(f"Error signing and submitting transaction: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
@@ -444,45 +444,45 @@ class JupiterSwapHandler:
             logging.error(traceback.format_exc())
             return None
 
-def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:  # Updated return type hint
-    """Deserialize a transaction from Jupiter API."""
-    try:
-        # Extract the serialized transaction
-        if "swapTransaction" in transaction_data:
-            serialized_tx = transaction_data["swapTransaction"]
-            logging.info("Deserializing transaction from Jupiter API...")
-
-            # Decode the base64 transaction data
-            tx_bytes = base64.b64decode(serialized_tx)
-
-            # Attempt to deserialize using from_bytes
-            try:
-                transaction = Transaction.from_bytes(tx_bytes)
-                logging.info("Transaction deserialized successfully using from_bytes")
-                logging.info(f"Deserialized as Transaction")  # ADDED
-                return transaction
-            except ValueError as ve:
-                logging.error(f"Error deserializing with from_bytes: {ve}")
-
-                # Handle VersionedTransaction (if needed - Jupiter might return these)
+def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:
+        """Deserialize a transaction from Jupiter API."""
+        try:
+            # Extract the serialized transaction
+            if "swapTransaction" in transaction_data:
+                serialized_tx = transaction_data["swapTransaction"]
+                logging.info("Deserializing transaction from Jupiter API...")
+                
+                # Decode the base64 transaction data
+                tx_bytes = base64.b64decode(serialized_tx)
+                
+                # Attempt to deserialize using from_bytes
                 try:
-                    transaction = VersionedTransaction.from_bytes(tx_bytes)
-                    logging.info("Transaction deserialized successfully as VersionedTransaction")
-                    logging.info(f"Deserialized as VersionedTransaction")  # ADDED
+                    transaction = Transaction.from_bytes(tx_bytes)
+                    logging.info("Transaction deserialized successfully using from_bytes")
+                    logging.info(f"Deserialized as Transaction")
                     return transaction
-                except ValueError as vve:
-                    logging.error(f"Error deserializing as VersionedTransaction: {vve}")
-                    logging.error("Could not deserialize transaction using either method")
-                    return None
-        else:
-            logging.warning("No swapTransaction found in transaction data")
-            if ULTRA_DIAGNOSTICS:
-                logging.warning(f"Transaction data keys: {list(transaction_data.keys())}")
+                except ValueError as ve:
+                    logging.error(f"Error deserializing with from_bytes: {ve}")
+                    
+                    # Handle VersionedTransaction (if needed - Jupiter might return these)
+                    try:
+                        transaction = VersionedTransaction.from_bytes(tx_bytes)
+                        logging.info("Transaction deserialized successfully as VersionedTransaction")
+                        logging.info(f"Deserialized as VersionedTransaction")
+                        return transaction
+                    except ValueError as vve:
+                        logging.error(f"Error deserializing as VersionedTransaction: {vve}")
+                        logging.error("Could not deserialize transaction using either method")
+                        return None
+            else:
+                logging.warning("No swapTransaction found in transaction data")
+                if ULTRA_DIAGNOSTICS:
+                    logging.warning(f"Transaction data keys: {list(transaction_data.keys())}")
+                return None
+        except Exception as e:
+            logging.error(f"Error deserializing transaction: {str(e)}")
+            logging.error(traceback.format_exc())
             return None
-    except Exception as e:
-        logging.error(f"Error deserializing transaction: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
 # Initialize global wallet and Jupiter swap handler
 wallet = None
 jupiter_handler = None
@@ -1306,13 +1306,56 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     return True
 
 def force_buy_bonk():
-    from solders.pubkey import Pubkey
-    mint = Pubkey.from_string("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
-    logging.info("📈 Forcing BONK buy at startup...")
     try:
-        execute_buy_token(mint, 0.001)
+        from solders.pubkey import Pubkey
+        mint_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        logging.info("📈 Forcing BONK buy at startup...")
+        
+        # Get a quote
+        amount_lamports = 1000000  # 0.001 SOL
+        quote_data = jupiter_handler.get_quote(
+            input_mint=SOL_TOKEN_ADDRESS,
+            output_mint=mint_address,
+            amount=str(amount_lamports),
+            slippage_bps="500"
+        )
+        
+        if not quote_data:
+            logging.error("Failed to get quote for BONK")
+            return False
+            
+        # Prepare the swap transaction
+        swap_data = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote_data,
+            user_public_key=str(wallet.public_key)
+        )
+        
+        if not swap_data or "swapTransaction" not in swap_data:
+            logging.error("Failed to prepare swap transaction for BONK")
+            return False
+            
+        # Skip deserialization - directly submit the transaction
+        serialized_tx = swap_data["swapTransaction"]
+        
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "skipPreflight": False}
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"✅ Successfully bought BONK! Signature: {signature}")
+            return True
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"❌ BONK buy error: {error_message}")
+            return False
+            
     except Exception as e:
         logging.error(f"❌ Failed BONK force-buy: {e}")
+        logging.error(traceback.format_exc())
+        return False
 
 
 def force_buy_usdc():
@@ -1368,16 +1411,7 @@ def force_buy_usdc():
     return False
     
 def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
-    """Execute a buy order for a specific token.
-
-    Args:
-        mint: The PublicKey of the token to buy.
-        amount_sol: The amount of SOL to spend on the purchase.
-
-    Returns:
-        True if the buy order was successful, False otherwise.
-    """
-
+    """Execute a buy order for a specific token."""
     global buy_attempts, buy_successes
 
     buy_attempts += 1
@@ -1403,31 +1437,35 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
             user_public_key=str(wallet.public_key)
         )
 
-        if not swap_transaction:
+        if not swap_transaction or "swapTransaction" not in swap_transaction:
             logging.error(f"Failed to prepare swap transaction for token {mint}")
             return False
 
-        # Deserialize the transaction
-        transaction = jupiter_handler.deserialize_transaction(swap_transaction)
-
-        if not transaction:
-            logging.error(f"Failed to deserialize transaction for token {mint}")
-            return False
-
-        # Sign and send the transaction
-        signature = wallet.sign_and_submit_transaction(transaction)
-
-        if signature:
+        # Skip deserialization - directly submit the transaction
+        serialized_tx = swap_transaction["swapTransaction"]
+        
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "skipPreflight": False}
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
             logging.info(f"Successfully bought token {mint}. Transaction signature: {signature}")
             buy_successes += 1
             return True
         else:
-            logging.error(f"Failed to submit transaction for token {mint}")
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                error_code = response.get("error", {}).get("code", "Unknown code")
+                logging.error(f"Transaction error: {error_message} (Code: {error_code})")
+            else:
+                logging.error(f"Failed to submit transaction for token {mint}")
             return False
 
     except Exception as e:
         logging.error(f"Error buying token {mint}: {e}")
-        traceback.print_exc()  # Print detailed traceback
+        logging.error(traceback.format_exc())
         return False
  
 def buy_token(token_address: str, amount_sol: float) -> bool:
@@ -1996,14 +2034,14 @@ def find_tradable_tokens():
     
 def test_simple_sol_transfer():
     try:
-        from solders.transaction import Transaction, VersionedTransaction  # Ensure solders
-        from solders.message import Message
+        from solders.transaction import Transaction
         from solders.pubkey import Pubkey
-        from solana.rpc.api import Client  # Keep solana-py for RPC if needed (check compatibility)
-        from solders.system_program import transfer, TransferParams  # Ensure solders
+        from solders.system_program import transfer, TransferParams
 
-        # RPC client and keys (ensure keypair and SOLANA_RPC_URL are defined globally)
-        client = Client(CONFIG['SOLANA_RPC_URL'])  # Use CONFIG for RPC URL
+        # Don't use the solana.rpc.api Client directly
+        # Use our wallet's _rpc_call method instead
+        
+        # RPC client and keys
         from_pubkey = wallet.public_key
         to_pubkey = Pubkey.from_string("11111111111111111111111111111111")  # test address
         lamports = 1000  # 0.000001 SOL
@@ -2014,18 +2052,23 @@ def test_simple_sol_transfer():
 
         # Build transaction
         instruction = transfer(TransferParams(from_pubkey=from_pubkey, to_pubkey=to_pubkey, lamports=lamports))
-        message = Message(instructions=[instruction])
+        
+        # Get recent blockhash using _rpc_call method
+        blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+        if 'result' in blockhash_response and 'value' in blockhash_response['result'] and 'blockhash' in blockhash_response['result']['value']:
+            recent_blockhash = blockhash_response['result']['value']['blockhash']
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Recent Blockhash: {recent_blockhash}")
+        else:
+            logging.error("Failed to get blockhash")
+            return False
 
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Message instructions: {message.instructions}")
-            logging.info(f"Message header: {message.header}")
-            logging.info(f"Message account keys: {message.account_keys}")
-
-        recent_blockhash = client.get_recent_blockhash()["result"]["value"]["blockhash"]
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Recent Blockhash: {recent_blockhash}")
-
-        tx = Transaction(message=message, recent_blockhash=recent_blockhash)
+        # Create transaction
+        tx = Transaction()
+        tx.add(instruction)
+        tx.recent_blockhash = recent_blockhash
+        
+        # Sign transaction
         tx.sign([wallet.keypair])
 
         if ULTRA_DIAGNOSTICS:
@@ -2035,10 +2078,14 @@ def test_simple_sol_transfer():
                 signature_base58 = base58.b58encode(tx.signatures[0].signature)
                 logging.info(f"Signature (Base58): {signature_base58}")
 
-        # Send transaction
-        response = client.send_transaction(tx)
-        logging.info(f"✅ Simple SOL transfer success: {response}")
-        return True
+        # Submit transaction using wallet's method
+        signature = wallet.sign_and_submit_transaction(tx)
+        if signature:
+            logging.info(f"✅ Simple SOL transfer success: {signature}")
+            return True
+        else:
+            logging.error("❌ Simple SOL transfer failed during submission")
+            return False
 
     except Exception as e:
         logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
@@ -2058,14 +2105,53 @@ def tiny_buy_test():
         }
 
         logging.info("⚠️ [tiny_buy_test] Running tiny buy test with BONK...")
-        success = execute_buy_token(test_token["mint"], 0.001)  # Buy 0.001 SOL worth
-        if success:
-            logging.info("✅ [tiny_buy_test] Tiny buy test successful!")
+        
+        # Get a quote
+        amount_lamports = 1000000  # 0.001 SOL
+        quote_data = jupiter_handler.get_quote(
+            input_mint=SOL_TOKEN_ADDRESS,
+            output_mint=str(test_token["mint"]),
+            amount=str(amount_lamports),
+            slippage_bps="500"
+        )
+        
+        if not quote_data:
+            logging.error("Failed to get quote")
+            return False
+            
+        # Prepare the swap transaction
+        swap_data = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote_data,
+            user_public_key=str(wallet.public_key)
+        )
+        
+        if not swap_data or "swapTransaction" not in swap_data:
+            logging.error("Failed to prepare swap transaction")
+            return False
+            
+        # Skip deserialization - directly submit the transaction
+        serialized_tx = swap_data["swapTransaction"]
+        
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "skipPreflight": False}
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"✅ [tiny_buy_test] Tiny buy test successful! Signature: {signature}")
+            return True
         else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
             logging.warning("⚠️ [tiny_buy_test] Tiny buy test failed.")
+            return False
+            
     except Exception as e:
         logging.error(f"❌ [tiny_buy_test] Exception occurred: {e}")
-
+        logging.error(traceback.format_exc())
+        return False
 
 def main():
     """Main entry point."""
