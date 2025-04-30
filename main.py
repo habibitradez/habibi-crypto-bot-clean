@@ -1524,14 +1524,18 @@ def direct_jupiter_swap_with_protection():
         
         # 2. Get swap transaction
         swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        
+        # Simplified payload format based on Jupiter API docs
         payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapUnwrapSOL": True,
-            "prioritizationFeeLamports": 500000,  # 0.0005 SOL priority fee
-            "computeUnitPriceMicroLamports": 1000,
-            "dynamicComputeUnitLimit": True
+            "wrapAndUnwrapSol": True,  # The correct parameter name
+            "dynamicSlippage": {
+                "maxBps": 1000  # 10% max slippage
+            }
         }
+        
+        logging.info(f"Sending swap request with payload keys: {list(payload.keys())}")
         
         swap_response = requests.post(
             swap_url,
@@ -1541,16 +1545,32 @@ def direct_jupiter_swap_with_protection():
         )
         
         if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+            logging.error(f"Failed to prepare swap: {swap_response.status_code} - {swap_response.text}")
             return False
             
         swap_data = swap_response.json()
+        
+        if "swapTransaction" not in swap_data:
+            logging.error(f"Swap response missing swapTransaction: {swap_data}")
+            return False
+            
         serialized_tx = swap_data["swapTransaction"]
         
-        # 3. Submit with MEV protection (already active on your endpoint)
-        signature = submit_protected_transaction(serialized_tx)
+        # 3. Submit transaction with MEV protection (already active on your endpoint)
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
+        ])
         
-        if signature:
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted: {signature}")
+            
             # Wait for confirmation and check status
             logging.info("Waiting 30 seconds for confirmation...")
             time.sleep(30)
@@ -1577,7 +1597,9 @@ def direct_jupiter_swap_with_protection():
             
             return token_amount > 0
         else:
-            logging.error("Failed to submit protected transaction")
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed to submit: {error_message}")
             return False
             
     except Exception as e:
