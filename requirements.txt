@@ -4,3 +4,4 @@ base58==2.1.1
 solders==0.18.0
 matplotlib==3.8.3
 solana @ git+https://github.com/michaelhly/solana-py@v0.36.6
+pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
