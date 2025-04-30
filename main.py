@@ -437,29 +437,34 @@ class JupiterSwapHandler:
             logging.error(traceback.format_exc())
             return None
     
-    def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction]:
+def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction]:
         """Deserialize a transaction from Jupiter API."""
         try:
             # Extract the serialized transaction
             if "swapTransaction" in transaction_data:
                 serialized_tx = transaction_data["swapTransaction"]
                 logging.info("Deserializing transaction from Jupiter API...")
-                
+
                 # Decode the base64 transaction data
                 tx_bytes = base64.b64decode(serialized_tx)
-                
-                # Create a transaction from the bytes
+
+                # Attempt to deserialize using from_bytes
                 try:
-                    # Try the from_bytes method first
                     transaction = Transaction.from_bytes(tx_bytes)
-                except Exception as e:
-                    logging.error(f"Error using from_bytes: {str(e)}")
-                    # If that fails, try deserialize method with BytesIO
-                    from io import BytesIO
-                    transaction = Transaction.deserialize(BytesIO(tx_bytes))
-                
-                logging.info(f"Transaction deserialized successfully")
-                return transaction
+                    logging.info("Transaction deserialized successfully using from_bytes")
+                    return transaction
+                except ValueError as ve:
+                    logging.error(f"Error deserializing with from_bytes: {ve}")
+
+                    # Handle VersionedTransaction (if needed - Jupiter might return these)
+                    try:
+                        transaction = VersionedTransaction.from_bytes(tx_bytes)
+                        logging.info("Transaction deserialized successfully as VersionedTransaction")
+                        return transaction
+                    except ValueError as vve:
+                        logging.error(f"Error deserializing as VersionedTransaction: {vve}")
+                        logging.error("Could not deserialize transaction using either method")
+                        return None
             else:
                 logging.warning("No swapTransaction found in transaction data")
                 if ULTRA_DIAGNOSTICS:
