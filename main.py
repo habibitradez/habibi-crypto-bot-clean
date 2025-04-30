@@ -1961,7 +1961,6 @@ def force_sell_all_positions():
 
 def tiny_buy_test():
     try:
-        from trading import execute_buy_token  # ✅ assume trading.py is in root, not under bot/
         from solders.pubkey import Pubkey
 
         test_token = {
