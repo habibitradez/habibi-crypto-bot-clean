@@ -1293,8 +1293,14 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     return True
 
 def force_buy_bonk():
-    """Force buy BONK token to test trading functionality."""
-    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+    from solders.pubkey import Pubkey
+    mint = Pubkey.from_string("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
+    logging.info("📈 Forcing BONK buy at startup...")
+    try:
+        execute_buy_token(mint, 0.001)
+    except Exception as e:
+        logging.error(f"❌ Failed BONK force-buy: {e}")
+
 
 def force_buy_usdc():
     """Force buy USDC token to test trading functionality."""
