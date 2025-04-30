@@ -1912,31 +1912,33 @@ def find_tradable_tokens():
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
     
-def test_simple_sol_transfer() -> bool:
-    """Send a tiny SOL transfer to self to verify wallet signing and transaction submission."""
+def test_simple_sol_transfer():
     try:
-        from solana.transaction import Transaction
-        from solana.system_program import TransferParams, transfer
+        from solders.transaction import Transaction
+        from solders.message import Message
+        from solders.keypair import Keypair
+        from solders.pubkey import Pubkey
         from solana.rpc.api import Client
+        from solana.system_program import transfer, TransferParams
 
-        # Send 0.001 SOL to self
-        amount = int(0.001 * 1_000_000_000)
-        client = Client(RPC_URL)
-        params = TransferParams(
-            from_pubkey=wallet.public_key,
-            to_pubkey=wallet.public_key,
-            lamports=amount
-        )
-        tx = Transaction()
-        tx.add(transfer(params))
+        # RPC client and keys (ensure keypair and SOLANA_RPC_URL are defined globally)
+        client = Client(SOLANA_RPC_URL)
+        from_pubkey = keypair.pubkey()
+        to_pubkey = Pubkey.from_string("11111111111111111111111111111111")  # test address
+        lamports = 1000  # 0.000001 SOL
 
-        tx_resp = wallet.sign_and_submit_transaction(tx)
-        if tx_resp:
-            logging.info(f"✅ Test SOL transfer succeeded: {tx_resp}")
-            return True
-        else:
-            logging.error("❌ Test SOL transfer failed.")
-            return False
+        # Build transaction
+        instruction = transfer(TransferParams(from_pubkey=from_pubkey, to_pubkey=to_pubkey, lamports=lamports))
+        message = Message(instructions=[instruction])
+        recent_blockhash = client.get_recent_blockhash()["result"]["value"]["blockhash"]
+
+        tx = Transaction(message=message, recent_blockhash=recent_blockhash)
+        tx.sign([keypair])
+
+        # Send transaction
+        response = client.send_transaction(tx)
+        logging.info(f"✅ Simple SOL transfer success: {response}")
+        return True
     except Exception as e:
         logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
         return False
