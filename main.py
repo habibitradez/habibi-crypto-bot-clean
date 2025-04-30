@@ -57,17 +57,17 @@ ULTRA_DIAGNOSTICS = True
 # Meme token pattern detection - Enhanced with latest trends
 MEME_TOKEN_PATTERNS = [
     # Classic meme terms
-    "pump", "moon", "pepe", "doge", "shib", "inu", "cat", "elon", "musk", 
-    "trump", "biden", "wojak", "chad", "frog", "dog", "puppy", "kitty", 
-    "meme", "coin", "stonk", "ape", "rocket", "mars", "lambo", "diamond", 
-    "hand", "hodl", "rich", "poor", "trader", "crypto", "token", 
+    "pump", "moon", "pepe", "doge", "shib", "inu", "cat", "elon", "musk",
+    "trump", "biden", "wojak", "chad", "frog", "dog", "puppy", "kitty",
+    "meme", "coin", "stonk", "ape", "rocket", "mars", "lambo", "diamond",
+    "hand", "hodl", "rich", "poor", "trader", "crypto", "token",
     
     # Popular Solana meme coins
     "bonk", "wif", "dogwifhat", "popcat", "pnut", "peanut", "slerf",
     "myro", "giga", "gigachad", "moodeng", "pengu", "pudgy", "would",
     
     # Animal themes
-    "bull", "bear", "hippo", "squirrel", "cat", "doge", "shiba", 
+    "bull", "bear", "hippo", "squirrel", "cat", "doge", "shiba",
     "monkey", "ape", "panda", "fox", "bird", "eagle", "penguin",
     
     # Internet culture
@@ -1586,7 +1586,7 @@ def sell_token(token_address: str, percentage: int = 100) -> bool:
         logging.info(f"Getting quote for selling {amount_to_sell} tokens of {token_address}")
         quote_data = jupiter_handler.get_quote(
             input_mint=token_address,
-            output_mint=SOL_TOKEN_ADDRESS,
+            outputMint=SOL_TOKEN_ADDRESS,
             amount=str(amount_to_sell),
             slippage_bps="1000"  # 10% slippage to ensure transaction goes through
         )
