@@ -1936,4 +1936,3 @@ def find_tradable_tokens():
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
-def main():
