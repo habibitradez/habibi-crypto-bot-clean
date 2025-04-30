@@ -219,29 +219,32 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
-    def sign_and_submit_transaction(self, transaction: Transaction) -> Optional[str]:
+    def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
         try:
             logging.info("Signing and submitting transaction...")
-            
+
             # Check if this is a versioned transaction
-            is_versioned = hasattr(transaction, 'message') and not isinstance(transaction, Transaction)
-            
+            is_versioned = isinstance(transaction, VersionedTransaction)
+
             # Serialize and submit transaction
             logging.info("Serializing and submitting transaction...")
-            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-            
+            if is_versioned:
+                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")  # Use to_bytes() for VersionedTransaction
+            else:
+                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
-                
+
             response = self._rpc_call("sendTransaction", [
-                serialized_tx, 
+                serialized_tx,
                 {"encoding": "base64", "skipPreflight": False}
             ])
-            
+
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
-                
+
             if "result" in response:
                 signature = response["result"]
                 logging.info(f"Transaction submitted successfully: {signature}")
@@ -253,7 +256,7 @@ class SolanaWallet:
                 else:
                     logging.error(f"Failed to submit transaction - unexpected response format: {response}")
                 return None
-                
+
         except Exception as e:
             logging.error(f"Error signing and submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
