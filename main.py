@@ -219,7 +219,7 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
- def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
+    def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
         try:
             logging.info("Signing and submitting transaction...")
