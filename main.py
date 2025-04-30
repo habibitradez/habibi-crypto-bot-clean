@@ -1915,23 +1915,34 @@ def find_tradable_tokens():
 def test_simple_sol_transfer() -> bool:
     """Send a tiny SOL transfer to self to verify wallet signing and transaction submission."""
     try:
-        destination = str(wallet.public_key)  # Send to own address
+        from solana.transaction import Transaction
+        from solana.system_program import TransferParams, transfer
+        from solana.rpc.api import Client
+
+        # Send 0.001 SOL to self
+        amount = int(0.001 * 1_000_000_000)
+        client = Client(RPC_URL)
         params = TransferParams(
             from_pubkey=wallet.public_key,
             to_pubkey=wallet.public_key,
-            lamports=1000000  # 0.001 SOL
+            lamports=amount
         )
-        tx = Transaction().add(transfer(params))
-        signature = wallet.sign_and_submit_transaction(tx)
-        if signature:
-            logging.info(f"✅ Test SOL transfer succeeded: {signature}")
+        tx = Transaction()
+        tx.add(transfer(params))
+
+        tx_resp = wallet.sign_and_submit_transaction(tx)
+        if tx_resp:
+            logging.info(f"✅ Test SOL transfer succeeded: {tx_resp}")
             return True
         else:
-            logging.error("❌ Test SOL transfer failed")
+            logging.error("❌ Test SOL transfer failed.")
             return False
     except Exception as e:
         logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
         return False
+
+def force_sell_all_positions():
+    logging.info("⚠️ [force_sell_all_positions] Not yet implemented — skipping for now.")
 
 def main():
     """Main entry point."""
