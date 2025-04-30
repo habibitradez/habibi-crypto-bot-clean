@@ -1919,35 +1919,42 @@ def find_tradable_tokens():
     return tradable_count > 0
     
 def test_simple_sol_transfer():
-    try:
-        from solders.transaction import Transaction
-        from solders.message import Message
-        from solders.keypair import Keypair
-        from solders.pubkey import Pubkey
-        from solana.rpc.api import Client
-        from solana.system_program import transfer, TransferParams
-
-        # RPC client and keys (ensure keypair and SOLANA_RPC_URL are defined globally)
-        client = Client(SOLANA_RPC_URL)
-        from_pubkey = keypair.pubkey()
-        to_pubkey = Pubkey.from_string("11111111111111111111111111111111")  # test address
-        lamports = 1000  # 0.000001 SOL
-
-        # Build transaction
-        instruction = transfer(TransferParams(from_pubkey=from_pubkey, to_pubkey=to_pubkey, lamports=lamports))
-        message = Message(instructions=[instruction])
-        recent_blockhash = client.get_recent_blockhash()["result"]["value"]["blockhash"]
-
-        tx = Transaction(message=message, recent_blockhash=recent_blockhash)
-        tx.sign([keypair])
-
-        # Send transaction
-        response = client.send_transaction(tx)
-        logging.info(f"✅ Simple SOL transfer success: {response}")
-        return True
-    except Exception as e:
-        logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
-        return False
+        try:
+            from solders.transaction import Transaction
+            from solders.message import Message
+            from solders.keypair import Keypair
+            from solders.pubkey import Pubkey
+            from solana.rpc.api import Client
+            from solana.system_program import transfer, TransferParams
+    
+            # RPC client and keys (ensure keypair and SOLANA_RPC_URL are defined globally)
+            client = Client(SOLANA_RPC_URL)
+            from_pubkey = wallet.public_key  # CHANGED
+            to_pubkey = Pubkey.from_string("11111111111111111111111111111111")  # test address
+            lamports = 1000  # 0.000001 SOL
+    
+            # Build transaction
+            instruction = transfer(TransferParams(from_pubkey=from_pubkey, to_pubkey=to_pubkey, lamports=lamports))
+            message = Message(instructions=[instruction])
+            recent_blockhash = client.get_recent_blockhash()["result"]["value"]["blockhash"]
+            
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Message: {message}")  # ADDED
+    
+            tx = Transaction(message=message, recent_blockhash=recent_blockhash)
+            tx.sign([wallet.keypair])  # CHANGED
+            
+            if ULTRA_DIAGNOSTICS:
+                signature_base58 = base58.b58encode(tx.signatures[0].signature) # ADDED
+                logging.info(f"Signature: {signature_base58}")  # ADDED
+    
+            # Send transaction
+            response = client.send_transaction(tx)
+            logging.info(f"✅ Simple SOL transfer success: {response}")
+            return True
+        except Exception as e:
+            logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
+            return False
 
 def force_sell_all_positions():
     logging.info("⚠️ [force_sell_all_positions] Not yet implemented — skipping for now.")
