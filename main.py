@@ -1946,6 +1946,26 @@ def test_simple_sol_transfer():
 def force_sell_all_positions():
     logging.info("⚠️ [force_sell_all_positions] Not yet implemented — skipping for now.")
 
+def tiny_buy_test():
+    try:
+        from bot.trading import execute_buy_token
+        from solders.pubkey import Pubkey
+
+        test_token = {
+            "symbol": "BONK",
+            "mint": Pubkey.from_string("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263")
+        }
+
+        logging.info("⚠️ [tiny_buy_test] Running tiny buy test with BONK...")
+        success = execute_buy_token(test_token["mint"], 0.001)
+        if success:
+            logging.info("✅ [tiny_buy_test] Tiny buy test successful!")
+        else:
+            logging.warning("⚠️ [tiny_buy_test] Tiny buy test failed.")
+    except Exception as e:
+        logging.error(f"❌ [tiny_buy_test] Exception occurred: {e}")
+
+
 def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
