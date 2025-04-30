@@ -2013,7 +2013,7 @@ def main():
 
         # Force buy a token as a test
         logging.info("Attempting to force buy a token as startup test")
-        force_buy_token()
+        force_buy_bonk()
 
         # Start the trading loop
         trading_loop()
