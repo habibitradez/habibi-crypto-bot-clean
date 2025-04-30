@@ -1,7 +1,7 @@
 requests==2.28.2
 python-dotenv==1.0.0
 base58==2.1.1
-solders==0.18.0
+solders==0.26.0
 matplotlib==3.8.3
-git+https://github.com/michaelhly/solana-py@v0.36.6
+solana @ git+https://github.com/michaelhly/solana-py@v0.36.6
 
