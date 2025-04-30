@@ -1353,7 +1353,70 @@ def force_buy_usdc():
     
     logging.error("Failed to buy USDC - Check logs for errors")
     return False
+    
+def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
+    """Execute a buy order for a specific token.
 
+    Args:
+        mint: The PublicKey of the token to buy.
+        amount_sol: The amount of SOL to spend on the purchase.
+
+    Returns:
+        True if the buy order was successful, False otherwise.
+    """
+
+    global buy_attempts, buy_successes
+
+    buy_attempts += 1
+
+    logging.info(f"Attempting to buy token {mint} with {amount_sol} SOL")
+
+    try:
+        # Get the quote from Jupiter
+        quote = jupiter_handler.get_quote(
+            input_mint=SOL_TOKEN_ADDRESS,
+            output_mint=str(mint),
+            amount=str(int(amount_sol * 10**9)),  # Convert SOL to lamports
+            slippage_bps="500"  # 0.5% slippage
+        )
+
+        if not quote:
+            logging.error(f"Failed to get quote for token {mint}")
+            return False
+
+        # Prepare the swap transaction
+        swap_transaction = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote,
+            user_public_key=str(wallet.public_key)
+        )
+
+        if not swap_transaction:
+            logging.error(f"Failed to prepare swap transaction for token {mint}")
+            return False
+
+        # Deserialize the transaction
+        transaction = jupiter_handler.deserialize_transaction(swap_transaction)
+
+        if not transaction:
+            logging.error(f"Failed to deserialize transaction for token {mint}")
+            return False
+
+        # Sign and send the transaction
+        signature = wallet.sign_and_submit_transaction(transaction)
+
+        if signature:
+            logging.info(f"Successfully bought token {mint}. Transaction signature: {signature}")
+            buy_successes += 1
+            return True
+        else:
+            logging.error(f"Failed to submit transaction for token {mint}")
+            return False
+
+    except Exception as e:
+        logging.error(f"Error buying token {mint}: {e}")
+        traceback.print_exc()  # Print detailed traceback
+        return False
+ 
 def buy_token(token_address: str, amount_sol: float) -> bool:
     """Buy a token using Jupiter API with improved transaction handling."""
     global buy_attempts, buy_successes, last_api_call_time, api_call_delay
