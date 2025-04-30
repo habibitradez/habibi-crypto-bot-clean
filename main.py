@@ -1911,6 +1911,27 @@ def find_tradable_tokens():
     
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
+    
+def test_simple_sol_transfer() -> bool:
+    """Send a tiny SOL transfer to self to verify wallet signing and transaction submission."""
+    try:
+        destination = str(wallet.public_key)  # Send to own address
+        params = TransferParams(
+            from_pubkey=wallet.public_key,
+            to_pubkey=wallet.public_key,
+            lamports=1000000  # 0.001 SOL
+        )
+        tx = Transaction().add(transfer(params))
+        signature = wallet.sign_and_submit_transaction(tx)
+        if signature:
+            logging.info(f"✅ Test SOL transfer succeeded: {signature}")
+            return True
+        else:
+            logging.error("❌ Test SOL transfer failed")
+            return False
+    except Exception as e:
+        logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
+        return False
 
 def main():
     """Main entry point."""
