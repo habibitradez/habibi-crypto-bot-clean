@@ -224,15 +224,19 @@ class SolanaWallet:
         try:
             logging.info("Signing and submitting transaction...")
 
-            # Check if this is a versioned transaction
-            is_versioned = isinstance(transaction, VersionedTransaction)
+            # Check the type of the transaction object
+            transaction_type = type(transaction).__name__
+            logging.info(f"Transaction type: {transaction_type}")  # Log the type
 
             # Serialize and submit transaction
             logging.info("Serializing and submitting transaction...")
-            if is_versioned:
-                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")  # Use to_bytes() for VersionedTransaction
-            else:
+            if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
+                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+            elif isinstance(transaction, Transaction):
                 serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            else:
+                logging.error(f"Unexpected transaction type: {transaction_type}")
+                return None  # Or raise an exception
 
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
@@ -440,7 +444,7 @@ class JupiterSwapHandler:
             logging.error(traceback.format_exc())
             return None
 
-    def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction]:
+    def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:  # Updated return type hint
         """Deserialize a transaction from Jupiter API."""
         try:
             # Extract the serialized transaction
@@ -455,6 +459,7 @@ class JupiterSwapHandler:
                 try:
                     transaction = Transaction.from_bytes(tx_bytes)
                     logging.info("Transaction deserialized successfully using from_bytes")
+                    logging.info(f"Deserialized as Transaction")  # ADDED
                     return transaction
                 except ValueError as ve:
                     logging.error(f"Error deserializing with from_bytes: {ve}")
@@ -463,6 +468,7 @@ class JupiterSwapHandler:
                     try:
                         transaction = VersionedTransaction.from_bytes(tx_bytes)
                         logging.info("Transaction deserialized successfully as VersionedTransaction")
+                        logging.info(f"Deserialized as VersionedTransaction")  # ADDED
                         return transaction
                     except ValueError as vve:
                         logging.error(f"Error deserializing as VersionedTransaction: {vve}")
@@ -477,7 +483,6 @@ class JupiterSwapHandler:
             logging.error(f"Error deserializing transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return None
-
 # Initialize global wallet and Jupiter swap handler
 wallet = None
 jupiter_handler = None
