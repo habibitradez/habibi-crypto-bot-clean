@@ -1710,8 +1710,8 @@ def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def simplified_sell_token(token_address: str, percentage: int = 100) -> bool:
-    """Sell a percentage of token holdings using Jupiter API with automatic handling."""
+def simplified_sell_token(token_address: str, percentage: int = 100, max_attempts: int = 5) -> bool:
+    """Sell a percentage of token holdings with better balance checking."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1723,39 +1723,43 @@ def simplified_sell_token(token_address: str, percentage: int = 100) -> bool:
         sell_successes += 1
         return True
     
-    try:
-        # Step 1: Find token account to get balance
+    # First, check balance and retry if needed
+    token_amount = 0
+    attempt = 0
+    
+    while attempt < max_attempts and token_amount == 0:
+        attempt += 1
+        logging.info(f"Checking token balance (attempt {attempt}/{max_attempts})...")
+        
         response = wallet._rpc_call("getTokenAccountsByOwner", [
             str(wallet.public_key),
             {"mint": token_address},
             {"encoding": "jsonParsed"}
         ])
         
-        token_accounts = []
-        if 'result' in response and 'value' in response['result']:
-            token_accounts = response['result']['value']
+        if 'result' in response and 'value' in response['result'] and response['result']['value']:
+            token_account = response['result']['value'][0]
+            
+            if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
+                parsed_data = token_account['account']['data']['parsed']
+                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                    token_amount_info = parsed_data['info']['tokenAmount']
+                    if 'amount' in token_amount_info:
+                        token_amount = int(token_amount_info['amount'])
+                        logging.info(f"Found token balance: {token_amount}")
         
-        if not token_accounts:
-            logging.error(f"No token account found for {token_address}")
-            return False
-        
-        # Extract token amount from account data
-        token_account = token_accounts[0]
-        token_amount = "0"
-        
-        if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
-            parsed_data = token_account['account']['data']['parsed']
-            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                token_amount_info = parsed_data['info']['tokenAmount']
-                if 'amount' in token_amount_info:
-                    token_amount = token_amount_info['amount']
-        
-        if token_amount == "0":
-            logging.error(f"Zero balance for {token_address}")
-            return False
-        
+        if token_amount == 0:
+            if attempt < max_attempts:
+                logging.info(f"No balance yet, waiting 10 seconds before retrying...")
+                time.sleep(10)
+            else:
+                logging.error(f"Zero balance for {token_address} after {max_attempts} attempts")
+                return False
+    
+    # Now proceed with the sell if we have a balance
+    try:
         # Calculate amount to sell based on percentage
-        amount_to_sell = int(int(token_amount) * percentage / 100)
+        amount_to_sell = int(token_amount * percentage / 100)
         logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
         
         # Step 2: Get a quote
@@ -2625,12 +2629,12 @@ def main():
         bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         
         # Buy a small amount of BONK
-        if simplified_buy_token(bonk_address, 0.01):
-            logging.info("BONK buy successful! Waiting 30 seconds before selling...")
-            time.sleep(30)
+        if simplified_buy_token(bonk_address, 0.02):  # Increased amount to 0.02 SOL
+            logging.info("BONK buy successful! Waiting 60 seconds before selling...")
+            time.sleep(60)  # Wait longer (60 seconds instead of 30)
             
-            # Sell it all
-            if simplified_sell_token(bonk_address, 100):
+            # Sell it all using the improved sell function
+            if simplified_sell_token(bonk_address, 100, max_attempts=6):  # More attempts with 10s each = up to 60s
                 logging.info("BONK trading test PASSED! Starting regular trading loop...")
                 trading_loop()
             else:
