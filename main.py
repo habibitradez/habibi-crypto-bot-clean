@@ -2147,6 +2147,61 @@ def test_bonk_trading_cycle():
     logging.error("All buy attempts failed to result in a non-zero balance")
     return False
     
+def test_wallet_functionality():
+    """Test basic wallet functionality with a tiny SOL transfer."""
+    logging.info("=== TESTING BASIC WALLET FUNCTIONALITY ===")
+    
+    try:
+        # Create a simple SOL transfer instruction
+        from solders.system_program import transfer, TransferParams
+        from solders.transaction import Transaction
+        
+        # Send to your own wallet (self-transfer) for simplicity
+        to_pubkey = wallet.public_key
+        amount = 100000  # 0.0001 SOL
+        
+        # Get recent blockhash
+        blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+        if 'result' not in blockhash_response or 'value' not in blockhash_response['result']:
+            logging.error("Failed to get recent blockhash")
+            return False
+            
+        recent_blockhash = blockhash_response['result']['value']['blockhash']
+        
+        # Create transfer instruction
+        transfer_ix = transfer(TransferParams(
+            from_pubkey=wallet.public_key, 
+            to_pubkey=to_pubkey,
+            lamports=amount
+        ))
+        
+        # Create and sign transaction
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = recent_blockhash
+        tx.sign([wallet.keypair])
+        
+        # Serialize and submit
+        serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
+        
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {"encoding": "base64", "skipPreflight": False}
+        ])
+        
+        if "result" in response:
+            logging.info(f"Basic SOL transfer successful: {response['result']}")
+            return True
+        else:
+            if "error" in response:
+                logging.error(f"SOL transfer error: {response['error']}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error testing wallet: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+
 def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
