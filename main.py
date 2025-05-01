@@ -1619,7 +1619,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
         
 def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with direct transaction submission."""
+    """Buy a token using Jupiter API with improved verification."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1635,10 +1635,7 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
         try:
             logging.info(f"Buy attempt #{attempt+1} for {token_address}")
             
-            # 1. Ensure token account exists first
-            ensure_token_account_exists(token_address)
-            
-            # 2. Get quote with high slippage tolerance for better success
+            # 1. Get quote
             amount_lamports = int(amount_sol * 1000000000)
             
             quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
@@ -1646,7 +1643,7 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000"  # 20% slippage for better success
+                "slippageBps": "1000"  # 10% slippage
             }
             
             logging.info(f"Getting quote...")
@@ -1658,14 +1655,15 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
             
             quote_data = quote_response.json()
             
-            # 3. Prepare swap transaction
+            # 2. Prepare swap transaction with EXPLICIT priority fees
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "wrapAndUnwrapSol": True,  # Correct parameter name
+                "wrapAndUnwrapSol": True,
                 "dynamicComputeUnitLimit": True,
-                "prioritizationFeeLamports": "auto"
+                "computeUnitPriceMicroLamports": 10000,  # Explicit compute price
+                "prioritizationFeeLamports": 10000  # Explicit priority fee (instead of "auto")
             }
             
             logging.info(f"Preparing swap transaction...")
@@ -1686,7 +1684,7 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 4. Submit transaction DIRECTLY without deserialization
+            # 3. Submit transaction
             serialized_tx = swap_data["swapTransaction"]
             
             logging.info(f"Submitting transaction...")
@@ -1694,20 +1692,65 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": True,  # Skip preflight checks for better success
-                    "maxRetries": 3
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "confirmed"
                 }
             ])
             
-            if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted: {signature}")
+            if "result" not in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
+                continue
                 
-                # Transaction was at least submitted successfully
+            signature = response["result"]
+            logging.info(f"Transaction submitted: {signature}")
+            
+            # 4. VERIFY TRANSACTION SUCCESS - THIS IS CRITICAL
+            logging.info(f"Waiting for transaction confirmation...")
+            
+            # Wait longer - 30 seconds
+            time.sleep(30)
+            
+            # Check transaction status
+            status_response = wallet._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            if "result" not in status_response or not status_response["result"]:
+                logging.error(f"Transaction not found after 30 seconds")
+                continue
+                
+            # Check for errors in transaction
+            if status_response["result"].get("meta", {}).get("err") is not None:
+                error = status_response["result"]["meta"]["err"]
+                logging.error(f"Transaction failed with error: {error}")
+                continue
+                
+            logging.info(f"Transaction confirmed successfully!")
+            
+            # 5. Verify token was received
+            check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                str(wallet.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            token_amount = 0
+            if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                account = check_response['result']['value'][0]
+                parsed_data = account['account']['data']['parsed']
+                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                    token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                    logging.info(f"Token balance after purchase: {token_amount}")
+            
+            if token_amount > 0:
+                # Success! Record purchase details
                 token_buy_timestamps[token_address] = time.time()
                 buy_successes += 1
                 
-                # Get initial price for monitoring
+                # Record initial price for monitoring
                 initial_price = get_token_price(token_address)
                 if initial_price:
                     monitored_tokens[token_address] = {
@@ -1717,11 +1760,11 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
                         'buy_time': time.time()
                     }
                 
-                logging.info(f"Token purchase recorded successfully")
+                logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
                 return True
             else:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
+                logging.warning(f"Transaction appeared to succeed but no tokens received")
+                # Try again if we haven't reached max attempts
                 
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
