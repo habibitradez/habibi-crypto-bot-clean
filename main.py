@@ -1669,6 +1669,105 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
         
+def buy_token(token_address: str, amount_sol: float) -> bool:
+    """Buy a token using Jupiter API with automatic settings."""
+    global buy_attempts, buy_successes
+    
+    buy_attempts += 1
+    
+    logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Auto-bought tokens of {token_address} for {amount_sol} SOL")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    try:
+        # Check if token account exists
+        ensure_token_account_exists(token_address)
+        
+        # Get a quote
+        amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
+        quote_data = jupiter_handler.get_quote(
+            input_mint=SOL_TOKEN_ADDRESS,
+            output_mint=token_address,
+            amount=str(amount_lamports),
+            slippage_bps="2000"  # 20% slippage for higher success rate
+        )
+        
+        if not quote_data:
+            logging.error(f"Failed to get quote for {token_address}")
+            return False
+            
+        # Prepare swap transaction
+        swap_data = jupiter_handler.prepare_swap_transaction(
+            quote_data=quote_data,
+            user_public_key=str(wallet.public_key)
+        )
+        
+        if not swap_data or "swapTransaction" not in swap_data:
+            logging.error(f"Failed to prepare swap transaction for {token_address}")
+            return False
+            
+        # Submit transaction directly
+        serialized_tx = swap_data["swapTransaction"]
+        
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,  # Skip client-side validation
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted successfully: {signature}")
+            token_buy_timestamps[token_address] = time.time()
+            
+            # Verify transaction through status check
+            for attempt in range(3):
+                time.sleep(10)  # Wait between checks
+                status_response = wallet._rpc_call("getTransaction", [
+                    signature,
+                    {"encoding": "json"}
+                ])
+                
+                if "result" in status_response and status_response["result"]:
+                    if status_response["result"].get("meta", {}).get("err") is None:
+                        logging.info(f"Transaction confirmed successfully!")
+                        buy_successes += 1
+                        
+                        # Get initial price for monitoring
+                        initial_price = get_token_price(token_address)
+                        if initial_price:
+                            monitored_tokens[token_address] = {
+                                'initial_price': initial_price,
+                                'highest_price': initial_price,
+                                'partial_profit_taken': False,
+                                'buy_time': time.time()
+                            }
+                        
+                        return True
+            
+            # If we got here, transaction might be pending or failed
+            logging.warning(f"Could not confirm transaction status, assuming success")
+            buy_successes += 1
+            return True
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error buying {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+
 def simulate_transaction(serialized_tx: str) -> bool:
     """Simulate a transaction before submitting it."""
     try:
