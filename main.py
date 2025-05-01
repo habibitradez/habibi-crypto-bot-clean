@@ -1942,8 +1942,8 @@ def simple_buy_token(token_address: str, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def simplified_sell_token(token_address: str, percentage: int = 100, max_attempts: int = 5) -> bool:
-    """Sell a percentage of token holdings with better balance checking."""
+def sell_token(token_address: str, percentage: int = 100, max_attempts: int = 3) -> bool:
+    """Sell a percentage of token holdings with robust error handling."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1955,116 +1955,152 @@ def simplified_sell_token(token_address: str, percentage: int = 100, max_attempt
         sell_successes += 1
         return True
     
-    # First, check balance and retry if needed
-    token_amount = 0
-    attempt = 0
-    
-    while attempt < max_attempts and token_amount == 0:
-        attempt += 1
-        logging.info(f"Checking token balance (attempt {attempt}/{max_attempts})...")
-        
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        if 'result' in response and 'value' in response['result'] and response['result']['value']:
-            token_account = response['result']['value'][0]
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Sell attempt #{attempt+1} for {token_address}")
             
-            if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
-                parsed_data = token_account['account']['data']['parsed']
-                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                    token_amount_info = parsed_data['info']['tokenAmount']
-                    if 'amount' in token_amount_info:
-                        token_amount = int(token_amount_info['amount'])
-                        logging.info(f"Found token balance: {token_amount}")
-        
-        if token_amount == 0:
-            if attempt < max_attempts:
-                logging.info(f"No balance yet, waiting 10 seconds before retrying...")
-                time.sleep(10)
+            # First, check balance and retry if needed
+            token_amount = 0
+            balance_check_attempts = 3
+            
+            for balance_attempt in range(balance_check_attempts):
+                logging.info(f"Checking token balance (attempt {balance_attempt+1}/{balance_check_attempts})...")
+                
+                response = wallet._rpc_call("getTokenAccountsByOwner", [
+                    str(wallet.public_key),
+                    {"mint": token_address},
+                    {"encoding": "jsonParsed"}
+                ])
+                
+                if 'result' in response and 'value' in response['result'] and response['result']['value']:
+                    token_account = response['result']['value'][0]
+                    
+                    if 'account' in token_account and 'data' in token_account['account'] and 'parsed' in token_account['account']['data']:
+                        parsed_data = token_account['account']['data']['parsed']
+                        if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                            token_amount_info = parsed_data['info']['tokenAmount']
+                            if 'amount' in token_amount_info:
+                                token_amount = int(token_amount_info['amount'])
+                                logging.info(f"Found token balance: {token_amount}")
+                                break
+                
+                if token_amount == 0 and balance_attempt < balance_check_attempts-1:
+                    logging.info(f"No balance yet, waiting 10 seconds before retrying...")
+                    time.sleep(10)
+            
+            if token_amount == 0:
+                logging.error(f"Zero balance for {token_address} after {balance_check_attempts} attempts")
+                return False
+            
+            # Add delay to avoid rate limits
+            sleep_time = 2 * (attempt + 1)
+            logging.info(f"Sleeping {sleep_time}s before quote request to avoid rate limits")
+            time.sleep(sleep_time)
+            
+            # Calculate amount to sell based on percentage
+            amount_to_sell = int(token_amount * percentage / 100)
+            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
+            
+            # Step 2: Get a quote
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            params = {
+                "inputMint": token_address,
+                "outputMint": SOL_TOKEN_ADDRESS,
+                "amount": str(amount_to_sell),
+                "slippageBps": "5000"  # 50% slippage - extremely permissive
+            }
+            
+            quote_response = requests.get(quote_url, params=params, timeout=30)
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get quote: {quote_response.status_code} - {quote_response.text}")
+                if attempt < max_attempts-1:
+                    continue
+                return False
+                
+            quote_data = quote_response.json()
+            logging.info(f"Quote received successfully")
+            
+            # Add delay between requests
+            time.sleep(2)
+            
+            # Step 3: Prepare swap transaction with automatic settings
+            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapAndUnwrapSol": True,
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto"
+            }
+            
+            swap_response = requests.post(
+                swap_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to prepare swap: {swap_response.status_code} - {swap_response.text}")
+                if attempt < max_attempts-1:
+                    continue
+                return False
+                
+            swap_data = swap_response.json()
+            
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Swap response missing swapTransaction: {swap_data}")
+                if attempt < max_attempts-1:
+                    continue
+                return False
+            
+            # Add delay before transaction submission
+            time.sleep(2)
+            
+            # Step 4: Submit transaction with optimal parameters
+            serialized_tx = swap_data["swapTransaction"]
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "processed"
+                }
+            ])
+            
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Sell transaction submitted successfully: {signature}")
+                sell_successes += 1
+                
+                # If we're selling 100%, remove from monitored tokens
+                if percentage == 100 and token_address in monitored_tokens:
+                    logging.info(f"Removing {token_address} from monitored tokens after full sell")
+                    del monitored_tokens[token_address]
+                
+                return True
             else:
-                logging.error(f"Zero balance for {token_address} after {max_attempts} attempts")
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                if attempt < max_attempts-1:
+                    continue
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error selling {token_address}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            if attempt < max_attempts-1:
+                wait_time = 5 * (attempt + 1)
+                logging.info(f"Waiting {wait_time}s before next attempt...")
+                time.sleep(wait_time)
+            else:
                 return False
     
-    # Now proceed with the sell if we have a balance
-    try:
-        # Calculate amount to sell based on percentage
-        amount_to_sell = int(token_amount * percentage / 100)
-        logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
-        
-        # Step 2: Get a quote
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        params = {
-            "inputMint": token_address,
-            "outputMint": SOL_TOKEN_ADDRESS,
-            "amount": str(amount_to_sell),
-            "slippageBps": "1000"
-        }
-        
-        quote_response = requests.get(quote_url, params=params, timeout=10)
-        
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get quote: {quote_response.status_code}")
-            return False
-            
-        quote_data = quote_response.json()
-        
-        # Step 3: Prepare swap transaction with automatic settings
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.public_key),
-            "wrapAndUnwrapSol": True,
-            "dynamicComputeUnitLimit": True,  # Auto compute limit
-            "prioritizationFeeLamports": "auto"  # Auto priority fee
-        }
-        
-        swap_response = requests.post(
-            swap_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
-            return False
-            
-        swap_data = swap_response.json()
-        
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing swapTransaction: {swap_data}")
-            return False
-        
-        # Step 4: Submit transaction with MEV protection
-        serialized_tx = swap_data["swapTransaction"]
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "confirmed"
-            }
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Sell transaction submitted successfully: {signature}")
-            sell_successes += 1
-            return True
-        else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
-            return False
-            
-    except Exception as e:
-        logging.error(f"Error selling {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
+    return False
 
 def monitor_token_price(token_address: str) -> None:
     """Monitor a token's price and execute the trading strategy."""
