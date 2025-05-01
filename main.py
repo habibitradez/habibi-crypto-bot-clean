@@ -943,6 +943,65 @@ def ensure_token_account_exists(token_address: str) -> bool:
         logging.error(f"Error ensuring token account exists: {str(e)}")
         logging.error(traceback.format_exc())
         return False
+        
+def check_transaction_status(signature: str, max_attempts: int = 5) -> bool:
+    """Check the status of a transaction by its signature."""
+    logging.info(f"Checking status of transaction: {signature}")
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Status check attempt {attempt+1}/{max_attempts}...")
+            
+            response = wallet._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            if "result" in response and response["result"]:
+                # Transaction found
+                if response["result"].get("meta", {}).get("err") is None:
+                    logging.info(f"Transaction confirmed successfully!")
+                    
+                    # Get post-balances to verify token transfer
+                    post_balances = response["result"].get("meta", {}).get("postTokenBalances", [])
+                    if post_balances:
+                        for balance in post_balances:
+                            owner = balance.get("owner")
+                            mint = balance.get("mint")
+                            amount = balance.get("uiTokenAmount", {}).get("amount")
+                            
+                            if owner == str(wallet.public_key):
+                                logging.info(f"Post-transaction token balance: {amount} for mint {mint}")
+                                if int(amount) > 0:
+                                    return True
+                    
+                    return True
+                else:
+                    error = response["result"]["meta"]["err"]
+                    logging.error(f"Transaction failed with error: {error}")
+                    return False
+            
+            # If we've reached max attempts, return False
+            if attempt == max_attempts - 1:
+                logging.warning(f"Could not confirm transaction status after {max_attempts} attempts")
+                return False
+                
+            # Wait before next attempt
+            logging.info("Transaction not yet confirmed, waiting 10 seconds...")
+            time.sleep(10)
+            
+        except Exception as e:
+            logging.error(f"Error checking transaction status: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            # If last attempt, return False
+            if attempt == max_attempts - 1:
+                return False
+                
+            # Wait before retry
+            time.sleep(5)
+    
+    return False
 
 def check_token_liquidity(token_address: str) -> bool:
     """Check if a token has sufficient liquidity."""
@@ -1727,6 +1786,11 @@ def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
         return True
     
     try:
+        # First ensure the token account exists
+        if not ensure_token_account_exists(token_address):
+            logging.warning(f"Failed to ensure token account exists for {token_address}")
+            # Continue anyway - the account might still get created during the swap
+        
         # Step 1: Get a quote
         amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
         logging.info(f"Getting quote for buying {token_address} with {amount_lamports} lamports")
@@ -1774,7 +1838,7 @@ def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
             logging.error(f"Swap response missing swapTransaction: {swap_data}")
             return False
         
-        # Step 3: Submit transaction with MEV protection (already active on your endpoint)
+        # Step 3: Submit transaction with MEV protection
         serialized_tx = swap_data["swapTransaction"]
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
@@ -1789,23 +1853,28 @@ def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
         if "result" in response:
             signature = response["result"]
             logging.info(f"Transaction submitted successfully: {signature}")
-            token_buy_timestamps[token_address] = time.time()
             
-            # Don't wait for confirmation here - let the monitoring function handle that
+            # Check transaction status
+            transaction_success = check_transaction_status(signature, max_attempts=6)
             
-            # Update tracking info
-            buy_successes += 1
-            
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
-                }
+            if transaction_success:
+                logging.info(f"Transaction confirmed with token transfer!")
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
                 
-            return True
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                return True
+            else:
+                logging.error(f"Transaction may have failed or token transfer not verified")
+                return False
         else:
             if "error" in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
