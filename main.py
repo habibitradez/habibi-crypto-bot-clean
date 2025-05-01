@@ -295,156 +295,85 @@ class JupiterSwapHandler:
     """Handler for Jupiter API swap transactions."""
 
     def __init__(self, jupiter_api_url: str):
-        """Initialize the Jupiter swap handler.
-
-        Args:
-            jupiter_api_url: The URL for the Jupiter API
-        """
+        """Initialize the Jupiter swap handler."""
         self.api_url = jupiter_api_url
         logging.info(f"Initialized Jupiter handler with API URL: {jupiter_api_url}")
 
     def get_quote(self, input_mint: str, output_mint: str, amount: str, slippage_bps: str = "500") -> Optional[Dict]:
         """Get a swap quote from Jupiter API."""
+        # Your existing get_quote method...
+
+    def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
+        """Prepare a swap transaction using the quote data."""
         try:
-            params = {
-                "inputMint": input_mint,
-                "outputMint": output_mint,
-                "amount": amount,
-                "slippageBps": slippage_bps,
-                "onlyDirectRoutes": "false",
-                # Remove asLegacyTransaction parameter if it exists in other locations
+            # Add more diagnostic logging
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Preparing swap with quote data keys: {list(quote_data.keys())}")
+
+            # For Jupiter v6 API, the payload format is different
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": user_public_key,
+                "wrapAndUnwrapSol": True,  # FIXED: changed from wrapUnwrapSOL
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto"
             }
 
-            logging.info(f"Getting quote: {input_mint} → {output_mint}, amount: {amount}, slippage: {slippage_bps}bps")
+            logging.info(f"Preparing swap transaction for user: {user_public_key}")
+            logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
 
-            # For Jupiter v6, the quote endpoint is at /v6/quote
-            quote_url = f"{self.api_url}/v6/quote"
-            response = requests.get(quote_url, params=params, timeout=10)
+            # Log the payload structure
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Swap request payload keys: {list(payload.keys())}")
+                if 'quoteResponse' in payload:
+                    logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
+
+            # For Jupiter v6, the swap endpoint is /v6/swap
+            response = requests.post(
+                f"{self.api_url}/v6/swap",
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
 
             if ULTRA_DIAGNOSTICS:
-                logging.info(f"Quote response status: {response.status_code}")
+                logging.info(f"Swap preparation response status: {response.status_code}")
                 if response.status_code == 200:
                     try:
-                        logging.info(f"Quote response preview: {response.text[:200]}...")
+                        logging.info(f"Swap response preview: {response.text[:200]}...")
                     except Exception as e:
-                        logging.error(f"Error logging response preview: {str(e)}")
+                        logging.error(f"Error logging swap response preview: {str(e)}")
 
             if response.status_code == 200:
                 try:
-                    data = response.json()
+                    swap_response = response.json()
 
                     # Debug log the response structure
                     if ULTRA_DIAGNOSTICS:
-                        logging.info(f"Quote response keys: {list(data.keys())}")
+                        logging.info(f"Swap response keys: {list(swap_response.keys())}")
 
-                    # Check if the response is directly the quote data (v6 API format)
-                    if "outAmount" in data:
-                        logging.info(f"Quote received successfully (v6 format)")
-                        return data
-                    # Check for v4/v5 API format
-                    elif "data" in data and "outAmount" in data["data"]:
-                        logging.info(f"Quote received successfully (v4/v5 format)")
-                        return data["data"]
+                    # Check if the response contains the transaction
+                    if "swapTransaction" in swap_response:
+                        logging.info("Swap transaction prepared successfully")
+                        return swap_response
                     else:
-                        # Log the full response for debugging
                         if ULTRA_DIAGNOSTICS:
-                            logging.warning(f"Unexpected quote response format: {json.dumps(data)}")
-                        logging.warning(f"Quote response has unexpected format")
+                            logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
+                        logging.warning(f"Swap response does not contain swapTransaction key")
                         return None
 
                 except json.JSONDecodeError:
-                    logging.error(f"Failed to parse quote response as JSON: {response.text[:200]}...")
+                    logging.error(f"Failed to parse swap response as JSON: {response.text[:200]}...")
                     return None
 
-            # Better error logging for non-200 responses
-            if response.status_code == 404:
-                logging.error(f"API endpoint not found (404). URL: {quote_url}")
-            elif response.status_code == 400:
-                try:
-                    error_data = response.json()
-                    logging.error(f"Bad request (400): {error_data}")
-                except:
-                    logging.error(f"Bad request (400): {response.text[:200]}")
-            else:
-                logging.warning(f"Failed to get quote: {response.status_code} - {response.text[:200]}")
-
+            logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text[:200]}")
             return None
         except Exception as e:
-            logging.error(f"Error getting quote: {str(e)}")
+            logging.error(f"Error preparing swap transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return None
 
-def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
-    """Prepare a swap transaction using the quote data."""
-    try:
-        # Add more diagnostic logging
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Preparing swap with quote data keys: {list(quote_data.keys())}")
-
-        # For Jupiter v6 API, the payload format is different
-        payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": user_public_key,
-            "wrapAndUnwrapSol": True,  # FIXED: changed from wrapUnwrapSOL
-            "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto"
-        }
-
-        logging.info(f"Preparing swap transaction for user: {user_public_key}")
-        logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
-
-        # Log the payload structure
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Swap request payload keys: {list(payload.keys())}")
-            if 'quoteResponse' in payload:
-                logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
-
-        # For Jupiter v6, the swap endpoint is /v6/swap
-        response = requests.post(
-            f"{self.api_url}/v6/swap",
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Swap preparation response status: {response.status_code}")
-            if response.status_code == 200:
-                try:
-                    logging.info(f"Swap response preview: {response.text[:200]}...")
-                except Exception as e:
-                    logging.error(f"Error logging swap response preview: {str(e)}")
-
-        if response.status_code == 200:
-            try:
-                swap_response = response.json()
-
-                # Debug log the response structure
-                if ULTRA_DIAGNOSTICS:
-                    logging.info(f"Swap response keys: {list(swap_response.keys())}")
-
-                # Check if the response contains the transaction
-                if "swapTransaction" in swap_response:
-                    logging.info("Swap transaction prepared successfully")
-                    return swap_response
-                else:
-                    if ULTRA_DIAGNOSTICS:
-                        logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
-                    logging.warning(f"Swap response does not contain swapTransaction key")
-                    return None
-
-            except json.JSONDecodeError:
-                logging.error(f"Failed to parse swap response as JSON: {response.text[:200]}...")
-                return None
-
-        logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text[:200]}")
-        return None
-    except Exception as e:
-        logging.error(f"Error preparing swap transaction: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
-
-def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:
+    def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:
         """Deserialize a transaction from Jupiter API."""
         try:
             # Extract the serialized transaction
