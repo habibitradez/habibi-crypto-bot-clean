@@ -1598,12 +1598,12 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
         
-def robust_buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
-    """Ultra-robust token purchase function that handles all edge cases."""
+def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with robust error handling."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
-    logging.info(f"Starting robust buy for {token_address} - Amount: {amount_sol} SOL")
+    logging.info(f"Starting buy for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
         logging.info(f"[SIMULATION] Bought token {token_address}")
