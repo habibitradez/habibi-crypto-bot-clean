@@ -1445,9 +1445,9 @@ def test_bonk_token():
     
     logging.info("✅ Token account exists or was created successfully")
     
-    # Test 2: Try buying a small amount
+    # Test 2: Try buying with larger amount
     logging.info("Test 2: Buying minimal amount of BONK")
-    buy_amount = 0.01  # 0.01 SOL
+    buy_amount = 0.15  # 0.15 SOL instead of 0.01
     buy_success = buy_token(bonk_address, buy_amount)
     
     if not buy_success:
@@ -1456,8 +1456,11 @@ def test_bonk_token():
     
     logging.info("✅ Successfully bought BONK")
     
-    # Test 3: Check balance
+    # Test 3: Check balance with longer delay
     logging.info("Test 3: Checking token balance")
+    logging.info("Waiting 30 seconds before final balance check...")
+    time.sleep(30)
+    
     response = wallet._rpc_call("getTokenAccountsByOwner", [
         str(wallet.public_key),
         {"mint": bonk_address},
@@ -1473,10 +1476,14 @@ def test_bonk_token():
                 token_amount = int(parsed_data['info']['tokenAmount']['amount'])
     
     logging.info(f"BONK balance: {token_amount}")
+    success = token_amount > 0
     
-    logging.info("===== BONK TESTING COMPLETE =====")
-    return token_amount > 0
-
+    if success:
+        logging.info("===== BONK TESTING COMPLETE - SUCCESS =====")
+    else:
+        logging.error("===== BONK TESTING COMPLETE - FAILED =====")
+    
+    return success
 
 def force_buy_usdc():
     """Force buy USDC token to test trading functionality."""
@@ -1619,7 +1626,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
         
 def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with increased amount."""
+    """Buy a token using Jupiter API with larger amount."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1635,21 +1642,18 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
         try:
             logging.info(f"Buy attempt #{attempt+1} for {token_address}")
             
-            # Calculate amount with slight randomization to avoid front-running
-            variance = random.uniform(0.95, 1.05)
-            adjusted_amount = amount_sol * variance
-            amount_lamports = int(adjusted_amount * 1000000000)
+            # 1. Get quote with larger amount
+            amount_lamports = int(amount_sol * 1000000000)
             
-            # 1. Get quote
             quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
             params = {
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "2000"  # 20% slippage for better success
+                "slippageBps": "1000"  # 10% slippage
             }
             
-            logging.info(f"Getting quote for {adjusted_amount} SOL...")
+            logging.info(f"Getting quote for {amount_sol} SOL...")
             quote_response = requests.get(quote_url, params=params, timeout=15)
             
             if quote_response.status_code != 200:
@@ -1658,7 +1662,7 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
             
             quote_data = quote_response.json()
             
-            # 2. Prepare swap - very simple payload
+            # 2. Prepare swap - simple payload
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
@@ -1684,7 +1688,7 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 3. Submit transaction with higher compute limit allowance
+            # 3. Submit transaction
             serialized_tx = swap_data["swapTransaction"]
             
             logging.info(f"Submitting transaction...")
@@ -1692,7 +1696,7 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": True,
+                    "skipPreflight": False,  # Changed to FALSE to detect issues before submission
                     "maxRetries": 5,
                     "preflightCommitment": "confirmed"
                 }
@@ -1706,22 +1710,68 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
             signature = response["result"]
             logging.info(f"Transaction submitted: {signature}")
             
-            # Record transaction at this point
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            
-            # Record initial price for monitoring (even before confirmation)
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
-                }
-            
-            return True
+            # 4. Check for successful transaction with exponential backoff
+            max_checks = 5
+            for check in range(max_checks):
+                wait_time = 5 * (2 ** check)  # 5, 10, 20, 40, 80 seconds
+                logging.info(f"Waiting {wait_time}s before balance check #{check+1}...")
+                time.sleep(wait_time)
                 
+                # Check token balance
+                check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                    str(wallet.public_key),
+                    {"mint": token_address},
+                    {"encoding": "jsonParsed"}
+                ])
+                
+                token_amount = 0
+                if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                    for account in check_response['result']['value']:
+                        if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+                            parsed_data = account['account']['data']['parsed']
+                            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                                token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                                logging.info(f"Token balance check #{check+1}: {token_amount}")
+                
+                if token_amount > 0:
+                    # Success!
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    
+                    # Record initial price for monitoring
+                    initial_price = get_token_price(token_address)
+                    if initial_price:
+                        monitored_tokens[token_address] = {
+                            'initial_price': initial_price,
+                            'highest_price': initial_price,
+                            'partial_profit_taken': False,
+                            'buy_time': time.time()
+                        }
+                    
+                    logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
+                    return True
+                else:
+                    logging.info(f"No tokens received on check #{check+1}, continuing backoff...")
+            
+            # If we get here, transaction was submitted but no tokens received after all checks
+            logging.warning(f"Transaction appeared to succeed but no tokens received after {max_checks} checks")
+            
+            # Try once more to get transaction status
+            status_response = wallet._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            if "result" in status_response and status_response["result"]:
+                # Check if there's an error in the transaction
+                if status_response["result"].get("meta", {}).get("err") is not None:
+                    error = status_response["result"]["meta"]["err"]
+                    logging.error(f"Transaction failed with error: {error}")
+                else:
+                    # Something else went wrong, try again with a higher amount
+                    logging.info(f"Transaction confirmed but no tokens received. Trying with higher amount next...")
+                    amount_sol *= 1.5  # Increase amount by 50% for next attempt
+            
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
