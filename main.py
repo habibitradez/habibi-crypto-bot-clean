@@ -836,6 +836,113 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
         return True
     
     return False
+    
+def ensure_token_account_exists(token_address: str) -> bool:
+    """Ensure a token account exists for the given token mint."""
+    logging.info(f"Checking if token account exists for {token_address}...")
+    
+    try:
+        # Check if token account already exists
+        response = wallet._rpc_call("getTokenAccountsByOwner", [
+            str(wallet.public_key),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        if 'result' in response and 'value' in response['result'] and response['result']['value']:
+            logging.info(f"Token account already exists for {token_address}")
+            return True
+            
+        # We need to create a token account using Jupiter API
+        logging.info(f"Token account doesn't exist for {token_address}. Creating one...")
+        
+        # Make a minimal buy to create the account
+        # This approach uses Jupiter which will handle ATA creation
+        sol_address = "So11111111111111111111111111111111111111112"
+        minimal_amount = "1000000"  # 0.001 SOL - just enough to create account
+        
+        # Get a minimal quote 
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": sol_address,
+            "outputMint": token_address,
+            "amount": minimal_amount,
+            "slippageBps": "1000"
+        }
+        
+        quote_response = requests.get(quote_url, params=params, timeout=10)
+        if quote_response.status_code != 200:
+            logging.error(f"Failed to get quote: {quote_response.status_code}")
+            return False
+            
+        quote_data = quote_response.json()
+        
+        # Prepare transaction that will create token account
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapAndUnwrapSol": True,
+            "dynamicComputeUnitLimit": True,
+            "prioritizationFeeLamports": "auto"
+        }
+        
+        swap_response = requests.post(
+            swap_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+            return False
+            
+        swap_data = swap_response.json()
+        
+        # Submit transaction
+        serialized_tx = swap_data["swapTransaction"]
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Account creation transaction submitted: {signature}")
+            
+            # Wait for confirmation
+            logging.info("Waiting 30 seconds for confirmation...")
+            time.sleep(30)
+            
+            # Check if account was created
+            check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                str(wallet.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                logging.info(f"Successfully created token account for {token_address}")
+                return True
+            else:
+                logging.error(f"Failed to create token account for {token_address}")
+                return False
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error ensuring token account exists: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
 
 def check_token_liquidity(token_address: str) -> bool:
     """Check if a token has sufficient liquidity."""
@@ -2624,23 +2731,29 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Test one simple BONK buy and sell with automatic settings
-        logging.info("Testing simplified BONK trading...")
+        # Test BONK trading with account creation
+        logging.info("Testing BONK trading with proper account creation...")
         bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         
-        # Buy a small amount of BONK
-        if simplified_buy_token(bonk_address, 0.02):  # Increased amount to 0.02 SOL
-            logging.info("BONK buy successful! Waiting 60 seconds before selling...")
-            time.sleep(60)  # Wait longer (60 seconds instead of 30)
+        # Step 1: Ensure token account exists
+        if ensure_token_account_exists(bonk_address):
+            logging.info("Token account exists or was created successfully!")
             
-            # Sell it all using the improved sell function
-            if simplified_sell_token(bonk_address, 100, max_attempts=6):  # More attempts with 10s each = up to 60s
-                logging.info("BONK trading test PASSED! Starting regular trading loop...")
-                trading_loop()
+            # Step 2: Buy a small amount of BONK
+            if simplified_buy_token(bonk_address, 0.02):
+                logging.info("BONK buy successful! Waiting 60 seconds before selling...")
+                time.sleep(60)
+                
+                # Step 3: Sell it all
+                if simplified_sell_token(bonk_address, 100):
+                    logging.info("BONK trading test PASSED! Starting regular trading loop...")
+                    trading_loop()
+                else:
+                    logging.error("BONK sell failed. Check logs for details.")
             else:
-                logging.error("BONK sell failed. Check logs for details.")
+                logging.error("BONK buy failed. Check logs for details.")
         else:
-            logging.error("BONK buy failed. Check logs for details.")
+            logging.error("Failed to ensure token account exists. Cannot proceed with trading test.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
