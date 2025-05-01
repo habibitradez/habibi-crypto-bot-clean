@@ -771,127 +771,135 @@ def ensure_token_account_exists(token_address: str, max_attempts: int = 3) -> bo
     logging.info(f"Checking if token account exists for {token_address}...")
     
     # First check if it already exists
+    response = wallet._rpc_call("getTokenAccountsByOwner", [
+        str(wallet.public_key),
+        {"mint": token_address},
+        {"encoding": "jsonParsed"}
+    ])
+    
+    if 'result' in response and 'value' in response['result'] and response['result']['value']:
+        logging.info(f"Token account already exists for {token_address}")
+        return True
+    
+    logging.info(f"No token account exists for {token_address}. Creating one...")
+    
+    # Try a specific approach that's more reliable
     for attempt in range(max_attempts):
         try:
-            response = wallet._rpc_call("getTokenAccountsByOwner", [
-                str(wallet.public_key),
-                {"mint": token_address},
-                {"encoding": "jsonParsed"}
+            logging.info(f"Account creation attempt #{attempt+1}/{max_attempts}")
+            
+            # Make a minimal swap to create the token account
+            minimal_amount = 5000000  # 0.005 SOL
+            
+            # Get a quote
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            params = {
+                "inputMint": SOL_TOKEN_ADDRESS,
+                "outputMint": token_address,
+                "amount": str(minimal_amount),
+                "slippageBps": "3000"  # 30% slippage for higher chance of success
+            }
+            
+            quote_response = requests.get(quote_url, params=params, timeout=15)
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Quote failed: {quote_response.status_code}")
+                # Wait and try again
+                time.sleep(5)
+                continue
+            
+            quote_data = quote_response.json()
+            
+            # Prepare swap transaction
+            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapAndUnwrapSol": True,  # Correct parameter name
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto"
+            }
+            
+            swap_response = requests.post(
+                swap_url,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Swap preparation failed: {swap_response.status_code}")
+                # Wait and try again
+                time.sleep(5)
+                continue
+            
+            swap_data = swap_response.json()
+            
+            if "swapTransaction" not in swap_data:
+                logging.error("Swap response missing transaction data")
+                # Wait and try again
+                time.sleep(5)
+                continue
+            
+            # Submit transaction
+            serialized_tx = swap_data["swapTransaction"]
+            
+            response = wallet._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,  # Skip preflight checks
+                    "maxRetries": 3
+                }
             ])
             
-            if 'result' in response and 'value' in response['result'] and response['result']['value']:
-                logging.info(f"Token account already exists for {token_address}")
-                return True
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Account creation transaction submitted: {signature}")
                 
-            # If we're not on the last attempt, try to create the account
-            if attempt < max_attempts - 1:
-                logging.info(f"Attempt {attempt+1}/{max_attempts}: Token account doesn't exist for {token_address}. Creating one...")
+                # Wait for confirmation
+                logging.info("Waiting 20 seconds for confirmation...")
+                time.sleep(20)
                 
-                # Add increasing delay between attempts
-                time.sleep(5 * (attempt + 1))
-                
-                # Make a minimal buy to create the account
-                sol_address = "So11111111111111111111111111111111111111112"
-                # Increase amount for each attempt to improve chances
-                minimal_amount = str(2000000 * (attempt + 1))  # Increasing amount with each attempt
-                
-                quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-                params = {
-                    "inputMint": sol_address,
-                    "outputMint": token_address,
-                    "amount": minimal_amount,
-                    "slippageBps": "5000"  # 50% slippage for better success
-                }
-                
-                quote_response = requests.get(quote_url, params=params, timeout=30)
-                if quote_response.status_code != 200:
-                    logging.error(f"Failed to get quote for account creation: {quote_response.status_code}")
-                    continue
-                    
-                quote_data = quote_response.json()
-                
-                # Add delay before next API call
-                time.sleep(3)
-                
-                swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-                payload = {
-                    "quoteResponse": quote_data,
-                    "userPublicKey": str(wallet.public_key),
-                    "wrapAndUnwrapSol": True,
-                    "dynamicComputeUnitLimit": True,
-                    "prioritizationFeeLamports": "auto"
-                }
-                
-                swap_response = requests.post(
-                    swap_url,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30
-                )
-                
-                if swap_response.status_code != 200:
-                    logging.error(f"Failed to prepare account creation swap: {swap_response.status_code}")
-                    continue
-                    
-                swap_data = swap_response.json()
-                serialized_tx = swap_data["swapTransaction"]
-                
-                # Add delay before transaction submission
-                time.sleep(2)
-                
-                response = wallet._rpc_call("sendTransaction", [
-                    serialized_tx,
-                    {
-                        "encoding": "base64",
-                        "skipPreflight": True,
-                        "maxRetries": 5,
-                        "preflightCommitment": "processed"
-                    }
+                # Check if account was created
+                check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                    str(wallet.public_key),
+                    {"mint": token_address},
+                    {"encoding": "jsonParsed"}
                 ])
                 
-                if "result" in response:
-                    signature = response["result"]
-                    logging.info(f"Account creation transaction submitted: {signature}")
+                if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                    logging.info(f"Token account successfully created for {token_address}")
+                    return True
+                else:
+                    logging.warning("Account creation transaction submitted but account not found")
+                    # Wait a bit longer and check again
+                    logging.info("Waiting another 10 seconds...")
+                    time.sleep(10)
                     
-                    # Wait longer with each attempt
-                    wait_time = 30 + (10 * attempt)
-                    logging.info(f"Waiting {wait_time} seconds for confirmation...")
-                    time.sleep(wait_time)
-                    
-                    # Check again if account was created
-                    check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                    final_check = wallet._rpc_call("getTokenAccountsByOwner", [
                         str(wallet.public_key),
                         {"mint": token_address},
                         {"encoding": "jsonParsed"}
                     ])
                     
-                    if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
-                        logging.info(f"Successfully created token account for {token_address}")
+                    if 'result' in final_check and 'value' in final_check['result'] and final_check['result']['value']:
+                        logging.info(f"Token account confirmed for {token_address}")
                         return True
-                    else:
-                        logging.error(f"Account creation transaction submitted but account not found")
-                        # Continue to next attempt
-                else:
-                    if "error" in response:
-                        error_message = response.get("error", {}).get("message", "Unknown error")
-                        logging.error(f"Account creation transaction error: {error_message}")
-                    # Continue to next attempt
             else:
-                # Last attempt and still no account
-                logging.error(f"Failed to create token account for {token_address} after {max_attempts} attempts")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error creating token account for {token_address}: {str(e)}")
-            logging.error(traceback.format_exc())
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Account creation error: {error_message}")
             
-            if attempt < max_attempts - 1:
-                wait_time = 5 * (attempt + 1)
-                logging.info(f"Waiting {wait_time}s before next attempt...")
-                time.sleep(wait_time)
-            else:
-                return False
+        except Exception as e:
+            logging.error(f"Error in account creation attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+        
+        # Wait before next attempt with increasing delay
+        wait_time = 5 * (attempt + 1)
+        logging.info(f"Waiting {wait_time}s before next attempt...")
+        time.sleep(wait_time)
     
+    logging.error(f"Failed to create token account for {token_address} after {max_attempts} attempts")
     return False
         
 def check_transaction_status(signature: str, max_attempts: int = 5) -> bool:
@@ -1421,62 +1429,53 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
     return True
 
-def force_buy_bonk():
-    try:
-        from solders.pubkey import Pubkey
-        mint_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-        logging.info("📈 Forcing BONK buy at startup...")
-        
-        # Get a quote
-        amount_lamports = 1000000  # 0.001 SOL
-        quote_data = jupiter_handler.get_quote(
-            input_mint=SOL_TOKEN_ADDRESS,
-            output_mint=mint_address,
-            amount=str(amount_lamports),
-            slippage_bps="500"
-        )
-        
-        if not quote_data:
-            logging.error("Failed to get quote for BONK")
-            return False
-            
-        # Prepare the swap transaction
-        swap_data = jupiter_handler.prepare_swap_transaction(
-            quote_data=quote_data,
-            user_public_key=str(wallet.public_key)
-        )
-        
-        if not swap_data or "swapTransaction" not in swap_data:
-            logging.error("Failed to prepare swap transaction for BONK")
-            return False
-            
-        # Skip deserialization - directly submit the transaction
-        serialized_tx = swap_data["swapTransaction"]
-        
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64", 
-                "skipPreflight": True,  # FIXED: changed from False to True
-                "maxRetries": 5,
-                "preflightCommitment": "confirmed"
-            }
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"✅ Successfully bought BONK! Signature: {signature}")
-            return True
-        else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"❌ BONK buy error: {error_message}")
-            return False
-            
-    except Exception as e:
-        logging.error(f"❌ Failed BONK force-buy: {e}")
-        logging.error(traceback.format_exc())
+def test_bonk_token():
+    """Test token account creation and buying for BONK."""
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    
+    logging.info("===== TESTING BONK TOKEN =====")
+    
+    # Test 1: Make sure account exists
+    logging.info("Test 1: Ensuring token account exists")
+    account_success = ensure_token_account_exists(bonk_address)
+    
+    if not account_success:
+        logging.error("❌ Failed to ensure token account exists")
         return False
+    
+    logging.info("✅ Token account exists or was created successfully")
+    
+    # Test 2: Try buying a small amount
+    logging.info("Test 2: Buying minimal amount of BONK")
+    buy_amount = 0.01  # 0.01 SOL
+    buy_success = buy_token(bonk_address, buy_amount)
+    
+    if not buy_success:
+        logging.error("❌ Failed to buy BONK")
+        return False
+    
+    logging.info("✅ Successfully bought BONK")
+    
+    # Test 3: Check balance
+    logging.info("Test 3: Checking token balance")
+    response = wallet._rpc_call("getTokenAccountsByOwner", [
+        str(wallet.public_key),
+        {"mint": bonk_address},
+        {"encoding": "jsonParsed"}
+    ])
+    
+    token_amount = 0
+    if 'result' in response and 'value' in response['result'] and response['result']['value']:
+        account = response['result']['value'][0]
+        if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+            parsed_data = account['account']['data']['parsed']
+            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+    
+    logging.info(f"BONK balance: {token_amount}")
+    
+    logging.info("===== BONK TESTING COMPLETE =====")
+    return token_amount > 0
 
 
 def force_buy_usdc():
@@ -1620,7 +1619,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
         
 def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with robust error handling."""
+    """Buy a token using Jupiter API with direct transaction submission."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1636,115 +1635,98 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
         try:
             logging.info(f"Buy attempt #{attempt+1} for {token_address}")
             
-            # Ensure token account exists - but don't abort if it fails
-            try:
-                ensure_token_account_result = ensure_token_account_exists(token_address)
-                logging.info(f"Token account check result: {ensure_token_account_result}")
-            except Exception as e:
-                logging.warning(f"Token account check failed but continuing: {str(e)}")
+            # 1. Ensure token account exists first
+            ensure_token_account_exists(token_address)
             
-            # 1. Get quote with high slippage tolerance
+            # 2. Get quote with high slippage tolerance for better success
             amount_lamports = int(amount_sol * 1000000000)
-            
-            # Add delay to avoid rate limits
-            sleep_time = 2 * (attempt + 1)  # Increase delay with each attempt
-            logging.info(f"Sleeping {sleep_time}s before quote request to avoid rate limits")
-            time.sleep(sleep_time)
             
             quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
             params = {
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "5000"  # 50% slippage - extremely permissive
+                "slippageBps": "2000"  # 20% slippage for better success
             }
             
-            quote_response = requests.get(quote_url, params=params, timeout=30)  # Increased timeout
+            logging.info(f"Getting quote...")
+            quote_response = requests.get(quote_url, params=params, timeout=15)
             
             if quote_response.status_code != 200:
-                logging.error(f"Quote failed with status {quote_response.status_code}: {quote_response.text}")
-                continue  # Try next attempt
+                logging.error(f"Quote failed: {quote_response.status_code} - {quote_response.text}")
+                continue
             
             quote_data = quote_response.json()
-            logging.info(f"Quote received successfully with keys: {list(quote_data.keys())}")
             
-            # 2. Prepare swap with correct parameters
+            # 3. Prepare swap transaction
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-            
-            # Add delay between requests
-            time.sleep(2)
-            
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "wrapAndUnwrapSol": True,  # Correct parameter name
-                "dynamicComputeUnitLimit": True,  # Allow dynamic limits
-                "prioritizationFeeLamports": "auto"  # Auto priority fees
+                "dynamicComputeUnitLimit": True,
+                "prioritizationFeeLamports": "auto"
             }
             
+            logging.info(f"Preparing swap transaction...")
             swap_response = requests.post(
-                swap_url,
+                swap_url, 
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=30  # Increased timeout
+                timeout=15
             )
             
             if swap_response.status_code != 200:
                 logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text}")
-                continue  # Try next attempt
+                continue
             
             swap_data = swap_response.json()
             
             if "swapTransaction" not in swap_data:
-                logging.error(f"Swap response missing transaction: {swap_data}")
-                continue  # Try next attempt
+                logging.error("Swap response missing transaction data")
+                continue
             
+            # 4. Submit transaction DIRECTLY without deserialization
             serialized_tx = swap_data["swapTransaction"]
             
-            # 3. Add delay before transaction submission
-            time.sleep(2)
-            
-            # 4. Submit transaction with optimal parameters
+            logging.info(f"Submitting transaction...")
             response = wallet._rpc_call("sendTransaction", [
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": True,  # Skip client validation
-                    "maxRetries": 5,
-                    "preflightCommitment": "processed"  # Faster confirmation level
+                    "skipPreflight": True,  # Skip preflight checks for better success
+                    "maxRetries": 3
                 }
             ])
             
-            if "result" not in response:
-                error_msg = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction submission error: {error_msg}")
-                continue  # Try next attempt
-            
-            signature = response["result"]
-            logging.info(f"Transaction submitted successfully: {signature}")
-            
-            # 5. Record transaction success regardless of confirmation
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            
-            # 6. Get initial price for monitoring
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
-                }
-            
-            logging.info(f"Token {token_address} purchase completed successfully!")
-            return True
-            
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted: {signature}")
+                
+                # Transaction was at least submitted successfully
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                
+                # Get initial price for monitoring
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                logging.info(f"Token purchase recorded successfully")
+                return True
+            else:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Transaction error: {error_message}")
+                
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
             
-            # Add increasing delay between attempts
             wait_time = 5 * (attempt + 1)
             logging.info(f"Waiting {wait_time}s before next attempt...")
             time.sleep(wait_time)
@@ -2908,22 +2890,12 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Try the simplest possible buy test first
-        logging.info("Testing simple buy functionality...")
-        bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-        
-        # Make sure token account exists
-        if ensure_token_account_exists(bonk_address):
-            logging.info("Token account exists or was created successfully!")
-            
-            # Try a simple buy
-            if simple_buy_token(bonk_address, 0.01):
-                logging.info("Simple buy test succeeded! Proceeding with trading loop...")
-                trading_loop()
-            else:
-                logging.error("Simple buy test failed. Please check logs for details.")
+        # First test with BONK to verify functionality
+        if test_bonk_token():
+            logging.info("✅ BONK token test successful! Starting trading loop...")
+            trading_loop()
         else:
-            logging.error("Failed to ensure token account exists. Cannot proceed with trading test.")
+            logging.error("❌ BONK token test failed. Please check logs and fix issues before running the bot.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
