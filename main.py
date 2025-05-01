@@ -407,42 +407,42 @@ def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Op
             timeout=10
         )
 
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Swap preparation response status: {response.status_code}")
-                if response.status_code == 200:
-                    try:
-                        logging.info(f"Swap response preview: {response.text[:200]}...")
-                    except Exception as e:
-                        logging.error(f"Error logging swap response preview: {str(e)}")
-
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Swap preparation response status: {response.status_code}")
             if response.status_code == 200:
                 try:
-                    swap_response = response.json()
+                    logging.info(f"Swap response preview: {response.text[:200]}...")
+                except Exception as e:
+                    logging.error(f"Error logging swap response preview: {str(e)}")
 
-                    # Debug log the response structure
+        if response.status_code == 200:
+            try:
+                swap_response = response.json()
+
+                # Debug log the response structure
+                if ULTRA_DIAGNOSTICS:
+                    logging.info(f"Swap response keys: {list(swap_response.keys())}")
+
+                # Check if the response contains the transaction
+                if "swapTransaction" in swap_response:
+                    logging.info("Swap transaction prepared successfully")
+                    return swap_response
+                else:
                     if ULTRA_DIAGNOSTICS:
-                        logging.info(f"Swap response keys: {list(swap_response.keys())}")
-
-                    # Check if the response contains the transaction
-                    if "swapTransaction" in swap_response:
-                        logging.info("Swap transaction prepared successfully")
-                        return swap_response
-                    else:
-                        if ULTRA_DIAGNOSTICS:
-                            logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
-                        logging.warning(f"Swap response does not contain swapTransaction key")
-                        return None
-
-                except json.JSONDecodeError:
-                    logging.error(f"Failed to parse swap response as JSON: {response.text[:200]}...")
+                        logging.warning(f"Swap response does not contain transaction: {json.dumps(swap_response)}")
+                    logging.warning(f"Swap response does not contain swapTransaction key")
                     return None
 
-            logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text[:200]}")
-            return None
-        except Exception as e:
-            logging.error(f"Error preparing swap transaction: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
+            except json.JSONDecodeError:
+                logging.error(f"Failed to parse swap response as JSON: {response.text[:200]}...")
+                return None
+
+        logging.warning(f"Failed to prepare swap transaction: {response.status_code} - {response.text[:200]}")
+        return None
+    except Exception as e:
+        logging.error(f"Error preparing swap transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
 
 def deserialize_transaction(self, transaction_data: Dict) -> Optional[Transaction | VersionedTransaction]:
         """Deserialize a transaction from Jupiter API."""
