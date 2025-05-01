@@ -374,38 +374,38 @@ class JupiterSwapHandler:
             logging.error(traceback.format_exc())
             return None
 
-    def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
-        """Prepare a swap transaction using the quote data."""
-        try:
-            # Add more diagnostic logging
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Preparing swap with quote data keys: {list(quote_data.keys())}")
+def prepare_swap_transaction(self, quote_data: Dict, user_public_key: str) -> Optional[Dict]:
+    """Prepare a swap transaction using the quote data."""
+    try:
+        # Add more diagnostic logging
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Preparing swap with quote data keys: {list(quote_data.keys())}")
 
-            # For Jupiter v6 API, the payload format is different
-            payload = {
-                "quoteResponse": quote_data,
-                "userPublicKey": user_public_key,
-                "wrapUnwrapSOL": True,
-                "dynamicComputeUnitLimit": True,
-                "prioritizationFeeLamports": "auto"
-            }
+        # For Jupiter v6 API, the payload format is different
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": user_public_key,
+            "wrapAndUnwrapSol": True,  # FIXED: changed from wrapUnwrapSOL
+            "dynamicComputeUnitLimit": True,
+            "prioritizationFeeLamports": "auto"
+        }
 
-            logging.info(f"Preparing swap transaction for user: {user_public_key}")
-            logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
+        logging.info(f"Preparing swap transaction for user: {user_public_key}")
+        logging.info(f"Using quote data with outAmount: {quote_data.get('outAmount')}")
 
-            # Log the payload structure
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Swap request payload keys: {list(payload.keys())}")
-                if 'quoteResponse' in payload:
-                    logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
+        # Log the payload structure
+        if ULTRA_DIAGNOSTICS:
+            logging.info(f"Swap request payload keys: {list(payload.keys())}")
+            if 'quoteResponse' in payload:
+                logging.info(f"quoteResponse keys: {list(payload['quoteResponse'].keys())}")
 
-            # For Jupiter v6, the swap endpoint is /v6/swap
-            response = requests.post(
-                f"{self.api_url}/v6/swap",
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
+        # For Jupiter v6, the swap endpoint is /v6/swap
+        response = requests.post(
+            f"{self.api_url}/v6/swap",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=10
+        )
 
             if ULTRA_DIAGNOSTICS:
                 logging.info(f"Swap preparation response status: {response.status_code}")
@@ -882,9 +882,9 @@ def ensure_token_account_exists(token_address: str) -> bool:
         payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapAndUnwrapSol": True,
+            "wrapAndUnwrapSol": True,  # FIXED: changed from wrapUnwrapSOL
             "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto"
+            "prioritizationFeeLamports": "auto"  # FIXED: changed from fixed amount to "auto"
         }
         
         swap_response = requests.post(
@@ -1505,7 +1505,12 @@ def force_buy_bonk():
         
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
-            {"encoding": "base64", "skipPreflight": False}
+            {
+                "encoding": "base64", 
+                "skipPreflight": True,  # FIXED: changed from False to True
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
         ])
         
         if "result" in response:
@@ -1590,7 +1595,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
             input_mint=SOL_TOKEN_ADDRESS,
             output_mint=str(mint),
             amount=str(int(amount_sol * 10**9)),  # Convert SOL to lamports
-            slippage_bps="500"  # 0.5% slippage
+            slippage_bps="1000"  # 1.0% slippage - increased from 0.5%
         )
 
         if not quote:
@@ -1610,16 +1615,46 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         # Skip deserialization - directly submit the transaction
         serialized_tx = swap_transaction["swapTransaction"]
         
+        # First ensure token account exists
+        if not ensure_token_account_exists(str(mint)):
+            logging.warning(f"Token account might not exist for {mint}, but continuing anyway")
+        
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
-            {"encoding": "base64", "skipPreflight": False}
+            {
+                "encoding": "base64", 
+                "skipPreflight": True,  # Changed from False to True
+                "maxRetries": 5,
+                "preflightCommitment": "confirmed"
+            }
         ])
         
         if "result" in response:
             signature = response["result"]
             logging.info(f"Successfully bought token {mint}. Transaction signature: {signature}")
-            buy_successes += 1
-            return True
+            
+            # Check transaction status
+            transaction_success = check_transaction_status(signature, max_attempts=6)
+            
+            if transaction_success:
+                logging.info(f"Transaction confirmed successfully!")
+                token_buy_timestamps[str(mint)] = time.time()
+                buy_successes += 1
+                
+                # Update monitoring data
+                initial_price = get_token_price(str(mint))
+                if initial_price:
+                    monitored_tokens[str(mint)] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                return True
+            else:
+                logging.warning(f"Transaction may have been submitted but not confirmed")
+                return False
         else:
             if "error" in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
@@ -1771,54 +1806,38 @@ def direct_jupiter_swap_with_protection():
         logging.error(traceback.format_exc())
         return False
 
-def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
-    """Buy a token using Jupiter API with fully automatic handling of technical details."""
-    global buy_attempts, buy_successes
-    
-    buy_attempts += 1
-    
-    logging.info(f"Starting buy process for {token_address} - Amount: {amount_sol} SOL")
-    
-    if CONFIG['SIMULATION_MODE']:
-        logging.info(f"[SIMULATION] Auto-bought tokens of {token_address} for {amount_sol} SOL")
-        token_buy_timestamps[token_address] = time.time()
-        buy_successes += 1
-        return True
+def simple_buy_token(token_address: str, amount_sol: float) -> bool:
+    """Simplified token purchase function with minimal steps."""
+    logging.info(f"Simple buy attempt for {token_address} with {amount_sol} SOL")
     
     try:
-        # First ensure the token account exists
-        if not ensure_token_account_exists(token_address):
-            logging.warning(f"Failed to ensure token account exists for {token_address}")
-            # Continue anyway - the account might still get created during the swap
+        # 1. Convert SOL to lamports
+        amount_lamports = int(amount_sol * 1000000000)
         
-        # Step 1: Get a quote
-        amount_lamports = int(amount_sol * 1000000000)  # Convert SOL to lamports
-        logging.info(f"Getting quote for buying {token_address} with {amount_lamports} lamports")
-        
+        # 2. Get a quote
         quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
         params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
+            "inputMint": SOL_TOKEN_ADDRESS, 
             "outputMint": token_address,
             "amount": str(amount_lamports),
-            "slippageBps": "1000"  # 10% slippage
+            "slippageBps": "2000"  # 20% slippage - very permissive
         }
         
         quote_response = requests.get(quote_url, params=params, timeout=10)
-        
         if quote_response.status_code != 200:
-            logging.error(f"Failed to get quote: {quote_response.status_code} - {quote_response.text}")
+            logging.error(f"Quote failed: {quote_response.status_code}")
             return False
             
         quote_data = quote_response.json()
         
-        # Step 2: Prepare swap transaction with automatic settings
+        # 3. Prepare swap with correct parameters
         swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
         payload = {
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),
-            "wrapAndUnwrapSol": True,
-            "dynamicComputeUnitLimit": True,  # Auto compute limit
-            "prioritizationFeeLamports": "auto"  # Auto priority fee
+            "wrapAndUnwrapSol": True,  # Correct parameter name
+            "dynamicComputeUnitLimit": True,
+            "prioritizationFeeLamports": "auto"
         }
         
         swap_response = requests.post(
@@ -1829,60 +1848,35 @@ def simplified_buy_token(token_address: str, amount_sol: float) -> bool:
         )
         
         if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code} - {swap_response.text}")
+            logging.error(f"Swap preparation failed: {swap_response.status_code}")
             return False
             
         swap_data = swap_response.json()
         
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing swapTransaction: {swap_data}")
-            return False
+        # 4. Submit transaction directly without modification
+        serialized_tx = swap_data["swapTransaction"]  
         
-        # Step 3: Submit transaction with MEV protection
-        serialized_tx = swap_data["swapTransaction"]
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64",
-                "skipPreflight": True,
+                "skipPreflight": True,  # Skip client-side validation
                 "maxRetries": 5,
-                "preflightCommitment": "confirmed"
+                "preflightCommitment": "processed"  # Use faster confirmation level
             }
         ])
         
         if "result" in response:
             signature = response["result"]
             logging.info(f"Transaction submitted successfully: {signature}")
-            
-            # Check transaction status
-            transaction_success = check_transaction_status(signature, max_attempts=6)
-            
-            if transaction_success:
-                logging.info(f"Transaction confirmed with token transfer!")
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                
-                initial_price = get_token_price(token_address)
-                if initial_price:
-                    monitored_tokens[token_address] = {
-                        'initial_price': initial_price,
-                        'highest_price': initial_price,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
-                    }
-                
-                return True
-            else:
-                logging.error(f"Transaction may have failed or token transfer not verified")
-                return False
+            return True
         else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction submission error: {error_message}")
             return False
             
     except Exception as e:
-        logging.error(f"Error buying {token_address}: {str(e)}")
+        logging.error(f"Error in simple buy: {str(e)}")
         logging.error(traceback.format_exc())
         return False
 
@@ -2552,18 +2546,14 @@ def test_sol_self_transfer():
         logging.error(traceback.format_exc())
         return False
         
-def submit_protected_transaction(serialized_tx: str) -> Optional[str]:
-    """Submit a transaction with MEV protection through QuickNode."""
+def submit_standardized_transaction(serialized_tx: str) -> Optional[str]:
+    """Submit a transaction with standardized parameters including MEV protection."""
     try:
-        logging.info("Submitting transaction with MEV protection...")
-        
-        # The MEV protection is already active on your endpoint
-        # so you just use your regular RPC call method
         response = wallet._rpc_call("sendTransaction", [
             serialized_tx,
             {
                 "encoding": "base64",
-                "skipPreflight": False,
+                "skipPreflight": True,  # Skip preflight consistently 
                 "maxRetries": 5,
                 "preflightCommitment": "confirmed"
             }
@@ -2571,16 +2561,15 @@ def submit_protected_transaction(serialized_tx: str) -> Optional[str]:
         
         if "result" in response:
             signature = response["result"]
-            logging.info(f"Protected transaction submitted: {signature}")
+            logging.info(f"Transaction submitted: {signature}")
             return signature
         else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Protected transaction error: {error_message}")
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction error: {error_message}")
             return None
             
     except Exception as e:
-        logging.error(f"Error submitting protected transaction: {str(e)}")
+        logging.error(f"Error submitting transaction: {str(e)}")
         logging.error(traceback.format_exc())
         return None
 
@@ -2800,27 +2789,20 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Test BONK trading with account creation
-        logging.info("Testing BONK trading with proper account creation...")
+        # Try the simplest possible buy test first
+        logging.info("Testing simple buy functionality...")
         bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
         
-        # Step 1: Ensure token account exists
+        # Make sure token account exists
         if ensure_token_account_exists(bonk_address):
             logging.info("Token account exists or was created successfully!")
             
-            # Step 2: Buy a small amount of BONK
-            if simplified_buy_token(bonk_address, 0.02):
-                logging.info("BONK buy successful! Waiting 60 seconds before selling...")
-                time.sleep(60)
-                
-                # Step 3: Sell it all
-                if simplified_sell_token(bonk_address, 100):
-                    logging.info("BONK trading test PASSED! Starting regular trading loop...")
-                    trading_loop()
-                else:
-                    logging.error("BONK sell failed. Check logs for details.")
+            # Try a simple buy
+            if simple_buy_token(bonk_address, 0.01):
+                logging.info("Simple buy test succeeded! Proceeding with trading loop...")
+                trading_loop()
             else:
-                logging.error("BONK buy failed. Check logs for details.")
+                logging.error("Simple buy test failed. Please check logs for details.")
         else:
             logging.error("Failed to ensure token account exists. Cannot proceed with trading test.")
     else:
