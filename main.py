@@ -1619,7 +1619,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
         
 def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with improved verification."""
+    """Buy a token using Jupiter API with fixed parameters."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1655,15 +1655,16 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
             
             quote_data = quote_response.json()
             
-            # 2. Prepare swap transaction with EXPLICIT priority fees
+            # 2. Prepare swap transaction with ONLY prioritization fees (not both)
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "wrapAndUnwrapSol": True,
                 "dynamicComputeUnitLimit": True,
-                "computeUnitPriceMicroLamports": 10000,  # Explicit compute price
-                "prioritizationFeeLamports": 10000  # Explicit priority fee (instead of "auto")
+                # Use ONLY ONE of these, not both:
+                "prioritizationFeeLamports": "10000"  # Use a string for priority fee
+                # Do NOT include computeUnitPriceMicroLamports
             }
             
             logging.info(f"Preparing swap transaction...")
@@ -1706,11 +1707,9 @@ def buy_token(token_address: str, amount_sol: float, max_attempts: int = 3) -> b
             signature = response["result"]
             logging.info(f"Transaction submitted: {signature}")
             
-            # 4. VERIFY TRANSACTION SUCCESS - THIS IS CRITICAL
+            # 4. VERIFY TRANSACTION SUCCESS
             logging.info(f"Waiting for transaction confirmation...")
-            
-            # Wait longer - 30 seconds
-            time.sleep(30)
+            time.sleep(30)  # Wait longer for confirmation
             
             # Check transaction status
             status_response = wallet._rpc_call("getTransaction", [
