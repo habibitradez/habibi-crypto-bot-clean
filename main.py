@@ -2827,7 +2827,7 @@ def test_token_account_creation():
             swap_payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "wrapUnwrapSOL": True,
+                "wrapAndUnwrapSol": True,
                 # These settings might help with reliability
                 "prioritizationFeeLamports": 10000,  # Add a priority fee
                 "dynamicComputeUnitLimit": True      # Let Jupiter calculate CU
