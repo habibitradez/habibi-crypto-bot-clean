@@ -766,112 +766,133 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
     
     return False
     
-def ensure_token_account_exists(token_address: str) -> bool:
-    """Ensure a token account exists for the given token mint."""
+def ensure_token_account_exists(token_address: str, max_attempts: int = 3) -> bool:
+    """Ensure a token account exists with better retry handling."""
     logging.info(f"Checking if token account exists for {token_address}...")
     
-    try:
-        # Check if token account already exists
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        if 'result' in response and 'value' in response['result'] and response['result']['value']:
-            logging.info(f"Token account already exists for {token_address}")
-            return True
-            
-        # We need to create a token account using Jupiter API
-        logging.info(f"Token account doesn't exist for {token_address}. Creating one...")
-        
-        # Make a minimal buy to create the account
-        # This approach uses Jupiter which will handle ATA creation
-        sol_address = "So11111111111111111111111111111111111111112"
-        minimal_amount = "1000000"  # 0.001 SOL - just enough to create account
-        
-        # Get a minimal quote 
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        params = {
-            "inputMint": sol_address,
-            "outputMint": token_address,
-            "amount": minimal_amount,
-            "slippageBps": "1000"
-        }
-        
-        quote_response = requests.get(quote_url, params=params, timeout=10)
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get quote: {quote_response.status_code}")
-            return False
-            
-        quote_data = quote_response.json()
-        
-        # Prepare transaction that will create token account
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        payload = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.public_key),
-            "wrapAndUnwrapSol": True,  # FIXED: changed from wrapUnwrapSOL
-            "dynamicComputeUnitLimit": True,
-            "prioritizationFeeLamports": "auto"  # FIXED: changed from fixed amount to "auto"
-        }
-        
-        swap_response = requests.post(
-            swap_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10
-        )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
-            return False
-            
-        swap_data = swap_response.json()
-        
-        # Submit transaction
-        serialized_tx = swap_data["swapTransaction"]
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "confirmed"
-            }
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Account creation transaction submitted: {signature}")
-            
-            # Wait for confirmation
-            logging.info("Waiting 30 seconds for confirmation...")
-            time.sleep(30)
-            
-            # Check if account was created
-            check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+    # First check if it already exists
+    for attempt in range(max_attempts):
+        try:
+            response = wallet._rpc_call("getTokenAccountsByOwner", [
                 str(wallet.public_key),
                 {"mint": token_address},
                 {"encoding": "jsonParsed"}
             ])
             
-            if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
-                logging.info(f"Successfully created token account for {token_address}")
+            if 'result' in response and 'value' in response['result'] and response['result']['value']:
+                logging.info(f"Token account already exists for {token_address}")
                 return True
+                
+            # If we're not on the last attempt, try to create the account
+            if attempt < max_attempts - 1:
+                logging.info(f"Attempt {attempt+1}/{max_attempts}: Token account doesn't exist for {token_address}. Creating one...")
+                
+                # Add increasing delay between attempts
+                time.sleep(5 * (attempt + 1))
+                
+                # Make a minimal buy to create the account
+                sol_address = "So11111111111111111111111111111111111111112"
+                # Increase amount for each attempt to improve chances
+                minimal_amount = str(2000000 * (attempt + 1))  # Increasing amount with each attempt
+                
+                quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+                params = {
+                    "inputMint": sol_address,
+                    "outputMint": token_address,
+                    "amount": minimal_amount,
+                    "slippageBps": "5000"  # 50% slippage for better success
+                }
+                
+                quote_response = requests.get(quote_url, params=params, timeout=30)
+                if quote_response.status_code != 200:
+                    logging.error(f"Failed to get quote for account creation: {quote_response.status_code}")
+                    continue
+                    
+                quote_data = quote_response.json()
+                
+                # Add delay before next API call
+                time.sleep(3)
+                
+                swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+                payload = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": str(wallet.public_key),
+                    "wrapAndUnwrapSol": True,
+                    "dynamicComputeUnitLimit": True,
+                    "prioritizationFeeLamports": "auto"
+                }
+                
+                swap_response = requests.post(
+                    swap_url,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                
+                if swap_response.status_code != 200:
+                    logging.error(f"Failed to prepare account creation swap: {swap_response.status_code}")
+                    continue
+                    
+                swap_data = swap_response.json()
+                serialized_tx = swap_data["swapTransaction"]
+                
+                # Add delay before transaction submission
+                time.sleep(2)
+                
+                response = wallet._rpc_call("sendTransaction", [
+                    serialized_tx,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": True,
+                        "maxRetries": 5,
+                        "preflightCommitment": "processed"
+                    }
+                ])
+                
+                if "result" in response:
+                    signature = response["result"]
+                    logging.info(f"Account creation transaction submitted: {signature}")
+                    
+                    # Wait longer with each attempt
+                    wait_time = 30 + (10 * attempt)
+                    logging.info(f"Waiting {wait_time} seconds for confirmation...")
+                    time.sleep(wait_time)
+                    
+                    # Check again if account was created
+                    check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                        str(wallet.public_key),
+                        {"mint": token_address},
+                        {"encoding": "jsonParsed"}
+                    ])
+                    
+                    if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                        logging.info(f"Successfully created token account for {token_address}")
+                        return True
+                    else:
+                        logging.error(f"Account creation transaction submitted but account not found")
+                        # Continue to next attempt
+                else:
+                    if "error" in response:
+                        error_message = response.get("error", {}).get("message", "Unknown error")
+                        logging.error(f"Account creation transaction error: {error_message}")
+                    # Continue to next attempt
             else:
-                logging.error(f"Failed to create token account for {token_address}")
+                # Last attempt and still no account
+                logging.error(f"Failed to create token account for {token_address} after {max_attempts} attempts")
                 return False
-        else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
-            return False
+                
+        except Exception as e:
+            logging.error(f"Error creating token account for {token_address}: {str(e)}")
+            logging.error(traceback.format_exc())
             
-    except Exception as e:
-        logging.error(f"Error ensuring token account exists: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
+            if attempt < max_attempts - 1:
+                wait_time = 5 * (attempt + 1)
+                logging.info(f"Waiting {wait_time}s before next attempt...")
+                time.sleep(wait_time)
+            else:
+                return False
+    
+    return False
         
 def check_transaction_status(signature: str, max_attempts: int = 5) -> bool:
     """Check the status of a transaction by its signature."""
