@@ -2536,8 +2536,10 @@ def test_basic_sol_transfer():
     logging.info("===== TESTING BASIC SOL TRANSFER =====")
     
     try:
+        from solders.pubkey import Pubkey
         from solders.transaction import Transaction
         from solders.system_program import transfer, TransferParams
+        from solders.message import Message
         
         # Self-transfer (sending to our own wallet)
         to_pubkey = wallet.public_key
@@ -2560,11 +2562,18 @@ def test_basic_sol_transfer():
             lamports=amount
         ))
         
-        # Create and sign transaction
-        tx = Transaction()
-        tx.add(transfer_ix)
-        tx.recent_blockhash = recent_blockhash
-        tx.sign([wallet.keypair])
+        # Create message first (required for new Transaction constructor)
+        message = Message.new_with_blockhash(
+            [transfer_ix],
+            wallet.public_key,
+            recent_blockhash
+        )
+        
+        # Create transaction with the required parameters
+        tx = Transaction.new_from_message(
+            message=message,
+            signers=[wallet.keypair]
+        )
         
         # Submit transaction
         logging.info("Submitting SOL transfer transaction...")
@@ -2602,7 +2611,7 @@ def test_basic_sol_transfer():
         logging.error(f"Error testing SOL transfer: {str(e)}")
         logging.error(traceback.format_exc())
         return False
-
+        
 def force_sell_all_positions():
     logging.info("⚠️ [force_sell_all_positions] Not yet implemented — skipping for now.")
 
