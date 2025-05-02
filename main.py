@@ -218,6 +218,53 @@ class SolanaWallet:
             error_text = f"RPC call failed with status {response.status_code}: {response.text}"
             logging.error(error_text)
             raise Exception(error_text)
+
+def test_rpc_connection():
+    """Test basic RPC connection without any transactions."""
+    logging.info("===== TESTING RPC CONNECTION ONLY =====")
+    
+    try:
+        # Test both RPC endpoints
+        endpoints = [
+            "https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbbdaa8584d108643/",
+            "https://solitary-sleek-resonance.solana-mainnet.quiknode.pro/3a8b33e07654cf62325d8917550742203830c518/"
+        ]
+        
+        for i, endpoint in enumerate(endpoints):
+            logging.info(f"Testing RPC endpoint #{i+1}: {endpoint}")
+            
+            try:
+                # Simple getHealth call
+                response = requests.post(
+                    endpoint,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
+                    headers={"Content-Type": "application/json"},
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    result = response.json()
+                    logging.info(f"RPC endpoint #{i+1} response: {result}")
+                    
+                    if "result" in result:
+                        logging.info(f"✅ RPC endpoint #{i+1} is working!")
+                    else:
+                        logging.error(f"❌ RPC endpoint #{i+1} returned unexpected format: {result}")
+                else:
+                    logging.error(f"❌ RPC endpoint #{i+1} failed with status {response.status_code}")
+            
+            except Exception as e:
+                logging.error(f"❌ Error testing RPC endpoint #{i+1}: {str(e)}")
+        
+        # Also test wallet address (just print it)
+        logging.info(f"Wallet public key: {wallet.public_key}")
+        
+        return True
+            
+    except Exception as e:
+        logging.error(f"Error in RPC connection test: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
     
     def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
         """Sign and submit a transaction to the Solana blockchain."""
@@ -3002,20 +3049,25 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Skip directly to USDC swap test
-        if test_minimal_sol_transfer():
-            logging.info("✅ Basic test passed!")
+        # Test RPC connection first
+        if test_rpc_connection():
+            logging.info("RPC connection test passed! Proceeding to USDC swap test.")
             
-            # Now proceed with original plan
-            # Try with a larger amount
-            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-            if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
-                logging.info("✅ BONK purchase succeeded!")
-                trading_loop()
+            # Continue with USDC swap test
+            if test_basic_swap():
+                logging.info("USDC swap test passed! Proceeding to BONK purchase.")
+                
+                # Try with a larger amount
+                bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+                if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
+                    logging.info("✅ BONK purchase succeeded!")
+                    trading_loop()
+                else:
+                    logging.error("❌ BONK purchase failed, even after basic tests passed")
             else:
-                logging.error("❌ BONK purchase failed, even after basic tests passed")
+                logging.error("❌ USDC swap test failed. Please check wallet and RPC endpoint.")
         else:
-            logging.error("❌ Basic test failed. Check wallet and RPC endpoint configuration.")
+            logging.error("❌ RPC connection test failed. Please check RPC endpoint configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
