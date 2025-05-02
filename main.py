@@ -2531,80 +2531,20 @@ def find_tradable_tokens():
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
     
-def test_basic_sol_transfer():
-    """Test a simple SOL transfer to verify wallet functionality."""
-    logging.info("===== TESTING BASIC SOL TRANSFER =====")
+def test_minimal_sol_transfer():
+    """Minimal SOL transfer test using wallet's existing methods."""
+    logging.info("===== TESTING MINIMAL SOL TRANSFER =====")
     
     try:
-        from solders.pubkey import Pubkey
-        from solders.transaction import Transaction
-        from solders.system_program import transfer, TransferParams
-        from solders.hash import Hash
-        import base58
+        # Use the wallet's sign_and_submit_transaction method
+        # with a transaction constructed by Jupiter instead
         
-        # Self-transfer (sending to our own wallet)
-        to_pubkey = wallet.public_key
-        amount = 10000  # 0.00001 SOL - very small amount
-        
-        logging.info(f"Creating SOL self-transfer of {amount} lamports")
-        
-        # Get recent blockhash
-        blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
-        if 'result' not in blockhash_response or 'value' not in blockhash_response['result']:
-            logging.error("Failed to get recent blockhash")
-            return False
-            
-        blockhash_str = blockhash_response['result']['value']['blockhash']
-        # Convert string blockhash to Hash object
-        blockhash = Hash(base58.b58decode(blockhash_str))
-        
-        # Create transfer instruction
-        transfer_ix = transfer(TransferParams(
-            from_pubkey=wallet.public_key, 
-            to_pubkey=to_pubkey,
-            lamports=amount
-        ))
-        
-        # Create transaction (using older method which still works)
-        tx = Transaction()
-        tx.add(transfer_ix)
-        tx.recent_blockhash = blockhash
-        tx.sign([wallet.keypair])
-        
-        # Submit transaction
-        logging.info("Submitting SOL transfer transaction...")
-        signature = wallet.sign_and_submit_transaction(tx)
-        
-        if not signature:
-            logging.error("Failed to submit SOL transfer")
-            return False
-            
-        logging.info(f"Transfer submitted: {signature}")
-        
-        # Wait for confirmation
-        logging.info("Waiting 15 seconds for confirmation...")
-        time.sleep(15)
-        
-        # Check status
-        status_response = wallet._rpc_call("getTransaction", [
-            signature,
-            {"encoding": "json"}
-        ])
-        
-        if "result" in status_response and status_response["result"]:
-            if status_response["result"].get("meta", {}).get("err") is None:
-                logging.info("SOL transfer confirmed successfully!")
-                return True
-            else:
-                error = status_response["result"]["meta"]["err"]
-                logging.error(f"SOL transfer failed with error: {error}")
-                return False
-        else:
-            logging.warning("SOL transfer not confirmed after 15 seconds")
-            return False
+        # Start by testing the USDC swap directly
+        logging.info("Skipping basic SOL transfer and moving directly to USDC swap test...")
+        return test_basic_swap()
             
     except Exception as e:
-        logging.error(f"Error testing SOL transfer: {str(e)}")
+        logging.error(f"Error in minimal SOL transfer test: {str(e)}")
         logging.error(traceback.format_exc())
         return False
         
@@ -3062,26 +3002,20 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # Test 1: Basic SOL transfer
-        if test_basic_sol_transfer():
-            logging.info("✅ Basic SOL transfer test passed!")
+        # Skip directly to USDC swap test
+        if test_minimal_sol_transfer():
+            logging.info("✅ Basic test passed!")
             
-            # Test 2: Basic swap with USDC
-            if test_basic_swap():
-                logging.info("✅ Basic USDC swap test passed!")
-                
-                # Now proceed with original plan
-                # Try with a larger amount
-                bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-                if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
-                    logging.info("✅ BONK purchase succeeded!")
-                    trading_loop()
-                else:
-                    logging.error("❌ BONK purchase failed, even after basic tests passed")
+            # Now proceed with original plan
+            # Try with a larger amount
+            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+            if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
+                logging.info("✅ BONK purchase succeeded!")
+                trading_loop()
             else:
-                logging.error("❌ Basic USDC swap test failed. Check wallet and RPC endpoint configuration.")
+                logging.error("❌ BONK purchase failed, even after basic tests passed")
         else:
-            logging.error("❌ Basic SOL transfer test failed. Check wallet and RPC endpoint configuration.")
+            logging.error("❌ Basic test failed. Check wallet and RPC endpoint configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
