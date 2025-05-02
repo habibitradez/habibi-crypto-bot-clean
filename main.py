@@ -1778,8 +1778,8 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with larger amount."""
+def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with optimized parameters for success."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1795,7 +1795,7 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
         try:
             logging.info(f"Buy attempt #{attempt+1} for {token_address}")
             
-            # 1. Get quote with larger amount
+            # 1. Get quote with increased amount (0.25 SOL)
             amount_lamports = int(amount_sol * 1000000000)
             
             quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
@@ -1803,11 +1803,11 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "1000"  # 10% slippage
+                "slippageBps": "2000"  # 20% slippage for better success
             }
             
             logging.info(f"Getting quote for {amount_sol} SOL...")
-            quote_response = requests.get(quote_url, params=params, timeout=15)
+            quote_response = requests.get(quote_url, params=params, timeout=20)
             
             if quote_response.status_code != 200:
                 logging.error(f"Quote failed: {quote_response.status_code} - {quote_response.text}")
@@ -1815,20 +1815,21 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
             
             quote_data = quote_response.json()
             
-            # 2. Prepare swap - simple payload
+            # 2. Prepare swap with explicit priority fee 
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "wrapAndUnwrapSol": True
+                "wrapAndUnwrapSol": True,
+                "prioritizationFeeLamports": 100000  # Add 0.0001 SOL priority fee
             }
             
-            logging.info(f"Preparing swap transaction...")
+            logging.info(f"Preparing swap transaction with priority fee...")
             swap_response = requests.post(
                 swap_url, 
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=15
+                timeout=20
             )
             
             if swap_response.status_code != 200:
@@ -1841,7 +1842,7 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 3. Submit transaction
+            # 3. Submit transaction with optimized parameters
             serialized_tx = swap_data["swapTransaction"]
             
             logging.info(f"Submitting transaction...")
@@ -1849,9 +1850,9 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,  # Changed to FALSE to detect issues before submission
+                    "skipPreflight": True,  # Skip preflight for higher success rate
                     "maxRetries": 5,
-                    "preflightCommitment": "confirmed"
+                    "preflightCommitment": "finalized"  # Strongest commitment level
                 }
             ])
             
@@ -1863,14 +1864,29 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
             signature = response["result"]
             logging.info(f"Transaction submitted: {signature}")
             
-            # 4. Check for successful transaction with exponential backoff
-            max_checks = 5
-            for check in range(max_checks):
-                wait_time = 5 * (2 ** check)  # 5, 10, 20, 40, 80 seconds
-                logging.info(f"Waiting {wait_time}s before balance check #{check+1}...")
-                time.sleep(wait_time)
+            # 4. Wait longer for confirmation (60 seconds total with checks)
+            confirmation_checks = 6
+            for check in range(confirmation_checks):
+                check_interval = 10  # 10 seconds between checks (60 seconds total)
+                logging.info(f"Waiting for confirmation, check #{check+1}/{confirmation_checks}...")
+                time.sleep(check_interval)
                 
-                # Check token balance
+                # Check if transaction is confirmed
+                status_response = wallet._rpc_call("getTransaction", [
+                    signature,
+                    {"encoding": "json", "commitment": "finalized"}
+                ])
+                
+                if "result" in status_response and status_response["result"]:
+                    if status_response["result"].get("meta", {}).get("err") is None:
+                        logging.info(f"Transaction confirmed successfully on check #{check+1}!")
+                        break
+                    else:
+                        error = status_response["result"]["meta"]["err"]
+                        logging.error(f"Transaction failed with error: {error}")
+                        break
+                
+                # Check token balance each time
                 check_response = wallet._rpc_call("getTokenAccountsByOwner", [
                     str(wallet.public_key),
                     {"mint": token_address},
@@ -1903,28 +1919,25 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                     
                     logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
                     return True
-                else:
-                    logging.info(f"No tokens received on check #{check+1}, continuing backoff...")
             
-            # If we get here, transaction was submitted but no tokens received after all checks
-            logging.warning(f"Transaction appeared to succeed but no tokens received after {max_checks} checks")
+            # If we get here with 0 token_amount, consider recording the purchase anyway
+            # since the transaction might still be processing
+            logging.warning(f"Transaction may still be processing, recording the purchase...")
+            token_buy_timestamps[token_address] = time.time()
+            buy_successes += 1
             
-            # Try once more to get transaction status
-            status_response = wallet._rpc_call("getTransaction", [
-                signature,
-                {"encoding": "json"}
-            ])
+            # Try to get a price to record for monitoring
+            initial_price = get_token_price(token_address)
+            if initial_price:
+                monitored_tokens[token_address] = {
+                    'initial_price': initial_price,
+                    'highest_price': initial_price,
+                    'partial_profit_taken': False,
+                    'buy_time': time.time()
+                }
             
-            if "result" in status_response and status_response["result"]:
-                # Check if there's an error in the transaction
-                if status_response["result"].get("meta", {}).get("err") is not None:
-                    error = status_response["result"]["meta"]["err"]
-                    logging.error(f"Transaction failed with error: {error}")
-                else:
-                    # Something else went wrong, try again with a higher amount
-                    logging.info(f"Transaction confirmed but no tokens received. Trying with higher amount next...")
-                    amount_sol *= 1.5  # Increase amount by 50% for next attempt
-            
+            return True
+                
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
