@@ -266,52 +266,90 @@ def test_rpc_connection():
         logging.error(traceback.format_exc())
         return False
     
-    def sign_and_submit_transaction(self, transaction: Transaction | VersionedTransaction) -> Optional[str]:
-        """Sign and submit a transaction to the Solana blockchain."""
-        try:
-            logging.info("Signing and submitting transaction...")
+def sign_and_submit_transaction(self, transaction):
+    """Sign and submit a transaction with enhanced logging."""
+    try:
+        logging.info("Signing and submitting transaction with enhanced logging...")
+        
+        # Serialize the transaction
+        if isinstance(transaction, Transaction) or "serialize" in dir(transaction):
+            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            logging.info(f"Serialized transaction successfully (first 50 chars): {serialized_tx[:50]}...")
+        elif "to_bytes" in dir(transaction):
+            serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+            logging.info(f"Serialized transaction using to_bytes (first 50 chars): {serialized_tx[:50]}...")
+        elif isinstance(serialized_tx, str) and serialized_tx.startswith("A"):
+            # Transaction was already serialized
+            logging.info(f"Transaction was already serialized (first 50 chars): {serialized_tx[:50]}...")
+        else:
+            logging.error(f"Unknown transaction type: {type(transaction).__name__}")
+            return None
+        
+        # Log the RPC endpoint being used
+        logging.info(f"Using RPC endpoint: {self.rpc_url}")
+        
+        # Prepare submission parameters
+        submit_params = {
+            "encoding": "base64",
+            "skipPreflight": False,  # Set to false to get better error checking
+            "maxRetries": 3,
+            "preflightCommitment": "confirmed"
+        }
+        logging.info(f"Submission parameters: {json.dumps(submit_params)}")
+        
+        # Submit the transaction with detailed logging
+        logging.info("Sending RPC request to sendTransaction method...")
+        start_time = time.time()
+        
+        response = self._rpc_call("sendTransaction", [
+            serialized_tx,
+            submit_params
+        ])
+        
+        # Log response time
+        elapsed = time.time() - start_time
+        logging.info(f"RPC response received in {elapsed:.2f} seconds")
+        
+        # Log complete response for debugging
+        logging.info(f"Complete RPC response: {json.dumps(response, indent=2)}")
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted successfully. Signature: {signature}")
             
-            # Check the type of the transaction object
-            transaction_type = type(transaction).__name__
-            logging.info(f"Transaction type: {transaction_type}")  # Log the type
-            
-            # Serialize and submit transaction
-            logging.info("Serializing and submitting transaction...")
-            if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
-                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-            elif isinstance(transaction, Transaction):
-                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-            else:
-                logging.error(f"Unexpected transaction type: {transaction_type}")
-                return None  # Or raise an exception
-            
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
-            
-            response = self._rpc_call("sendTransaction", [
-                serialized_tx,
-                {"encoding": "base64", "skipPreflight": False}
-            ])
-            
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
-            
-            if "result" in response:
-                signature = response["result"]
-                logging.info(f"Transaction submitted successfully: {signature}")
-                return signature
-            else:
-                if "error" in response:
-                    error_message = response.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
-                else:
-                    logging.error(f"Failed to submit transaction - unexpected response format: {response}")
+            # IMPORTANT: Verify signature is not all 1's
+            if signature == "1" * len(signature):
+                logging.error("INVALID SIGNATURE: All 1's detected - this is not a valid signature")
                 return None
                 
-        except Exception as e:
-            logging.error(f"Error signing and submitting transaction: {str(e)}")
-            logging.error(traceback.format_exc())
+            # Verify the transaction exists on-chain
+            logging.info("Verifying transaction on-chain...")
+            verify_response = self._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            logging.info(f"Verification response: {json.dumps(verify_response, indent=2)}")
+            
+            if "result" in verify_response and verify_response["result"]:
+                logging.info("Transaction found on-chain!")
+            else:
+                logging.warning("Transaction not found on-chain yet - may be pending")
+            
+            return signature
+        else:
+            if "error" in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                error_code = response.get("error", {}).get("code", "Unknown code")
+                logging.error(f"Transaction error: {error_message} (Code: {error_code})")
+            else:
+                logging.error(f"Failed to submit transaction - unexpected response format")
             return None
+                
+    except Exception as e:
+        logging.error(f"Error signing and submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
