@@ -265,7 +265,88 @@ def test_rpc_connection():
         logging.error(f"Error in RPC connection test: {str(e)}")
         logging.error(traceback.format_exc())
         return False
+
+def test_rpc_endpoints():
+    """Test multiple RPC endpoints to find the most reliable one."""
+    endpoints = [
+        CONFIG['QUICKNODE_RPC_URL_1'],
+        CONFIG['QUICKNODE_RPC_URL_2'],
+        CONFIG['SOLANA_RPC_URL'],
+        CONFIG['SOLANA_RPC_URL_BACKUP']
+    ]
     
+    results = []
+    
+    for i, endpoint in enumerate(endpoints):
+        endpoint_name = f"Endpoint #{i+1}"
+        if i == 0:
+            endpoint_name = "QuickNode Primary"
+        elif i == 1:
+            endpoint_name = "QuickNode Secondary"
+        elif i == 2:
+            endpoint_name = "Solana Public"
+        elif i == 3:
+            endpoint_name = "Serum Public"
+            
+        logging.info(f"Testing {endpoint_name}: {endpoint}")
+        
+        try:
+            # Test getHealth
+            start_time = time.time()
+            response = requests.post(
+                endpoint,
+                json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
+                headers={"Content-Type": "application/json"},
+                timeout=5
+            )
+            elapsed = time.time() - start_time
+            
+            if response.status_code == 200:
+                result = response.json()
+                if "result" in result:
+                    logging.info(f"✅ {endpoint_name} is working! Response time: {elapsed:.2f}s")
+                    results.append({
+                        "name": endpoint_name,
+                        "url": endpoint,
+                        "status": "working",
+                        "response_time": elapsed
+                    })
+                else:
+                    logging.warning(f"⚠️ {endpoint_name} returned unexpected format: {result}")
+                    results.append({
+                        "name": endpoint_name,
+                        "url": endpoint,
+                        "status": "unexpected_format",
+                        "response_time": elapsed
+                    })
+            else:
+                logging.error(f"❌ {endpoint_name} failed with status {response.status_code}")
+                results.append({
+                    "name": endpoint_name,
+                    "url": endpoint,
+                    "status": "failed",
+                    "response_time": elapsed,
+                    "status_code": response.status_code
+                })
+        except Exception as e:
+            logging.error(f"❌ Error testing {endpoint_name}: {str(e)}")
+            results.append({
+                "name": endpoint_name,
+                "url": endpoint,
+                "status": "error",
+                "error": str(e)
+            })
+    
+    # Find best endpoint based on response time
+    working_endpoints = [r for r in results if r["status"] == "working"]
+    if working_endpoints:
+        best_endpoint = min(working_endpoints, key=lambda x: x["response_time"])
+        logging.info(f"Best endpoint is {best_endpoint['name']} with response time {best_endpoint['response_time']:.2f}s")
+        return best_endpoint["url"]
+    else:
+        logging.error("No working endpoints found!")
+        return None
+
 def sign_and_submit_transaction(self, transaction):
     """Sign and submit a transaction with enhanced logging."""
     try:
@@ -696,6 +777,14 @@ def initialize():
     global wallet, jupiter_handler
     
     logging.info(f"Starting bot initialization...")
+    
+    # Add additional logging for critical configuration values
+    logging.info(f"SOLANA_RPC_URL: {CONFIG['SOLANA_RPC_URL']}")
+    logging.info(f"WALLET_ADDRESS: {CONFIG['WALLET_ADDRESS']}")
+    
+    # Mask most of the private key for security
+    masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
+    logging.info(f"WALLET_PRIVATE_KEY: {masked_key}")
     
     if CONFIG['SIMULATION_MODE']:
         logging.info("Running in SIMULATION mode")
