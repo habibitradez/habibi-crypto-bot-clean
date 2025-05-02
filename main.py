@@ -1429,6 +1429,112 @@ def test_buy_flow(token_address="DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"):
     logging.info("====== BUY FLOW TEST COMPLETED SUCCESSFULLY ======")
     return True
 
+def test_basic_swap():
+    """Test a basic swap using USDC, a well-established token."""
+    logging.info("===== TESTING BASIC SWAP WITH USDC =====")
+    
+    # USDC token address
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    
+    try:
+        # 1. Get quote for a small USDC amount
+        amount_sol = 0.01
+        amount_lamports = int(amount_sol * 1000000000)
+        
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": usdc_address,
+            "amount": str(amount_lamports),
+            "slippageBps": "1000"  # 10% slippage
+        }
+        
+        logging.info(f"Getting quote for {amount_sol} SOL → USDC...")
+        quote_response = requests.get(quote_url, params=params, timeout=15)
+        
+        if quote_response.status_code != 200:
+            logging.error(f"Quote failed: {quote_response.status_code} - {quote_response.text}")
+            return False
+        
+        quote_data = quote_response.json()
+        
+        # 2. Prepare swap - absolutely minimal payload
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(wallet.public_key),
+            "wrapAndUnwrapSol": True
+        }
+        
+        logging.info(f"Preparing USDC swap transaction...")
+        swap_response = requests.post(
+            swap_url, 
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text}")
+            return False
+        
+        swap_data = swap_response.json()
+        
+        if "swapTransaction" not in swap_data:
+            logging.error("Swap response missing transaction data")
+            return False
+        
+        # 3. Submit transaction directly
+        serialized_tx = swap_data["swapTransaction"]
+        
+        logging.info(f"Submitting USDC swap transaction...")
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,  # Don't skip preflight checks
+                "maxRetries": 5
+            }
+        ])
+        
+        if "result" not in response:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"USDC swap error: {error_message}")
+            return False
+            
+        signature = response["result"]
+        logging.info(f"USDC swap submitted: {signature}")
+        
+        # 4. Wait for confirmation and check balance
+        logging.info("Waiting 30 seconds for confirmation...")
+        time.sleep(30)
+        
+        check_response = wallet._rpc_call("getTokenAccountsByOwner", [
+            str(wallet.public_key),
+            {"mint": usdc_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        token_amount = 0
+        if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+            account = check_response['result']['value'][0]
+            parsed_data = account['account']['data']['parsed']
+            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                logging.info(f"USDC balance: {token_amount}")
+        
+        if token_amount > 0:
+            logging.info("USDC swap succeeded!")
+            return True
+        else:
+            logging.warning("USDC swap failed - no tokens received")
+            return False
+        
+    except Exception as e:
+        logging.error(f"Error testing USDC swap: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+
 def test_bonk_token():
     """Test token account creation and buying for BONK."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -1624,7 +1730,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(f"Error buying token {mint}: {e}")
         logging.error(traceback.format_exc())
         return False
-        
+
 def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 3) -> bool:
     """Buy a token using Jupiter API with larger amount."""
     global buy_attempts, buy_successes
@@ -2425,63 +2531,75 @@ def find_tradable_tokens():
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
     
-def test_simple_sol_transfer():
+def test_basic_sol_transfer():
+    """Test a simple SOL transfer to verify wallet functionality."""
+    logging.info("===== TESTING BASIC SOL TRANSFER =====")
+    
     try:
         from solders.transaction import Transaction
-        from solders.pubkey import Pubkey
         from solders.system_program import transfer, TransferParams
-
-        # Don't use the solana.rpc.api Client directly
-        # Use our wallet's _rpc_call method instead
         
-        # RPC client and keys
-        from_pubkey = wallet.public_key
-        to_pubkey = Pubkey.from_string("11111111111111111111111111111111")  # test address
-        lamports = 1000  # 0.000001 SOL
-
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"From Pubkey: {from_pubkey}")
-            logging.info(f"To Pubkey: {to_pubkey}")
-
-        # Build transaction
-        instruction = transfer(TransferParams(from_pubkey=from_pubkey, to_pubkey=to_pubkey, lamports=lamports))
+        # Self-transfer (sending to our own wallet)
+        to_pubkey = wallet.public_key
+        amount = 10000  # 0.00001 SOL - very small amount
         
-        # Get recent blockhash using _rpc_call method
+        logging.info(f"Creating SOL self-transfer of {amount} lamports")
+        
+        # Get recent blockhash
         blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
-        if 'result' in blockhash_response and 'value' in blockhash_response['result'] and 'blockhash' in blockhash_response['result']['value']:
-            recent_blockhash = blockhash_response['result']['value']['blockhash']
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Recent Blockhash: {recent_blockhash}")
-        else:
-            logging.error("Failed to get blockhash")
+        if 'result' not in blockhash_response or 'value' not in blockhash_response['result']:
+            logging.error("Failed to get recent blockhash")
             return False
-
-        # Create transaction
-        tx = Transaction()
-        tx.add(instruction)
-        tx.recent_blockhash = recent_blockhash
+            
+        recent_blockhash = blockhash_response['result']['value']['blockhash']
         
-        # Sign transaction
+        # Create transfer instruction
+        transfer_ix = transfer(TransferParams(
+            from_pubkey=wallet.public_key, 
+            to_pubkey=to_pubkey,
+            lamports=amount
+        ))
+        
+        # Create and sign transaction
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = recent_blockhash
         tx.sign([wallet.keypair])
-
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Transaction: {tx}")
-            logging.info(f"Transaction Signatures: {tx.signatures}")
-            if tx.signatures:
-                signature_base58 = base58.b58encode(tx.signatures[0].signature)
-                logging.info(f"Signature (Base58): {signature_base58}")
-
-        # Submit transaction using wallet's method
+        
+        # Submit transaction
+        logging.info("Submitting SOL transfer transaction...")
         signature = wallet.sign_and_submit_transaction(tx)
-        if signature:
-            logging.info(f"✅ Simple SOL transfer success: {signature}")
-            return True
-        else:
-            logging.error("❌ Simple SOL transfer failed during submission")
+        
+        if not signature:
+            logging.error("Failed to submit SOL transfer")
             return False
-
+            
+        logging.info(f"Transfer submitted: {signature}")
+        
+        # Wait for confirmation
+        logging.info("Waiting 15 seconds for confirmation...")
+        time.sleep(15)
+        
+        # Check status
+        status_response = wallet._rpc_call("getTransaction", [
+            signature,
+            {"encoding": "json"}
+        ])
+        
+        if "result" in status_response and status_response["result"]:
+            if status_response["result"].get("meta", {}).get("err") is None:
+                logging.info("SOL transfer confirmed successfully!")
+                return True
+            else:
+                error = status_response["result"]["meta"]["err"]
+                logging.error(f"SOL transfer failed with error: {error}")
+                return False
+        else:
+            logging.warning("SOL transfer not confirmed after 15 seconds")
+            return False
+            
     except Exception as e:
-        logging.error(f"❌ Error in test_simple_sol_transfer: {e}")
+        logging.error(f"Error testing SOL transfer: {str(e)}")
         logging.error(traceback.format_exc())
         return False
 
@@ -2939,12 +3057,26 @@ def main():
     logging.info("============ BOT STARTING ============")
     
     if initialize():
-        # First test with BONK to verify functionality
-        if test_bonk_token():
-            logging.info("✅ BONK token test successful! Starting trading loop...")
-            trading_loop()
+        # Test 1: Basic SOL transfer
+        if test_basic_sol_transfer():
+            logging.info("✅ Basic SOL transfer test passed!")
+            
+            # Test 2: Basic swap with USDC
+            if test_basic_swap():
+                logging.info("✅ Basic USDC swap test passed!")
+                
+                # Now proceed with original plan
+                # Try with a larger amount
+                bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+                if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
+                    logging.info("✅ BONK purchase succeeded!")
+                    trading_loop()
+                else:
+                    logging.error("❌ BONK purchase failed, even after basic tests passed")
+            else:
+                logging.error("❌ Basic USDC swap test failed. Check wallet and RPC endpoint configuration.")
         else:
-            logging.error("❌ BONK token test failed. Please check logs and fix issues before running the bot.")
+            logging.error("❌ Basic SOL transfer test failed. Check wallet and RPC endpoint configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
