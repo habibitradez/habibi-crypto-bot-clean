@@ -2539,7 +2539,8 @@ def test_basic_sol_transfer():
         from solders.pubkey import Pubkey
         from solders.transaction import Transaction
         from solders.system_program import transfer, TransferParams
-        from solders.message import Message
+        from solders.hash import Hash
+        import base58
         
         # Self-transfer (sending to our own wallet)
         to_pubkey = wallet.public_key
@@ -2553,7 +2554,9 @@ def test_basic_sol_transfer():
             logging.error("Failed to get recent blockhash")
             return False
             
-        recent_blockhash = blockhash_response['result']['value']['blockhash']
+        blockhash_str = blockhash_response['result']['value']['blockhash']
+        # Convert string blockhash to Hash object
+        blockhash = Hash(base58.b58decode(blockhash_str))
         
         # Create transfer instruction
         transfer_ix = transfer(TransferParams(
@@ -2562,18 +2565,11 @@ def test_basic_sol_transfer():
             lamports=amount
         ))
         
-        # Create message first (required for new Transaction constructor)
-        message = Message.new_with_blockhash(
-            [transfer_ix],
-            wallet.public_key,
-            recent_blockhash
-        )
-        
-        # Create transaction with the required parameters
-        tx = Transaction.new_from_message(
-            message=message,
-            signers=[wallet.keypair]
-        )
+        # Create transaction (using older method which still works)
+        tx = Transaction()
+        tx.add(transfer_ix)
+        tx.recent_blockhash = blockhash
+        tx.sign([wallet.keypair])
         
         # Submit transaction
         logging.info("Submitting SOL transfer transaction...")
