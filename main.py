@@ -228,65 +228,58 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
-def sign_and_submit_transaction(self, transaction) -> Optional[str]:
-    """Sign and submit a transaction with enhanced error handling."""
-    try:
-        logging.info("Signing and submitting transaction with enhanced error handling...")
+    def sign_and_submit_transaction(self, transaction) -> Optional[str]:
+        """Sign and submit a transaction to the Solana blockchain."""
+        try:
+            logging.info("Signing and submitting transaction...")
         
-        # Serialize transaction based on its type
-        if isinstance(transaction, VersionedTransaction):
-            serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-            logging.info("Serialized VersionedTransaction successfully")
-        elif isinstance(transaction, Transaction):
-            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-            logging.info("Serialized Transaction successfully")
-        elif isinstance(transaction, str) and transaction.startswith("A"):
-            # Transaction is already serialized
-            serialized_tx = transaction
-            logging.info("Transaction was already serialized")
-        else:
-            logging.error(f"Unknown transaction type: {type(transaction).__name__}")
-            return None
+            # Check the type of the transaction object
+            transaction_type = type(transaction).__name__
+            logging.info(f"Transaction type: {transaction_type}")  # Log the type
         
-        # Log the first part of the serialized transaction for debugging
-        logging.info(f"Serialized tx (first 50 chars): {serialized_tx[:50]}...")
-        
-        # Submit with enhanced parameters
-        response = self._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,  # Skip preflight for better success rate
-                "maxRetries": 5,
-                "preflightCommitment": "processed"  # Use faster commitment level
-            }
-        ])
-        
-        # Log full response for debugging
-        logging.info(f"Transaction submission response: {json.dumps(response)}")
-        
-        if "result" in response:
-            signature = response["result"]
-            
-            # Validate signature format (should not be all 1's)
-            if signature == "1" * len(signature):
-                logging.error("Invalid signature (all 1's) - transaction failed")
-                return None
-                
-            logging.info(f"Transaction submitted successfully: {signature}")
-            return signature
-        else:
-            if "error" in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
+            # Serialize transaction
+            if isinstance(transaction, VersionedTransaction):  # Use isinstance for type checking
+                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+            elif isinstance(transaction, Transaction):
+                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            elif isinstance(transaction, str) and transaction.startswith("A"):
+                # Transaction is already serialized
+                serialized_tx = transaction
             else:
-                logging.error(f"Failed to submit transaction - unexpected response format")
-            return None
+                logging.error(f"Unexpected transaction type: {transaction_type}")
+                return None  # Or raise an exception
+        
+            logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
+        
+            # Submit transaction
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64", 
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "processed"
+                }
+            ])
+        
+            logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
+        
+            if "result" in response:
+                signature = response["result"]
+                logging.info(f"Transaction submitted successfully: {signature}")
+                return signature
+            else:
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                else:
+                    logging.error(f"Failed to submit transaction - unexpected response format: {response}")
+                return None
             
-    except Exception as e:
-        logging.error(f"Error signing and submitting transaction: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
+        except Exception as e:
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            logging.error(traceback.format_exc())
+            return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
