@@ -3189,6 +3189,7 @@ def main():
             logging.error("Basic functionality test failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
+
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
