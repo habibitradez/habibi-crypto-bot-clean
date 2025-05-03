@@ -456,83 +456,111 @@ def sign_and_submit_transaction(self, transaction):
             logging.error(traceback.format_exc())
             return []
 
-def create_token_account(self, token_address):
+def create_token_account(self, token_address: str) -> bool:
     """Create an Associated Token Account explicitly before trading."""
     logging.info(f"Creating Associated Token Account for {token_address}...")
     
     try:
-        from spl.token._layouts import ACCOUNT_LAYOUT
-        from spl.token.instructions import get_associated_token_address, create_associated_token_account
-        from solana.transaction import Transaction
-        
-        # Get current blockhash
-        blockhash_resp = self._rpc_call("getLatestBlockhash", [])
-        if "result" not in blockhash_resp or "value" not in blockhash_resp["result"]:
-            logging.error("Failed to get recent blockhash")
-            return False
-            
-        recent_blockhash = blockhash_resp["result"]["value"]["blockhash"]
-        
-        # Find associated token address
-        associated_token_address = get_associated_token_address(
-            owner=self.public_key,
-            mint=PublicKey(token_address)
-        )
-        
         # Check if account already exists
-        check_response = self._rpc_call("getAccountInfo", [
-            str(associated_token_address),
+        check_response = self._rpc_call("getTokenAccountsByOwner", [
+            str(self.public_key),
+            {"mint": token_address},
             {"encoding": "jsonParsed"}
         ])
         
-        if "result" in check_response and check_response["result"] and check_response["result"]["value"]:
-            logging.info(f"Token account already exists: {associated_token_address}")
+        if "result" in check_response and "value" in check_response["result"] and check_response["result"]["value"]:
+            logging.info(f"Token account already exists for {token_address}")
             return True
+        
+        logging.info(f"No token account exists for {token_address}. Creating one...")
+        
+        # Create account through Jupiter minimal swap
+        try:
+            # Use a minimal amount to create the account via swap
+            minimal_amount = 5000000  # 0.005 SOL
             
-        # Create instruction to make associated token account
-        create_ata_ix = create_associated_token_account(
-            payer=self.public_key,
-            owner=self.public_key,
-            mint=PublicKey(token_address)
-        )
-        
-        # Create transaction
-        tx = Transaction()
-        tx.add(create_ata_ix)
-        tx.recent_blockhash = recent_blockhash
-        
-        # Sign and submit
-        tx.sign(self.keypair)
-        
-        # Submit transaction
-        serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
-        
-        response = self._rpc_call("sendTransaction", [
-            serialized_tx,
-            {"encoding": "base64"}
-        ])
-        
-        if "result" in response:
+            # Get Jupiter quote
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            params = {
+                "inputMint": SOL_TOKEN_ADDRESS,
+                "outputMint": token_address,
+                "amount": str(minimal_amount),
+                "slippageBps": "5000"  # 50% slippage
+            }
+            
+            quote_response = requests.get(quote_url, params=params, timeout=15)
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Quote failed for account creation: {quote_response.status_code}")
+                return False
+            
+            quote_data = quote_response.json()
+            
+            # Prepare swap
+            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(self.public_key),
+                "wrapAndUnwrapSol": True
+            }
+            
+            swap_response = requests.post(
+                swap_url, 
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
+                return False
+            
+            swap_data = swap_response.json()
+            
+            if "swapTransaction" not in swap_data:
+                logging.error("Swap response missing transaction data for account creation")
+                return False
+            
+            # Submit transaction directly without deserialization
+            serialized_tx = swap_data["swapTransaction"]
+            
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": False,
+                    "maxRetries": 5
+                }
+            ])
+            
+            if "result" not in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Account creation error: {error_message}")
+                return False
+            
             signature = response["result"]
-            logging.info(f"Token account creation transaction submitted: {signature}")
+            logging.info(f"Account creation transaction submitted: {signature}")
             
             # Wait for confirmation
-            time.sleep(20)
+            time.sleep(30)
             
             # Verify account was created
-            verify_response = self._rpc_call("getAccountInfo", [
-                str(associated_token_address),
+            verify_response = self._rpc_call("getTokenAccountsByOwner", [
+                str(self.public_key),
+                {"mint": token_address},
                 {"encoding": "jsonParsed"}
             ])
             
-            if "result" in verify_response and verify_response["result"] and verify_response["result"]["value"]:
-                logging.info(f"Token account successfully created and verified")
+            if "result" in verify_response and "value" in verify_response["result"] and verify_response["result"]["value"]:
+                logging.info(f"Token account successfully created and verified for {token_address}")
                 return True
             else:
-                logging.error("Token account creation failed")
+                logging.error(f"Failed to create token account for {token_address}")
                 return False
-        else:
-            logging.error(f"Failed to submit token account creation transaction")
+                
+        except Exception as e:
+            logging.error(f"Error in account creation swap: {str(e)}")
+            logging.error(traceback.format_exc())
             return False
             
     except Exception as e:
@@ -1792,60 +1820,23 @@ def test_basic_swap():
         logging.error(traceback.format_exc())
         return False
 
-def test_bonk_token():
-    """Test token account creation and buying for BONK."""
+def test_buy_bonk():
+    """Test buying BONK token with enhanced functions."""
+    logging.info("===== TESTING BONK PURCHASE =====")
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
     
-    logging.info("===== TESTING BONK TOKEN =====")
+    # Use a specific amount for testing
+    amount_sol = 0.25
+    logging.info(f"Attempting to buy BONK with {amount_sol} SOL")
     
-    # Test 1: Make sure account exists
-    logging.info("Test 1: Ensuring token account exists")
-    account_success = ensure_token_account_exists(bonk_address)
-    
-    if not account_success:
-        logging.error("❌ Failed to ensure token account exists")
-        return False
-    
-    logging.info("✅ Token account exists or was created successfully")
-    
-    # Test 2: Try buying with larger amount
-    logging.info("Test 2: Buying minimal amount of BONK")
-    buy_amount = 0.15  # 0.15 SOL instead of 0.01
-    buy_success = buy_token(bonk_address, buy_amount)
-    
-    if not buy_success:
-        logging.error("❌ Failed to buy BONK")
-        return False
-    
-    logging.info("✅ Successfully bought BONK")
-    
-    # Test 3: Check balance with longer delay
-    logging.info("Test 3: Checking token balance")
-    logging.info("Waiting 30 seconds before final balance check...")
-    time.sleep(30)
-    
-    response = wallet._rpc_call("getTokenAccountsByOwner", [
-        str(wallet.public_key),
-        {"mint": bonk_address},
-        {"encoding": "jsonParsed"}
-    ])
-    
-    token_amount = 0
-    if 'result' in response and 'value' in response['result'] and response['result']['value']:
-        account = response['result']['value'][0]
-        if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
-            parsed_data = account['account']['data']['parsed']
-            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                token_amount = int(parsed_data['info']['tokenAmount']['amount'])
-    
-    logging.info(f"BONK balance: {token_amount}")
-    success = token_amount > 0
+    # Try to buy BONK
+    success = buy_token(bonk_address, amount_sol)
     
     if success:
-        logging.info("===== BONK TESTING COMPLETE - SUCCESS =====")
+        logging.info("✅ BONK purchase test successful!")
     else:
-        logging.error("===== BONK TESTING COMPLETE - FAILED =====")
-    
+        logging.error("❌ BONK purchase test failed!")
+        
     return success
 
 def force_buy_usdc():
@@ -1988,8 +1979,8 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 3) -> bool:
-    """Buy a token with enhanced verification and account creation."""
+def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with enhanced verification."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -2001,13 +1992,8 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
         buy_successes += 1
         return True
     
-    # Test basic functionality first
-    if not test_sol_transfer():
-        logging.error("Basic SOL transfer test failed. Cannot proceed with token purchase.")
-        return False
-    
-    # First ensure token account exists
-    if not create_token_account(token_address):
+    # Ensure token account exists first
+    if not wallet.create_token_account(token_address):
         logging.error(f"Failed to create token account for {token_address}")
         return False
     
@@ -2064,16 +2050,21 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
             # 3. Submit transaction
             serialized_tx = swap_data["swapTransaction"]
             
+            # Log transaction details for debugging
+            logging.info(f"Transaction data (first 100 chars): {serialized_tx[:100]}...")
+            
             logging.info(f"Submitting transaction...")
             response = wallet._rpc_call("sendTransaction", [
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,
-                    "maxRetries": 5,
-                    "commitment": "confirmed"
+                    "skipPreflight": False,  # Set to False for better error detection
+                    "maxRetries": 5
                 }
             ])
+            
+            # Log full response for debugging
+            logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
             
             if "result" not in response:
                 error_message = response.get("error", {}).get("message", "Unknown error")
@@ -2081,65 +2072,83 @@ def buy_token(token_address: str, amount_sol: float = 0.15, max_attempts: int = 
                 continue
                 
             signature = response["result"]
-            logging.info(f"Transaction submitted: {signature}")
             
-            # 4. Wait for confirmation with exponential backoff
-            for i in range(6):  # Try 6 times with increasing waits
-                wait_time = 5 * (2 ** i)  # 5, 10, 20, 40, 80, 160 seconds
-                logging.info(f"Waiting {wait_time}s for confirmation (attempt {i+1}/6)...")
+            # Validate signature format
+            if signature == "1" * len(signature):
+                logging.error("Invalid signature format (all 1's) - transaction likely failed")
+                continue
+                
+            logging.info(f"Transaction submitted with signature: {signature}")
+            
+            # 4. Verify transaction on chain with exponential backoff
+            confirmed = False
+            for i in range(5):  # Check 5 times with increasing delays
+                wait_time = 5 * (2 ** i)  # 5, 10, 20, 40, 80 seconds
+                logging.info(f"Waiting {wait_time}s for confirmation (check #{i+1}/5)...")
                 time.sleep(wait_time)
                 
                 # Check transaction status
                 status_response = wallet._rpc_call("getTransaction", [
                     signature,
-                    {"encoding": "json", "commitment": "confirmed"}
+                    {"encoding": "json"}
                 ])
                 
-                if "result" in status_response and status_response["result"]:
-                    if status_response["result"].get("meta", {}).get("err") is not None:
-                        err = status_response["result"]["meta"]["err"]
-                        logging.error(f"Transaction failed with error: {err}")
-                        break
-                    
-                    logging.info("Transaction confirmed successfully!")
-                    
-                    # 5. Verify token balance
-                    balance_response = wallet._rpc_call("getTokenAccountsByOwner", [
-                        str(wallet.public_key),
-                        {"mint": token_address},
-                        {"encoding": "jsonParsed"}
-                    ])
-                    
-                    if 'result' in balance_response and 'value' in balance_response['result'] and balance_response['result']['value']:
-                        for account in balance_response['result']['value']:
-                            parsed_data = account['account']['data']['parsed']
-                            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                                token_amount = int(parsed_data['info']['tokenAmount']['amount'])
-                                logging.info(f"Token balance: {token_amount}")
-                                
-                                if token_amount > 0:
-                                    # Success!
-                                    token_buy_timestamps[token_address] = time.time()
-                                    buy_successes += 1
-                                    
-                                    initial_price = get_token_price(token_address)
-                                    if initial_price:
-                                        monitored_tokens[token_address] = {
-                                            'initial_price': initial_price,
-                                            'highest_price': initial_price,
-                                            'partial_profit_taken': False,
-                                            'buy_time': time.time()
-                                        }
-                                    
-                                    logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
-                                    return True
-                                else:
-                                    logging.warning(f"Token account exists but balance is 0")
-                    else:
-                        logging.error(f"Token account not found for {token_address}")
+                logging.info(f"Transaction status check #{i+1} response: {json.dumps(status_response, indent=2)}")
                 
-            logging.error(f"Failed to confirm successful token purchase")
+                if "result" in status_response and status_response["result"]:
+                    if status_response["result"].get("meta", {}).get("err") is None:
+                        logging.info(f"Transaction confirmed successfully on check #{i+1}!")
+                        confirmed = True
+                        break
+                    else:
+                        error = status_response["result"]["meta"]["err"]
+                        logging.error(f"Transaction failed with error: {error}")
+                        break
             
+            if not confirmed:
+                logging.error("Transaction not confirmed after multiple attempts")
+                continue
+            
+            # 5. Verify token balance
+            time.sleep(10)  # Extra wait to ensure token balance is updated
+            balance_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                str(wallet.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            token_amount = 0
+            if 'result' in balance_response and 'value' in balance_response['result'] and balance_response['result']['value']:
+                for account in balance_response['result']['value']:
+                    parsed_data = account['account']['data']['parsed']
+                    if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                        token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                        logging.info(f"Token balance after purchase: {token_amount}")
+            
+            if token_amount > 0:
+                # Success!
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                
+                # Record initial price for monitoring
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
+                return True
+            else:
+                logging.warning(f"Transaction confirmed but no tokens received")
+                
+                # Try with a larger amount in the next attempt
+                amount_sol *= 1.5
+                logging.info(f"Increasing amount to {amount_sol} SOL for next attempt")
+                
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
@@ -3212,7 +3221,12 @@ def main():
         if simple_rpc_test():
             logging.info("✅ Basic RPC test passed!")
             
-            # Continue with your existing code...
+            # Test buying BONK
+            if test_buy_bonk():
+                logging.info("Starting main trading loop...")
+                trading_loop()
+            else:
+                logging.error("BONK test purchase failed. Check logs for details.")
         else:
             logging.error("❌ Basic RPC test failed. Check wallet and RPC endpoint.")
     else:
