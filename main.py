@@ -161,118 +161,6 @@ class SolanaWallet:
                 raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
         
         self.public_key = self.keypair.pubkey()
-
-def create_token_account(self, token_address: str) -> bool:
-    """Create an Associated Token Account explicitly before trading."""
-    logging.info(f"Creating Associated Token Account for {token_address}...")
-    
-    try:
-        # Check if account already exists
-        check_response = self._rpc_call("getTokenAccountsByOwner", [
-            str(self.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
-        
-        if "result" in check_response and "value" in check_response["result"] and check_response["result"]["value"]:
-            logging.info(f"Token account already exists for {token_address}")
-            return True
-        
-        logging.info(f"No token account exists for {token_address}. Creating one...")
-        
-        # Create account through Jupiter minimal swap
-        try:
-            # Use a minimal amount to create the account via swap
-            minimal_amount = 5000000  # 0.005 SOL
-            
-            # Get Jupiter quote
-            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-            params = {
-                "inputMint": SOL_TOKEN_ADDRESS,
-                "outputMint": token_address,
-                "amount": str(minimal_amount),
-                "slippageBps": "5000"  # 50% slippage
-            }
-            
-            quote_response = requests.get(quote_url, params=params, timeout=15)
-            
-            if quote_response.status_code != 200:
-                logging.error(f"Quote failed for account creation: {quote_response.status_code}")
-                return False
-            
-            quote_data = quote_response.json()
-            
-            # Prepare swap
-            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-            payload = {
-                "quoteResponse": quote_data,
-                "userPublicKey": str(self.public_key),
-                "wrapAndUnwrapSol": True
-            }
-            
-            swap_response = requests.post(
-                swap_url, 
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=15
-            )
-            
-            if swap_response.status_code != 200:
-                logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
-                return False
-            
-            swap_data = swap_response.json()
-            
-            if "swapTransaction" not in swap_data:
-                logging.error("Swap response missing transaction data for account creation")
-                return False
-            
-            # Submit transaction directly without deserialization
-            serialized_tx = swap_data["swapTransaction"]
-            
-            response = self._rpc_call("sendTransaction", [
-                serialized_tx,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": False,
-                    "maxRetries": 5
-                }
-            ])
-            
-            if "result" not in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Account creation error: {error_message}")
-                return False
-            
-            signature = response["result"]
-            logging.info(f"Account creation transaction submitted: {signature}")
-            
-            # Wait for confirmation
-            time.sleep(30)
-            
-            # Verify account was created
-            verify_response = self._rpc_call("getTokenAccountsByOwner", [
-                str(self.public_key),
-                {"mint": token_address},
-                {"encoding": "jsonParsed"}
-            ])
-            
-            if "result" in verify_response and "value" in verify_response["result"] and verify_response["result"]["value"]:
-                logging.info(f"Token account successfully created and verified for {token_address}")
-                return True
-            else:
-                logging.error(f"Failed to create token account for {token_address}")
-                return False
-                
-        except Exception as e:
-            logging.error(f"Error in account creation swap: {str(e)}")
-            logging.error(traceback.format_exc())
-            return False
-            
-    except Exception as e:
-        logging.error(f"Error creating token account: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
     
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
         """Create a Solana keypair from a base58 encoded private key string."""
@@ -341,207 +229,79 @@ def create_token_account(self, token_address: str) -> bool:
             error_text = f"RPC call failed with status {response.status_code}: {response.text}"
             logging.error(error_text)
             raise Exception(error_text)
-
-def test_rpc_connection():
-    """Test basic RPC connection without any transactions."""
-    logging.info("===== TESTING RPC CONNECTION ONLY =====")
     
-    try:
-        # Test both RPC endpoints
-        endpoints = [
-            "https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbbdaa8584d108643/",
-            "https://solitary-sleek-resonance.solana-mainnet.quiknode.pro/3a8b33e07654cf62325d8917550742203830c518/"
-        ]
-        
-        for i, endpoint in enumerate(endpoints):
-            logging.info(f"Testing RPC endpoint #{i+1}: {endpoint}")
-            
-            try:
-                # Simple getHealth call
-                response = requests.post(
-                    endpoint,
-                    json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
-                    headers={"Content-Type": "application/json"},
-                    timeout=10
-                )
-                
-                if response.status_code == 200:
-                    result = response.json()
-                    logging.info(f"RPC endpoint #{i+1} response: {result}")
-                    
-                    if "result" in result:
-                        logging.info(f"✅ RPC endpoint #{i+1} is working!")
-                    else:
-                        logging.error(f"❌ RPC endpoint #{i+1} returned unexpected format: {result}")
-                else:
-                    logging.error(f"❌ RPC endpoint #{i+1} failed with status {response.status_code}")
-            
-            except Exception as e:
-                logging.error(f"❌ Error testing RPC endpoint #{i+1}: {str(e)}")
-        
-        # Also test wallet address (just print it)
-        logging.info(f"Wallet public key: {wallet.public_key}")
-        
-        return True
-            
-    except Exception as e:
-        logging.error(f"Error in RPC connection test: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
-
-def test_rpc_endpoints():
-    """Test multiple RPC endpoints to find the most reliable one."""
-    endpoints = [
-        CONFIG['QUICKNODE_RPC_URL_1'],
-        CONFIG['QUICKNODE_RPC_URL_2'],
-        CONFIG['SOLANA_RPC_URL'],
-        CONFIG['SOLANA_RPC_URL_BACKUP']
-    ]
-    
-    results = []
-    
-    for i, endpoint in enumerate(endpoints):
-        endpoint_name = f"Endpoint #{i+1}"
-        if i == 0:
-            endpoint_name = "QuickNode Primary"
-        elif i == 1:
-            endpoint_name = "QuickNode Secondary"
-        elif i == 2:
-            endpoint_name = "Solana Public"
-        elif i == 3:
-            endpoint_name = "Serum Public"
-            
-        logging.info(f"Testing {endpoint_name}: {endpoint}")
-        
+    def sign_and_submit_transaction(self, transaction):
+        """Sign and submit a transaction with enhanced verification."""
         try:
-            # Test getHealth
-            start_time = time.time()
-            response = requests.post(
-                endpoint,
-                json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
-                headers={"Content-Type": "application/json"},
-                timeout=5
-            )
-            elapsed = time.time() - start_time
+            logging.info("Signing and submitting transaction with enhanced verification...")
             
-            if response.status_code == 200:
-                result = response.json()
-                if "result" in result:
-                    logging.info(f"✅ {endpoint_name} is working! Response time: {elapsed:.2f}s")
-                    results.append({
-                        "name": endpoint_name,
-                        "url": endpoint,
-                        "status": "working",
-                        "response_time": elapsed
-                    })
-                else:
-                    logging.warning(f"⚠️ {endpoint_name} returned unexpected format: {result}")
-                    results.append({
-                        "name": endpoint_name,
-                        "url": endpoint,
-                        "status": "unexpected_format",
-                        "response_time": elapsed
-                    })
+            # Serialize transaction depending on its type
+            if isinstance(transaction, Transaction):
+                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+            elif hasattr(transaction, "to_bytes"):
+                serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
+            elif isinstance(transaction, str):
+                # Already serialized
+                serialized_tx = transaction
             else:
-                logging.error(f"❌ {endpoint_name} failed with status {response.status_code}")
-                results.append({
-                    "name": endpoint_name,
-                    "url": endpoint,
-                    "status": "failed",
-                    "response_time": elapsed,
-                    "status_code": response.status_code
-                })
-        except Exception as e:
-            logging.error(f"❌ Error testing {endpoint_name}: {str(e)}")
-            results.append({
-                "name": endpoint_name,
-                "url": endpoint,
-                "status": "error",
-                "error": str(e)
-            })
-    
-    # Find best endpoint based on response time
-    working_endpoints = [r for r in results if r["status"] == "working"]
-    if working_endpoints:
-        best_endpoint = min(working_endpoints, key=lambda x: x["response_time"])
-        logging.info(f"Best endpoint is {best_endpoint['name']} with response time {best_endpoint['response_time']:.2f}s")
-        return best_endpoint["url"]
-    else:
-        logging.error("No working endpoints found!")
-        return None
-
-def sign_and_submit_transaction(self, transaction):
-    """Sign and submit a transaction with enhanced verification."""
-    try:
-        logging.info("Signing and submitting transaction with enhanced verification...")
-        
-        # Serialize transaction depending on its type
-        if isinstance(transaction, Transaction):
-            serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-        elif hasattr(transaction, "to_bytes"):
-            serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-        elif isinstance(serialized_tx, str):
-            # Already serialized
-            pass
-        else:
-            logging.error(f"Unsupported transaction type: {type(transaction).__name__}")
-            return None
-            
-        # Enhanced transaction parameters
-        submit_params = {
-            "encoding": "base64",
-            "skipPreflight": False,  # Changed to false for better validation
-            "maxRetries": 5,
-            "commitment": "confirmed"  # Explicit commitment level
-        }
-        
-        # Submit with detailed error handling
-        response = self._rpc_call("sendTransaction", [
-            serialized_tx,
-            submit_params
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            
-            # Validate signature format (should be base58 string, never all 1's)
-            if signature == "1" * len(signature) or not re.match(r'^[1-9A-HJ-NP-Za-km-z]{87,88}$', signature):
-                logging.error(f"Invalid signature format: {signature}")
+                logging.error(f"Unsupported transaction type: {type(transaction).__name__}")
                 return None
                 
-            logging.info(f"Transaction submitted with signature: {signature}")
+            # Enhanced transaction parameters
+            submit_params = {
+                "encoding": "base64",
+                "skipPreflight": False,  # Changed to false for better validation
+                "maxRetries": 5,
+                "commitment": "confirmed"  # Explicit commitment level
+            }
             
-            # Wait for confirmation
-            for i in range(5):  # Try 5 times
-                time.sleep(5)  # Wait 5 seconds between checks
-                
-                confirm_response = self._rpc_call("getTransaction", [
-                    signature,
-                    {"encoding": "json"}
-                ])
-                
-                if "result" in confirm_response and confirm_response["result"]:
-                    if confirm_response["result"].get("meta", {}).get("err") is None:
-                        logging.info(f"Transaction confirmed successfully!")
-                        return signature
-                    else:
-                        err = confirm_response["result"]["meta"]["err"]
-                        logging.error(f"Transaction failed with error: {err}")
-                        return None
-                        
-                logging.info(f"Waiting for confirmation... (attempt {i+1})")
-                
-            logging.warning("Transaction not confirmed after multiple attempts")
-            return None
-        else:
-            error = response.get("error", {})
-            logging.error(f"Transaction submission failed: {error.get('message', 'Unknown error')}")
-            return None
+            # Submit with detailed error handling
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx,
+                submit_params
+            ])
             
-    except Exception as e:
-        logging.error(f"Error in transaction submission: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
+            if "result" in response:
+                signature = response["result"]
+                
+                # Validate signature format (should be base58 string, never all 1's)
+                if signature == "1" * len(signature) or not re.match(r'^[1-9A-HJ-NP-Za-km-z]{87,88}$', signature):
+                    logging.error(f"Invalid signature format: {signature}")
+                    return None
+                    
+                logging.info(f"Transaction submitted with signature: {signature}")
+                
+                # Wait for confirmation
+                for i in range(5):  # Try 5 times
+                    time.sleep(5)  # Wait 5 seconds between checks
+                    
+                    confirm_response = self._rpc_call("getTransaction", [
+                        signature,
+                        {"encoding": "json"}
+                    ])
+                    
+                    if "result" in confirm_response and confirm_response["result"]:
+                        if confirm_response["result"].get("meta", {}).get("err") is None:
+                            logging.info(f"Transaction confirmed successfully!")
+                            return signature
+                        else:
+                            err = confirm_response["result"]["meta"]["err"]
+                            logging.error(f"Transaction failed with error: {err}")
+                            return None
+                            
+                    logging.info(f"Waiting for confirmation... (attempt {i+1})")
+                    
+                logging.warning("Transaction not confirmed after multiple attempts")
+                return None
+            else:
+                error = response.get("error", {})
+                logging.error(f"Transaction submission failed: {error.get('message', 'Unknown error')}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Error in transaction submission: {str(e)}")
+            logging.error(traceback.format_exc())
+            return None
     
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
@@ -567,118 +327,118 @@ def sign_and_submit_transaction(self, transaction):
             logging.error(f"Error getting token accounts: {str(e)}")
             logging.error(traceback.format_exc())
             return []
-
-def create_token_account(self, token_address: str) -> bool:
-    """Create an Associated Token Account explicitly before trading."""
-    logging.info(f"Creating Associated Token Account for {token_address}...")
     
-    try:
-        # Check if account already exists
-        check_response = self._rpc_call("getTokenAccountsByOwner", [
-            str(self.public_key),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
+    def create_token_account(self, token_address: str) -> bool:
+        """Create an Associated Token Account explicitly before trading."""
+        logging.info(f"Creating Associated Token Account for {token_address}...")
         
-        if "result" in check_response and "value" in check_response["result"] and check_response["result"]["value"]:
-            logging.info(f"Token account already exists for {token_address}")
-            return True
-        
-        logging.info(f"No token account exists for {token_address}. Creating one...")
-        
-        # Create account through Jupiter minimal swap
         try:
-            # Use a minimal amount to create the account via swap
-            minimal_amount = 5000000  # 0.005 SOL
-            
-            # Get Jupiter quote
-            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-            params = {
-                "inputMint": SOL_TOKEN_ADDRESS,
-                "outputMint": token_address,
-                "amount": str(minimal_amount),
-                "slippageBps": "5000"  # 50% slippage
-            }
-            
-            quote_response = requests.get(quote_url, params=params, timeout=15)
-            
-            if quote_response.status_code != 200:
-                logging.error(f"Quote failed for account creation: {quote_response.status_code}")
-                return False
-            
-            quote_data = quote_response.json()
-            
-            # Prepare swap
-            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-            payload = {
-                "quoteResponse": quote_data,
-                "userPublicKey": str(self.public_key),
-                "wrapAndUnwrapSol": True
-            }
-            
-            swap_response = requests.post(
-                swap_url, 
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=15
-            )
-            
-            if swap_response.status_code != 200:
-                logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
-                return False
-            
-            swap_data = swap_response.json()
-            
-            if "swapTransaction" not in swap_data:
-                logging.error("Swap response missing transaction data for account creation")
-                return False
-            
-            # Submit transaction directly without deserialization
-            serialized_tx = swap_data["swapTransaction"]
-            
-            response = self._rpc_call("sendTransaction", [
-                serialized_tx,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": False,
-                    "maxRetries": 5
-                }
-            ])
-            
-            if "result" not in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Account creation error: {error_message}")
-                return False
-            
-            signature = response["result"]
-            logging.info(f"Account creation transaction submitted: {signature}")
-            
-            # Wait for confirmation
-            time.sleep(30)
-            
-            # Verify account was created
-            verify_response = self._rpc_call("getTokenAccountsByOwner", [
+            # Check if account already exists
+            check_response = self._rpc_call("getTokenAccountsByOwner", [
                 str(self.public_key),
                 {"mint": token_address},
                 {"encoding": "jsonParsed"}
             ])
             
-            if "result" in verify_response and "value" in verify_response["result"] and verify_response["result"]["value"]:
-                logging.info(f"Token account successfully created and verified for {token_address}")
+            if "result" in check_response and "value" in check_response["result"] and check_response["result"]["value"]:
+                logging.info(f"Token account already exists for {token_address}")
                 return True
-            else:
-                logging.error(f"Failed to create token account for {token_address}")
+            
+            logging.info(f"No token account exists for {token_address}. Creating one...")
+            
+            # Create account through Jupiter minimal swap
+            try:
+                # Use a minimal amount to create the account via swap
+                minimal_amount = 5000000  # 0.005 SOL
+                
+                # Get Jupiter quote
+                quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+                params = {
+                    "inputMint": SOL_TOKEN_ADDRESS,
+                    "outputMint": token_address,
+                    "amount": str(minimal_amount),
+                    "slippageBps": "5000"  # 50% slippage
+                }
+                
+                quote_response = requests.get(quote_url, params=params, timeout=15)
+                
+                if quote_response.status_code != 200:
+                    logging.error(f"Quote failed for account creation: {quote_response.status_code}")
+                    return False
+                
+                quote_data = quote_response.json()
+                
+                # Prepare swap
+                swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+                payload = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": str(self.public_key),
+                    "wrapAndUnwrapSol": True
+                }
+                
+                swap_response = requests.post(
+                    swap_url, 
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=15
+                )
+                
+                if swap_response.status_code != 200:
+                    logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
+                    return False
+                
+                swap_data = swap_response.json()
+                
+                if "swapTransaction" not in swap_data:
+                    logging.error("Swap response missing transaction data for account creation")
+                    return False
+                
+                # Submit transaction directly without deserialization
+                serialized_tx = swap_data["swapTransaction"]
+                
+                response = self._rpc_call("sendTransaction", [
+                    serialized_tx,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": False,
+                        "maxRetries": 5
+                    }
+                ])
+                
+                if "result" not in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Account creation error: {error_message}")
+                    return False
+                
+                signature = response["result"]
+                logging.info(f"Account creation transaction submitted: {signature}")
+                
+                # Wait for confirmation
+                time.sleep(30)
+                
+                # Verify account was created
+                verify_response = self._rpc_call("getTokenAccountsByOwner", [
+                    str(self.public_key),
+                    {"mint": token_address},
+                    {"encoding": "jsonParsed"}
+                ])
+                
+                if "result" in verify_response and "value" in verify_response["result"] and verify_response["result"]["value"]:
+                    logging.info(f"Token account successfully created and verified for {token_address}")
+                    return True
+                else:
+                    logging.error(f"Failed to create token account for {token_address}")
+                    return False
+                    
+            except Exception as e:
+                logging.error(f"Error in account creation swap: {str(e)}")
+                logging.error(traceback.format_exc())
                 return False
                 
         except Exception as e:
-            logging.error(f"Error in account creation swap: {str(e)}")
+            logging.error(f"Error creating token account: {str(e)}")
             logging.error(traceback.format_exc())
             return False
-            
-    except Exception as e:
-        logging.error(f"Error creating token account: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False
 
 class JupiterSwapHandler:
     """Handler for Jupiter API swap transactions."""
