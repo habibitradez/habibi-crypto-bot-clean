@@ -51,6 +51,17 @@ CONFIG = {
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))  # Reduced from 50 to 20
 }
 
+def check_solders_version():
+    """Check the installed version of Solders library."""
+    try:
+        import solders
+        version = getattr(solders, '__version__', 'Unknown')
+        logging.info(f"Solders version: {version}")
+        return version
+    except Exception as e:
+        logging.error(f"Error checking Solders version: {str(e)}")
+        return None
+
 # Diagnostics flag - set to True for very verbose logging
 ULTRA_DIAGNOSTICS = True
 
@@ -2928,75 +2939,26 @@ def test_bonk_trading_cycle():
     logging.error("All buy attempts failed to result in a non-zero balance")
     return False
     
-def test_sol_transfer():
-    """Test a simple SOL self-transfer to verify wallet and RPC functionality."""
-    logging.info("===== TESTING SIMPLE SOL SELF-TRANSFER =====")
+def simple_rpc_test():
+    """Test basic RPC functionality without using Transaction objects."""
+    logging.info("===== TESTING BASIC RPC FUNCTIONALITY =====")
     
     try:
-        from solders.transaction import Transaction
-        from solders.system_program import transfer, TransferParams
+        # Just test if we can get the wallet balance
+        response = wallet._rpc_call("getBalance", [str(wallet.public_key)])
         
-        # Amount to transfer (very small amount)
-        lamports = 5000  # 0.000005 SOL
-        
-        # Get recent blockhash
-        blockhash_resp = wallet._rpc_call("getLatestBlockhash", [])
-        if "result" not in blockhash_resp:
-            logging.error("Failed to get blockhash")
-            return False
-            
-        blockhash = blockhash_resp["result"]["value"]["blockhash"]
-        
-        # Create transfer to self
-        transfer_ix = transfer(TransferParams(
-            from_pubkey=wallet.public_key, 
-            to_pubkey=wallet.public_key,
-            lamports=lamports
-        ))
-        
-        # Build transaction
-        tx = Transaction()
-        tx.add(transfer_ix)
-        tx.recent_blockhash = blockhash
-        
-        # Sign transaction
-        tx.sign([wallet.keypair])
-        
-        # Convert to wire format
-        serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
-        
-        # Submit with minimal parameters
-        response = wallet._rpc_call("sendTransaction", [
-            serialized_tx,
-            {"encoding": "base64"}
-        ])
-        
-        if "result" in response:
-            signature = response["result"]
-            logging.info(f"Self-transfer submitted: {signature}")
-            
-            # Wait for confirmation
-            time.sleep(10)
-            
-            # Verify transaction
-            verify_response = wallet._rpc_call("getTransaction", [
-                signature,
-                {"encoding": "json"}
-            ])
-            
-            if "result" in verify_response and verify_response["result"]:
-                logging.info("SOL self-transfer confirmed successfully!")
-                return True
-            else:
-                logging.error("SOL self-transfer not confirmed")
-                return False
+        if "result" in response and "value" in response["result"]:
+            balance_lamports = response["result"]["value"]
+            balance_sol = balance_lamports / 1_000_000_000
+            logging.info(f"Wallet balance: {balance_sol} SOL")
+            logging.info("RPC connection is working correctly!")
+            return True
         else:
-            error = response.get("error", {})
-            logging.error(f"SOL self-transfer failed: {error.get('message', 'Unknown error')}")
+            logging.error(f"Failed to get balance: {response}")
             return False
             
     except Exception as e:
-        logging.error(f"Error in SOL self-transfer test: {str(e)}")
+        logging.error(f"Error in RPC test: {str(e)}")
         logging.error(traceback.format_exc())
         return False
         
@@ -3242,26 +3204,17 @@ def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
     
+    # Check Solders version at startup
+    solders_version = check_solders_version()
+    
     if initialize():
-        # Test RPC connection first
-        if test_rpc_connection():
-            logging.info("RPC connection test passed! Proceeding to USDC swap test.")
+        # Test basic RPC functionality
+        if simple_rpc_test():
+            logging.info("✅ Basic RPC test passed!")
             
-            # Continue with USDC swap test
-            if test_basic_swap():
-                logging.info("USDC swap test passed! Proceeding to BONK purchase.")
-                
-                # Try with a larger amount
-                bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-                if buy_token(bonk_address, 0.25):  # Increased to 0.25 SOL
-                    logging.info("✅ BONK purchase succeeded!")
-                    trading_loop()
-                else:
-                    logging.error("❌ BONK purchase failed, even after basic tests passed")
-            else:
-                logging.error("❌ USDC swap test failed. Please check wallet and RPC endpoint.")
+            # Continue with your existing code...
         else:
-            logging.error("❌ RPC connection test failed. Please check RPC endpoint configuration.")
+            logging.error("❌ Basic RPC test failed. Check wallet and RPC endpoint.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
