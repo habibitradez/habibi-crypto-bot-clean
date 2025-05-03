@@ -161,7 +161,119 @@ class SolanaWallet:
                 raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
         
         self.public_key = self.keypair.pubkey()
+
+def create_token_account(self, token_address: str) -> bool:
+    """Create an Associated Token Account explicitly before trading."""
+    logging.info(f"Creating Associated Token Account for {token_address}...")
+    
+    try:
+        # Check if account already exists
+        check_response = self._rpc_call("getTokenAccountsByOwner", [
+            str(self.public_key),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
         
+        if "result" in check_response and "value" in check_response["result"] and check_response["result"]["value"]:
+            logging.info(f"Token account already exists for {token_address}")
+            return True
+        
+        logging.info(f"No token account exists for {token_address}. Creating one...")
+        
+        # Create account through Jupiter minimal swap
+        try:
+            # Use a minimal amount to create the account via swap
+            minimal_amount = 5000000  # 0.005 SOL
+            
+            # Get Jupiter quote
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            params = {
+                "inputMint": SOL_TOKEN_ADDRESS,
+                "outputMint": token_address,
+                "amount": str(minimal_amount),
+                "slippageBps": "5000"  # 50% slippage
+            }
+            
+            quote_response = requests.get(quote_url, params=params, timeout=15)
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Quote failed for account creation: {quote_response.status_code}")
+                return False
+            
+            quote_data = quote_response.json()
+            
+            # Prepare swap
+            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+            payload = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(self.public_key),
+                "wrapAndUnwrapSol": True
+            }
+            
+            swap_response = requests.post(
+                swap_url, 
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
+                return False
+            
+            swap_data = swap_response.json()
+            
+            if "swapTransaction" not in swap_data:
+                logging.error("Swap response missing transaction data for account creation")
+                return False
+            
+            # Submit transaction directly without deserialization
+            serialized_tx = swap_data["swapTransaction"]
+            
+            response = self._rpc_call("sendTransaction", [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": False,
+                    "maxRetries": 5
+                }
+            ])
+            
+            if "result" not in response:
+                error_message = response.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Account creation error: {error_message}")
+                return False
+            
+            signature = response["result"]
+            logging.info(f"Account creation transaction submitted: {signature}")
+            
+            # Wait for confirmation
+            time.sleep(30)
+            
+            # Verify account was created
+            verify_response = self._rpc_call("getTokenAccountsByOwner", [
+                str(self.public_key),
+                {"mint": token_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            if "result" in verify_response and "value" in verify_response["result"] and verify_response["result"]["value"]:
+                logging.info(f"Token account successfully created and verified for {token_address}")
+                return True
+            else:
+                logging.error(f"Failed to create token account for {token_address}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Error in account creation swap: {str(e)}")
+            logging.error(traceback.format_exc())
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error creating token account: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+    
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
         """Create a Solana keypair from a base58 encoded private key string."""
         if ULTRA_DIAGNOSTICS:
