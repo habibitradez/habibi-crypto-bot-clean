@@ -141,12 +141,7 @@ class SolanaWallet:
     """Solana wallet implementation for the trading bot."""
     
     def __init__(self, private_key: Optional[str] = None, rpc_url: Optional[str] = None):
-        """Initialize a Solana wallet using solders library.
-        
-        Args:
-            private_key: Base58 encoded private key string
-            rpc_url: URL for the Solana RPC endpoint
-        """
+        """Initialize a Solana wallet using solders library."""
         self.rpc_url = rpc_url or CONFIG['SOLANA_RPC_URL']
         
         # Initialize the keypair
@@ -161,25 +156,31 @@ class SolanaWallet:
                 raise ValueError("No private key provided. Set WALLET_PRIVATE_KEY in environment variables or pass it directly.")
         
         self.public_key = self.keypair.pubkey()
+        logging.info(f"Wallet initialized with public key: {self.public_key}")
     
     def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
         """Create a Solana keypair from a base58 encoded private key string."""
-        if ULTRA_DIAGNOSTICS:
+        try:
             logging.info(f"Creating keypair from private key (length: {len(private_key)})")
             
-        secret_bytes = base58.b58decode(private_key)
-        
-        if ULTRA_DIAGNOSTICS:
+            # Decode the private key from base58
+            secret_bytes = base58.b58decode(private_key)
+            
             logging.info(f"Secret bytes length: {len(secret_bytes)}")
             
-        if len(secret_bytes) == 64:
-            logging.info("Using 64-byte secret key")
-            return Keypair.from_bytes(secret_bytes)
-        elif len(secret_bytes) == 32:
-            logging.info("Using 32-byte seed")
-            return Keypair.from_seed(secret_bytes)
-        else:
-            raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
+            # Create keypair based on secret length
+            if len(secret_bytes) == 64:
+                logging.info("Using 64-byte secret key")
+                return Keypair.from_bytes(secret_bytes)
+            elif len(secret_bytes) == 32:
+                logging.info("Using 32-byte seed")
+                return Keypair.from_seed(secret_bytes)
+            else:
+                raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
+        except Exception as e:
+            logging.error(f"Error creating keypair: {str(e)}")
+            logging.error(traceback.format_exc())
+            raise
     
     def get_balance(self) -> float:
         """Get the SOL balance of the wallet in SOL units."""
@@ -187,9 +188,6 @@ class SolanaWallet:
             logging.info("Getting wallet balance...")
             response = self._rpc_call("getBalance", [str(self.public_key)])
             
-            if ULTRA_DIAGNOSTICS:
-                logging.info(f"Balance response: {json.dumps(response, indent=2)}")
-                
             if 'result' in response and 'value' in response['result']:
                 # Convert lamports to SOL (1 SOL = 10^9 lamports)
                 balance = response['result']['value'] / 1_000_000_000
@@ -216,7 +214,7 @@ class SolanaWallet:
             logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
             
         headers = {"Content-Type": "application/json"}
-        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=10)
+        response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=15)
         
         if response.status_code == 200:
             response_data = response.json()
@@ -230,76 +228,62 @@ class SolanaWallet:
             logging.error(error_text)
             raise Exception(error_text)
     
-    def sign_and_submit_transaction(self, transaction):
-        """Sign and submit a transaction with enhanced verification."""
+    def sign_and_submit_transaction(self, transaction) -> Optional[str]:
+        """Sign and submit a transaction with enhanced error handling."""
         try:
-            logging.info("Signing and submitting transaction with enhanced verification...")
+            logging.info("Signing and submitting transaction with enhanced error handling...")
             
-            # Serialize transaction depending on its type
-            if isinstance(transaction, Transaction):
-                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
-            elif hasattr(transaction, "to_bytes"):
+            # Serialize transaction based on its type
+            if isinstance(transaction, VersionedTransaction):
                 serialized_tx = base64.b64encode(transaction.to_bytes()).decode("utf-8")
-            elif isinstance(transaction, str):
+                logging.info("Serialized VersionedTransaction successfully")
+            elif isinstance(transaction, Transaction):
+                serialized_tx = base64.b64encode(transaction.serialize()).decode("utf-8")
+                logging.info("Serialized Transaction successfully")
+            elif isinstance(serialized_tx, str) and serialized_tx.startswith("A"):
                 # Already serialized
-                serialized_tx = transaction
+                logging.info("Transaction was already serialized")
             else:
-                logging.error(f"Unsupported transaction type: {type(transaction).__name__}")
+                logging.error(f"Unknown transaction type: {type(transaction).__name__}")
                 return None
-                
-            # Enhanced transaction parameters
-            submit_params = {
-                "encoding": "base64",
-                "skipPreflight": False,  # Changed to false for better validation
-                "maxRetries": 5,
-                "commitment": "confirmed"  # Explicit commitment level
-            }
             
-            # Submit with detailed error handling
+            # Log the first part of the serialized transaction for debugging
+            logging.info(f"Serialized tx (first 50 chars): {serialized_tx[:50]}...")
+            
+            # Submit with enhanced parameters
             response = self._rpc_call("sendTransaction", [
                 serialized_tx,
-                submit_params
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,  # Skip preflight for better success rate
+                    "maxRetries": 5,
+                    "preflightCommitment": "processed"  # Use faster commitment level
+                }
             ])
+            
+            # Log full response for debugging
+            logging.info(f"Transaction submission response: {json.dumps(response)}")
             
             if "result" in response:
                 signature = response["result"]
                 
-                # Validate signature format (should be base58 string, never all 1's)
-                if signature == "1" * len(signature) or not re.match(r'^[1-9A-HJ-NP-Za-km-z]{87,88}$', signature):
-                    logging.error(f"Invalid signature format: {signature}")
+                # Validate signature format (should not be all 1's)
+                if signature == "1" * len(signature):
+                    logging.error("Invalid signature (all 1's) - transaction failed")
                     return None
                     
-                logging.info(f"Transaction submitted with signature: {signature}")
-                
-                # Wait for confirmation
-                for i in range(5):  # Try 5 times
-                    time.sleep(5)  # Wait 5 seconds between checks
-                    
-                    confirm_response = self._rpc_call("getTransaction", [
-                        signature,
-                        {"encoding": "json"}
-                    ])
-                    
-                    if "result" in confirm_response and confirm_response["result"]:
-                        if confirm_response["result"].get("meta", {}).get("err") is None:
-                            logging.info(f"Transaction confirmed successfully!")
-                            return signature
-                        else:
-                            err = confirm_response["result"]["meta"]["err"]
-                            logging.error(f"Transaction failed with error: {err}")
-                            return None
-                            
-                    logging.info(f"Waiting for confirmation... (attempt {i+1})")
-                    
-                logging.warning("Transaction not confirmed after multiple attempts")
-                return None
+                logging.info(f"Transaction submitted successfully: {signature}")
+                return signature
             else:
-                error = response.get("error", {})
-                logging.error(f"Transaction submission failed: {error.get('message', 'Unknown error')}")
+                if "error" in response:
+                    error_message = response.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
+                else:
+                    logging.error(f"Failed to submit transaction - unexpected response format")
                 return None
                 
         except Exception as e:
-            logging.error(f"Error in transaction submission: {str(e)}")
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
             logging.error(traceback.format_exc())
             return None
     
@@ -1852,7 +1836,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
 
 def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with enhanced verification and fallbacks."""
+    """Buy a token using Jupiter API with programmatic signing."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1864,22 +1848,15 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
         buy_successes += 1
         return True
     
-    # Define public RPC for verification
-    public_rpc = "https://api.mainnet-beta.solana.com"
+    # Check wallet balance first to make sure we have enough SOL
+    wallet_balance = wallet.get_balance()
+    if wallet_balance < amount_sol + 0.01:  # Add buffer for fees
+        logging.error(f"Insufficient wallet balance ({wallet_balance} SOL) for purchase of {amount_sol} SOL")
+        return False
     
     for attempt in range(max_attempts):
         try:
             logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
-            
-            # Check wallet balance first
-            balance_response = wallet._rpc_call("getBalance", [str(wallet.public_key)])
-            if "result" in balance_response and "value" in balance_response["result"]:
-                wallet_balance = balance_response["result"]["value"] / 1_000_000_000
-                logging.info(f"Current wallet balance: {wallet_balance} SOL")
-                
-                if wallet_balance < amount_sol:
-                    logging.error(f"Insufficient wallet balance ({wallet_balance} SOL) for purchase of {amount_sol} SOL")
-                    return False
             
             # 1. Get quote
             amount_lamports = int(amount_sol * 1000000000)
@@ -1901,7 +1878,7 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
             
             quote_data = quote_response.json()
             
-            # 2. Prepare swap with absolute minimum parameters
+            # 2. Prepare swap with minimal parameters
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
@@ -1927,42 +1904,23 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 3. Submit transaction with enhanced options
+            # 3. Submit transaction with programmatic signing
             serialized_tx = swap_data["swapTransaction"]
             
             logging.info(f"Submitting transaction...")
-            response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,  # Skip preflight for better success chance
-                    "maxRetries": 10,
-                    "preflightCommitment": "processed"  # Use a faster commitment level
-                }
-            ])
+            signature = wallet.sign_and_submit_transaction(serialized_tx)
             
-            # Log full response for debugging
-            logging.info(f"Transaction submission response: {json.dumps(response)}")
-            
-            if "result" not in response:
-                error_message = response.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Transaction error: {error_message}")
-                continue
-                
-            signature = response["result"]
-            
-            # Check if signature is valid
-            if signature == "1" * len(signature):
-                logging.error("Invalid signature (all 1's) - trying with different options")
+            if not signature:
+                logging.error("Failed to submit transaction")
                 continue
                 
             logging.info(f"Transaction submitted with signature: {signature}")
             
-            # Record transaction regardless of outcome at this point
+            # 4. Record the transaction as successful
             token_buy_timestamps[token_address] = time.time()
             buy_successes += 1
             
-            # Try to get a price for monitoring
+            # 5. Try to get a price for monitoring
             initial_price = get_token_price(token_address)
             if initial_price:
                 monitored_tokens[token_address] = {
@@ -1972,7 +1930,6 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
                     'buy_time': time.time()
                 }
             
-            # Consider this a success since we got a valid signature
             logging.info(f"✅ Buy transaction recorded successfully for {token_address}")
             return True
                 
