@@ -2933,8 +2933,8 @@ def test_sol_transfer():
     logging.info("===== TESTING SIMPLE SOL SELF-TRANSFER =====")
     
     try:
-        from solana.transaction import Transaction
-        from solana.system_program import SYS_PROGRAM_ID, transfer, TransferParams
+        from solders.transaction import Transaction
+        from solders.system_program import transfer, TransferParams
         
         # Amount to transfer (very small amount)
         lamports = 5000  # 0.000005 SOL
@@ -2948,13 +2948,11 @@ def test_sol_transfer():
         blockhash = blockhash_resp["result"]["value"]["blockhash"]
         
         # Create transfer to self
-        transfer_ix = transfer(
-            TransferParams(
-                from_pubkey=wallet.public_key,
-                to_pubkey=wallet.public_key,
-                lamports=lamports
-            )
-        )
+        transfer_ix = transfer(TransferParams(
+            from_pubkey=wallet.public_key, 
+            to_pubkey=wallet.public_key,
+            lamports=lamports
+        ))
         
         # Build transaction
         tx = Transaction()
@@ -2962,7 +2960,7 @@ def test_sol_transfer():
         tx.recent_blockhash = blockhash
         
         # Sign transaction
-        tx.sign(wallet.keypair)
+        tx.sign([wallet.keypair])
         
         # Convert to wire format
         serialized_tx = base64.b64encode(tx.serialize()).decode("utf-8")
