@@ -266,6 +266,12 @@ class SolanaWallet:
         
             if "result" in response:
                 signature = response["result"]
+            
+                # Validate signature - reject all-1's signatures
+                if signature == "1" * len(signature):
+                    logging.error("Invalid signature detected (all 1's) - transaction wasn't actually submitted")
+                    return None
+                
                 logging.info(f"Transaction submitted successfully: {signature}")
                 return signature
             else:
@@ -276,11 +282,46 @@ class SolanaWallet:
                     logging.error(f"Failed to submit transaction - unexpected response format: {response}")
                 return None
             
-        except Exception as e:
-            logging.error(f"Error signing and submitting transaction: {str(e)}")
-            logging.error(traceback.format_exc())
-            return None
+    except Exception as e:
+        logging.error(f"Error signing and submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+    def verify_transaction_exists(self, signature: str, max_attempts: int = 5) -> bool:
+        """Verify a transaction exists on the Solana blockchain."""
+        logging.info(f"Verifying transaction exists on-chain: {signature}")
     
+        for attempt in range(max_attempts):
+            try:
+                # Wait longer between attempts
+                wait_time = 5 * (attempt + 1)
+                if attempt > 0:
+                    logging.info(f"Waiting {wait_time}s before verification attempt #{attempt+1}...")
+                    time.sleep(wait_time)
+            
+                # Get transaction details
+                response = self._rpc_call("getTransaction", [
+                    signature,
+                    {"encoding": "json"}
+                ])
+            
+                if "result" in response and response["result"]:
+                    if response["result"].get("meta", {}).get("err") is None:
+                        logging.info(f"Transaction verified on-chain: {signature}")
+                        return True
+                    else:
+                        error = response["result"]["meta"]["err"]
+                        logging.error(f"Transaction failed with error: {error}")
+                        return False
+            
+                logging.info(f"Transaction not found on chain yet (attempt {attempt+1}/{max_attempts})")
+            
+            except Exception as e:
+                logging.error(f"Error verifying transaction: {str(e)}")
+            
+        logging.error(f"Transaction could not be verified after {max_attempts} attempts")
+        return False
+
     def get_token_accounts(self, token_address: str) -> List[dict]:
         """Get token accounts owned by this wallet for a specific token."""
         try:
@@ -1936,11 +1977,16 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
                 
             logging.info(f"Transaction submitted with signature: {signature}")
             
-            # 4. Record the transaction as successful
+            # 4. Verify the transaction actually exists on-chain
+            if not wallet.verify_transaction_exists(signature):
+                logging.error("Transaction was submitted but not found on-chain")
+                continue
+            
+            # 5. Record the transaction as successful
             token_buy_timestamps[token_address] = time.time()
             buy_successes += 1
             
-            # 5. Try to get a price for monitoring
+            # 6. Try to get a price for monitoring
             initial_price = get_token_price(token_address)
             if initial_price:
                 monitored_tokens[token_address] = {
