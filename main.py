@@ -1852,7 +1852,7 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         return False
 
 def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with enhanced verification."""
+    """Buy a token using Jupiter API with direct transaction submission."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1863,11 +1863,6 @@ def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 
         token_buy_timestamps[token_address] = time.time()
         buy_successes += 1
         return True
-    
-    # Ensure token account exists first
-    if not wallet.create_token_account(token_address):
-        logging.error(f"Failed to create token account for {token_address}")
-        return False
     
     for attempt in range(max_attempts):
         try:
@@ -1893,12 +1888,12 @@ def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 
             
             quote_data = quote_response.json()
             
-            # 2. Prepare swap
+            # 2. Prepare swap - simplify payload to minimum needed
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
-                "wrapAndUnwrapSol": True
+                "wrapAndUnwrapSol": True  # Let Jupiter handle SOL wrapping
             }
             
             logging.info(f"Preparing swap transaction...")
@@ -1919,18 +1914,15 @@ def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 3. Submit transaction
+            # 3. Submit transaction - submit directly to RPC
             serialized_tx = swap_data["swapTransaction"]
-            
-            # Log transaction details for debugging
-            logging.info(f"Transaction data (first 100 chars): {serialized_tx[:100]}...")
             
             logging.info(f"Submitting transaction...")
             response = wallet._rpc_call("sendTransaction", [
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,  # Set to False for better error detection
+                    "skipPreflight": False,
                     "maxRetries": 5
                 }
             ])
@@ -1944,65 +1936,37 @@ def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 
                 continue
                 
             signature = response["result"]
-            
-            # Validate signature format
-            if signature == "1" * len(signature):
-                logging.error("Invalid signature format (all 1's) - transaction likely failed")
-                continue
-                
             logging.info(f"Transaction submitted with signature: {signature}")
             
-            # 4. Verify transaction on chain with exponential backoff
-            confirmed = False
-            for i in range(5):  # Check 5 times with increasing delays
-                wait_time = 5 * (2 ** i)  # 5, 10, 20, 40, 80 seconds
-                logging.info(f"Waiting {wait_time}s for confirmation (check #{i+1}/5)...")
-                time.sleep(wait_time)
-                
-                # Check transaction status
-                status_response = wallet._rpc_call("getTransaction", [
-                    signature,
-                    {"encoding": "json"}
-                ])
-                
-                logging.info(f"Transaction status check #{i+1} response: {json.dumps(status_response, indent=2)}")
-                
-                if "result" in status_response and status_response["result"]:
-                    if status_response["result"].get("meta", {}).get("err") is None:
-                        logging.info(f"Transaction confirmed successfully on check #{i+1}!")
-                        confirmed = True
-                        break
-                    else:
-                        error = status_response["result"]["meta"]["err"]
-                        logging.error(f"Transaction failed with error: {error}")
-                        break
-            
-            if not confirmed:
-                logging.error("Transaction not confirmed after multiple attempts")
-                continue
+            # 4. Wait for confirmation
+            wait_time = 30
+            logging.info(f"Waiting {wait_time} seconds for confirmation...")
+            time.sleep(wait_time)
             
             # 5. Verify token balance
-            time.sleep(10)  # Extra wait to ensure token balance is updated
-            balance_response = wallet._rpc_call("getTokenAccountsByOwner", [
+            check_response = wallet._rpc_call("getTokenAccountsByOwner", [
                 str(wallet.public_key),
                 {"mint": token_address},
                 {"encoding": "jsonParsed"}
             ])
             
             token_amount = 0
-            if 'result' in balance_response and 'value' in balance_response['result'] and balance_response['result']['value']:
-                for account in balance_response['result']['value']:
-                    parsed_data = account['account']['data']['parsed']
-                    if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                        token_amount = int(parsed_data['info']['tokenAmount']['amount'])
-                        logging.info(f"Token balance after purchase: {token_amount}")
+            if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                for account in check_response['result']['value']:
+                    if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+                        parsed_data = account['account']['data']['parsed']
+                        if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                            token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                            logging.info(f"Token balance after purchase: {token_amount}")
+            else:
+                logging.warning(f"No token account found after transaction - it might still be processing")
             
             if token_amount > 0:
-                # Success!
+                # Success - record purchase regardless of token amount
                 token_buy_timestamps[token_address] = time.time()
                 buy_successes += 1
                 
-                # Record initial price for monitoring
+                # Try to get price for monitoring
                 initial_price = get_token_price(token_address)
                 if initial_price:
                     monitored_tokens[token_address] = {
@@ -2015,10 +1979,10 @@ def buy_token(token_address: str, amount_sol: float = 0.25, max_attempts: int = 
                 logging.info(f"✅ Successfully bought {token_amount} tokens of {token_address}")
                 return True
             else:
-                logging.warning(f"Transaction confirmed but no tokens received")
+                logging.warning(f"Transaction may have succeeded but no tokens received yet")
                 
                 # Try with a larger amount in the next attempt
-                amount_sol *= 1.5
+                amount_sol *= 1.5  # Increase amount by 50%
                 logging.info(f"Increasing amount to {amount_sol} SOL for next attempt")
                 
         except Exception as e:
