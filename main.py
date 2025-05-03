@@ -1746,7 +1746,33 @@ def force_buy_usdc():
     
     logging.error("Failed to buy USDC - Check logs for errors")
     return False
+
+def test_basic_functionality():
+    """Test basic wallet and transaction functionality."""
+    logging.info("===== TESTING BASIC FUNCTIONALITY =====")
     
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test a simple BONK purchase
+    bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+    amount_sol = 0.05  # Small test amount
+    
+    logging.info(f"Testing purchase of BONK with {amount_sol} SOL")
+    result = buy_token(bonk_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Basic functionality test passed!")
+        return True
+    else:
+        logging.error("❌ Basic functionality test failed.")
+        return False
+
 def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
     """Execute a buy order for a specific token."""
     global buy_attempts, buy_successes
@@ -3108,20 +3134,19 @@ def main():
     solders_version = check_solders_version()
     logging.info(f"Solders version: {solders_version}")
     
+    # Log environment variables (with masked private key)
+    logging.info(f"SOLANA_RPC_URL: {CONFIG['SOLANA_RPC_URL']}")
+    logging.info(f"WALLET_ADDRESS: {CONFIG['WALLET_ADDRESS']}")
+    masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
+    logging.info(f"WALLET_PRIVATE_KEY: {masked_key}")
+    
     if initialize():
-        # Test with public RPC first
-        if test_with_public_rpc():
-            logging.info("✅ Public RPC test succeeded! The issue may be with your QuickNode configuration.")
-            
-            # Test buying BONK
-            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-            if buy_token(bonk_address, 0.5):
-                logging.info("✅ BONK purchase succeeded! Starting trading loop...")
-                trading_loop()
-            else:
-                logging.error("❌ BONK purchase failed. Check logs for details.")
+        # Test basic functionality
+        if test_basic_functionality():
+            logging.info("Basic functionality confirmed. Starting trading loop...")
+            trading_loop()
         else:
-            logging.error("❌ Public RPC test failed. The issue may be more fundamental.")
+            logging.error("Basic functionality test failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
