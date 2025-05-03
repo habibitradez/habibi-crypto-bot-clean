@@ -282,10 +282,10 @@ class SolanaWallet:
                     logging.error(f"Failed to submit transaction - unexpected response format: {response}")
                 return None
             
-    except Exception as e:
-        logging.error(f"Error signing and submitting transaction: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
+        except Exception as e:
+            logging.error(f"Error signing and submitting transaction: {str(e)}")
+            logging.error(traceback.format_exc())
+            return None
 
     def verify_transaction_exists(self, signature: str, max_attempts: int = 5) -> bool:
         """Verify a transaction exists on the Solana blockchain."""
