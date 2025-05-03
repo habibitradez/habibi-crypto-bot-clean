@@ -1986,7 +1986,114 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
     
     logging.error(f"All {max_attempts} attempts to buy {token_address} failed")
     return False
+
+def test_with_public_rpc():
+    """Test a transaction with a public RPC endpoint."""
+    logging.info("===== TESTING WITH PUBLIC RPC ENDPOINT =====")
     
+    # Store original RPC URL
+    original_rpc = CONFIG['SOLANA_RPC_URL']
+    
+    try:
+        # Temporarily use public RPC
+        public_rpc = "https://api.mainnet-beta.solana.com"
+        logging.info(f"Temporarily switching to public RPC: {public_rpc}")
+        
+        # Create a temporary wallet with the public RPC
+        temp_wallet = SolanaWallet(
+            private_key=CONFIG['WALLET_PRIVATE_KEY'],
+            rpc_url=public_rpc
+        )
+        
+        # Check balance to verify connection
+        balance = temp_wallet.get_balance()
+        logging.info(f"Wallet balance via public RPC: {balance} SOL")
+        
+        # Try buying a small amount of BONK
+        bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        amount_sol = 0.05  # Small test amount
+        
+        # Get quote from Jupiter
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": bonk_address,
+            "amount": str(int(amount_sol * 1000000000)),
+            "slippageBps": "3000"
+        }
+        
+        quote_response = requests.get(quote_url, params=params, timeout=30)
+        if quote_response.status_code != 200:
+            logging.error(f"Quote failed: {quote_response.status_code}")
+            return False
+            
+        quote_data = quote_response.json()
+        
+        # Prepare swap
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        payload = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(temp_wallet.public_key),
+            "wrapAndUnwrapSol": True
+        }
+        
+        swap_response = requests.post(
+            swap_url, 
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Swap preparation failed: {swap_response.status_code}")
+            return False
+            
+        swap_data = swap_response.json()
+        serialized_tx = swap_data["swapTransaction"]
+        
+        # Submit via public RPC
+        response = temp_wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            logging.info(f"Transaction submitted via public RPC: {signature}")
+            
+            # Wait for confirmation
+            time.sleep(30)
+            
+            # Check balance to see if it worked
+            check_response = temp_wallet._rpc_call("getTokenAccountsByOwner", [
+                str(temp_wallet.public_key),
+                {"mint": bonk_address},
+                {"encoding": "jsonParsed"}
+            ])
+            
+            if 'result' in check_response and 'value' in check_response['result'] and check_response['result']['value']:
+                logging.info("✅ Transaction via public RPC succeeded!")
+                return True
+            else:
+                logging.warning("Transaction via public RPC may have succeeded but no tokens found")
+                return False
+        else:
+            logging.error(f"Transaction via public RPC failed: {response}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error testing with public RPC: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False
+    finally:
+        # Restore original RPC
+        CONFIG['SOLANA_RPC_URL'] = original_rpc
+        logging.info(f"Restored original RPC URL: {original_rpc}")
+
     # Rest of the buy_token function remains the same...
 def simulate_transaction(serialized_tx: str) -> bool:
     """Simulate a transaction before submitting it."""
@@ -3042,20 +3149,22 @@ def main():
     
     # Check Solders version at startup
     solders_version = check_solders_version()
+    logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test basic RPC functionality
-        if simple_rpc_test():
-            logging.info("✅ Basic RPC test passed!")
+        # Test with public RPC first
+        if test_with_public_rpc():
+            logging.info("✅ Public RPC test succeeded! The issue may be with your QuickNode configuration.")
             
             # Test buying BONK
-            if test_buy_bonk():
-                logging.info("Starting main trading loop...")
+            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+            if buy_token(bonk_address, 0.5):
+                logging.info("✅ BONK purchase succeeded! Starting trading loop...")
                 trading_loop()
             else:
-                logging.error("BONK test purchase failed. Check logs for details.")
+                logging.error("❌ BONK purchase failed. Check logs for details.")
         else:
-            logging.error("❌ Basic RPC test failed. Check wallet and RPC endpoint.")
+            logging.error("❌ Public RPC test failed. The issue may be more fundamental.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
