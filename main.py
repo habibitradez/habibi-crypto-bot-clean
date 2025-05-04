@@ -297,21 +297,26 @@ class SolanaWallet:
         
             logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
         
-            # Submit transaction
+            # Submit transaction with explicit disabling of simulation
             response = self._rpc_call("sendTransaction", [
                 serialized_tx,
                 {
                     "encoding": "base64",
-                    "skipPreflight": True,
+                    "skipPreflight": False,  # Changed to False for actual execution
                     "maxRetries": 5,
-                    "preflightCommitment": "processed"
+                    "preflightCommitment": "finalized"  # Changed to finalized for stronger commitment
                 }
             ])
         
             logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
         
             if "result" in response:
-                return response["result"]
+                result = response["result"]
+                # Check for all 1's signature pattern
+                if result == "1" * len(result):
+                    logging.error("Received all 1's signature - transaction was simulated but not executed")
+                    return None
+                return result
             else:
                 error_message = response.get("error", {}).get("message", "Unknown error")
                 logging.error(f"Failed to submit transaction: {error_message}")
