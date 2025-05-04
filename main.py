@@ -1896,8 +1896,8 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with direct RPC submission and public endpoint."""
+def buy_token_orca(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Orca API with direct RPC submission."""
     global buy_attempts, buy_successes
     
     # Default to USDC if no token specified
@@ -1905,17 +1905,13 @@ def buy_token(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
         token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
     
     buy_attempts += 1
-    logging.info(f"Starting buy for {token_address} - Amount: {amount_sol} SOL")
+    logging.info(f"Starting Orca buy for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
         logging.info(f"[SIMULATION] Bought token {token_address}")
         token_buy_timestamps[token_address] = time.time()
         buy_successes += 1
         return True
-    
-    # Use public RPC endpoint for testing
-    public_rpc = "https://api.mainnet-beta.solana.com"
-    logging.info(f"Using public RPC endpoint: {public_rpc}")
     
     # Check wallet balance
     balance = wallet.get_balance()
@@ -1932,121 +1928,156 @@ def buy_token(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v
             # 1. Convert SOL to lamports
             amount_lamports = int(amount_sol * 1000000000)
             
-            # 2. Get a quote
-            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-            params = {
-                "inputMint": SOL_TOKEN_ADDRESS, 
+            # 2. Get pools from Orca API (replace with actual Orca API endpoint)
+            orca_api_url = "https://api.orca.so"
+            pools_url = f"{orca_api_url}/v1/pools/all"
+            
+            logging.info(f"Getting Orca pools...")
+            pools_response = requests.get(pools_url, timeout=15)
+            
+            if pools_response.status_code != 200:
+                logging.error(f"Failed to get Orca pools: {pools_response.status_code}")
+                continue
+                
+            pools_data = pools_response.json()
+            
+            # 3. Find the SOL/TOKEN pool
+            target_pool = None
+            for pool in pools_data:
+                if pool["tokenA"]["mint"] == SOL_TOKEN_ADDRESS and pool["tokenB"]["mint"] == token_address:
+                    target_pool = pool
+                    break
+                elif pool["tokenB"]["mint"] == SOL_TOKEN_ADDRESS and pool["tokenA"]["mint"] == token_address:
+                    target_pool = pool
+                    break
+            
+            if not target_pool:
+                logging.error(f"No Orca pool found for SOL/{token_address}")
+                continue
+                
+            logging.info(f"Found Orca pool: {target_pool['id']}")
+            
+            # 4. Get quote for swap
+            quote_url = f"{orca_api_url}/v1/quote"
+            quote_params = {
+                "inputMint": SOL_TOKEN_ADDRESS,
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "1000"  # 10% slippage
+                "slippage": 1.0  # 1% slippage
             }
             
-            logging.info(f"Getting quote...")
-            quote_response = requests.get(quote_url, params=params, timeout=15)
+            logging.info(f"Getting Orca quote...")
+            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
             
             if quote_response.status_code != 200:
-                logging.error(f"Quote failed: {quote_response.status_code}")
+                logging.error(f"Orca quote failed: {quote_response.status_code}")
                 continue
                 
             quote_data = quote_response.json()
             
-            # 3. Prepare swap - absolutely minimal payload
-            swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-            payload = {
-                "quoteResponse": quote_data,
-                "userPublicKey": str(wallet.public_key),
-                "wrapAndUnwrapSol": True
+            # 5. Build swap transaction
+            swap_url = f"{orca_api_url}/v1/swap"
+            swap_payload = {
+                "user": str(wallet.public_key),
+                "quoteId": quote_data["id"],
+                "wrapUnwrapSOL": True
             }
             
-            logging.info(f"Preparing swap transaction...")
+            logging.info(f"Building Orca swap transaction...")
             swap_response = requests.post(
                 swap_url, 
-                json=payload,
+                json=swap_payload,
                 headers={"Content-Type": "application/json"},
                 timeout=15
             )
             
             if swap_response.status_code != 200:
-                logging.error(f"Swap preparation failed: {swap_response.status_code}")
+                logging.error(f"Orca swap transaction build failed: {swap_response.status_code}")
                 continue
                 
             swap_data = swap_response.json()
             
-            if "swapTransaction" not in swap_data:
-                logging.error("Swap response missing transaction data")
+            if "transaction" not in swap_data:
+                logging.error("Orca response missing transaction data")
                 continue
             
-            # 4. Just directly submit transaction to PUBLIC RPC
-            serialized_tx = swap_data["swapTransaction"]
+            # 6. Sign and submit transaction
+            transaction_data = swap_data["transaction"]
             
-            logging.info(f"Submitting raw transaction directly to public RPC...")
-            response = requests.post(
-                public_rpc,  # Use public RPC endpoint instead of your QuickNode
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "sendTransaction",
-                    "params": [
-                        serialized_tx,
-                        {
-                            "encoding": "base64",
-                            "skipPreflight": False,
-                            "maxRetries": 3,
-                            "preflightCommitment": "confirmed"
-                        }
-                    ]
-                },
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
+            logging.info(f"Signing and submitting Orca transaction...")
             
-            if response.status_code != 200:
-                logging.error(f"Raw RPC request failed: {response.status_code}")
-                continue
-                
-            response_data = response.json()
-            logging.info(f"Raw RPC response: {json.dumps(response_data)}")
+            # Convert transaction to proper format for wallet
+            from base64 import b64decode
+            from solders.transaction import Transaction, VersionedTransaction
             
-            if "result" in response_data:
-                signature = response_data["result"]
-                
-                if signature == "1" * len(signature):
-                    logging.error("Invalid signature detected (all 1's)")
+            try:
+                # Try to deserialize as VersionedTransaction
+                tx_bytes = b64decode(transaction_data)
+                transaction = VersionedTransaction.from_bytes(tx_bytes)
+                logging.info("Deserialized as VersionedTransaction")
+            except Exception as e:
+                try:
+                    # Try to deserialize as regular Transaction
+                    transaction = Transaction.from_bytes(tx_bytes)
+                    logging.info("Deserialized as regular Transaction")
+                except Exception as e2:
+                    logging.error(f"Failed to deserialize transaction: {str(e2)}")
                     continue
-                    
-                logging.info(f"Transaction submitted successfully: {signature}")
-                
-                # Record transaction
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                
-                # Record initial price for monitoring
-                initial_price = get_token_price(token_address)
-                if initial_price:
-                    monitored_tokens[token_address] = {
-                        'initial_price': initial_price,
-                        'highest_price': initial_price,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
-                    }
-                
-                logging.info(f"✅ Buy transaction recorded successfully!")
-                return True
-            else:
-                if "error" in response_data:
-                    error_message = response_data.get("error", {}).get("message", "Unknown error")
-                    logging.error(f"Transaction error: {error_message}")
+            
+            # Sign and submit the transaction
+            signature = wallet.sign_and_submit_transaction(transaction)
+            
+            if not signature:
+                logging.error("Failed to sign and submit Orca transaction")
                 continue
+                
+            logging.info(f"Orca transaction submitted with signature: {signature}")
+            
+            # Wait for confirmation
+            logging.info("Waiting for transaction confirmation...")
+            time.sleep(20)  # Wait for confirmation
+            
+            # Check for transaction success
+            status_response = wallet._rpc_call("getTransaction", [
+                signature,
+                {"encoding": "json"}
+            ])
+            
+            if "result" in status_response and status_response["result"]:
+                if status_response["result"].get("meta", {}).get("err") is None:
+                    logging.info(f"Orca transaction confirmed successfully!")
+                    
+                    # Record transaction success
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    
+                    # Record initial price for monitoring
+                    initial_price = get_token_price(token_address)
+                    if initial_price:
+                        monitored_tokens[token_address] = {
+                            'initial_price': initial_price,
+                            'highest_price': initial_price,
+                            'partial_profit_taken': False,
+                            'buy_time': time.time()
+                        }
+                    
+                    logging.info(f"✅ Orca buy transaction recorded successfully!")
+                    return True
+                else:
+                    error = status_response["result"]["meta"]["err"]
+                    logging.error(f"Orca transaction failed with error: {error}")
+            else:
+                logging.warning("Orca transaction not confirmed after 20 seconds")
                 
         except Exception as e:
-            logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
+            logging.error(f"Error in Orca buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
             
             wait_time = 10 * (attempt + 1)
             logging.info(f"Waiting {wait_time}s before next attempt...")
             time.sleep(wait_time)
     
-    logging.error(f"All {max_attempts} attempts to buy {token_address} failed")
+    logging.error(f"All {max_attempts} Orca buy attempts for {token_address} failed")
     return False
 
 def test_with_public_rpc():
@@ -2993,6 +3024,32 @@ def submit_standardized_transaction(serialized_tx: str) -> Optional[str]:
         logging.error(f"Error submitting transaction: {str(e)}")
         logging.error(traceback.format_exc())
         return None
+
+def test_basic_functionality():
+    """Test basic wallet and transaction functionality."""
+    logging.info("===== TESTING BASIC FUNCTIONALITY WITH ORCA =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test a simple USDC purchase
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL using Orca")
+    result = buy_token_orca(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Orca functionality test passed!")
+        return True
+    else:
+        logging.error("❌ Orca functionality test failed.")
+        return False
 
 def test_wallet_functionality():
     """Test basic wallet functionality with a tiny SOL transfer."""
