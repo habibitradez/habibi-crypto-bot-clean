@@ -1864,8 +1864,8 @@ def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8
                 "outputMint": target_token,
                 "amount": str(amount_lamports),
                 "slippageBps": 50,  # 0.5% slippage
-                "maxAccounts": 10,  # Limit accounts to avoid transaction size issues
-                "onlyDirectRoutes": False
+                "maxAccounts": 10  # Limit accounts to avoid transaction size issues
+                # Removed the problematic onlyDirectRoutes parameter
             }
             
             logging.info(f"Quote URL: {JUPITER_QUOTE_URL}")
@@ -1893,13 +1893,8 @@ def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8
                 "userPublicKey": str(wallet.public_key),
                 "wrapUnwrapSOL": True,
                 "dynamicComputeUnitLimit": True,  # Optimize compute units
-                "dynamicSlippage": True,  # Use dynamic slippage
-                "prioritizationFeeLamports": {
-                    "priorityLevelWithMaxLamports": {
-                        "maxLamports": 1000000,  # 0.001 SOL max priority fee
-                        "priorityLevel": "high"
-                    }
-                }
+                "dynamicSlippage": True  # Use dynamic slippage
+                # Removed prioritizationFeeLamports to simplify the request
             }
             
             logging.info(f"Swap URL: {JUPITER_SWAP_URL}")
@@ -1929,12 +1924,9 @@ def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8
             # 4. Submit transaction
             logging.info(f"Submitting transaction directly...")
             
-            # Convert base64 transaction to bytes for RPC submission
-            serialized_tx = tx_base64  # Already base64 encoded
-            
             # Submit the transaction directly to the RPC node
             response = wallet._rpc_call("sendTransaction", [
-                serialized_tx,
+                tx_base64,  # Already base64 encoded
                 {
                     "encoding": "base64",
                     "skipPreflight": False,  # Execute normally
