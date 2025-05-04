@@ -1951,9 +1951,6 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                 continue
             recent_blockhash = blockhash_response['result']['value']['blockhash']
             
-            # Use the wallet's sign_and_send_transaction method instead
-            # This bypasses the need to create a Transaction object directly
-            
             # Simple self-transfer to test transaction signing
             from solders.system_program import transfer, TransferParams
             
@@ -1963,18 +1960,29 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                 lamports=1000  # Just a tiny amount
             ))
             
-            # Submit the instruction using the wallet's method
-            signature = wallet.sign_and_send_transaction([transfer_ix])
+            # Create transaction bytes
+            from solders.message import Message
+            from solders.transaction import Transaction, VersionedTransaction
             
-            if not signature:
-                logging.error("Failed to sign and send transaction")
+            message = Message.new_with_blockhash(
+                [transfer_ix], 
+                wallet.public_key,  # Payer
+                recent_blockhash
+            )
+            
+            # Sign the transaction using wallet.sign_transaction
+            signed_tx = wallet.sign_and_submit_transaction(message)
+            
+            if not signed_tx:
+                logging.error("Failed to sign and submit transaction")
                 continue
                 
             # Check for "all 1's" pattern
-            if signature == "1" * len(signature):
+            if isinstance(signed_tx, str) and signed_tx == "1" * len(signed_tx):
                 logging.error("Invalid signature detected (all 1's) - transaction wasn't actually submitted")
                 continue
                 
+            signature = signed_tx
             logging.info(f"Test transaction submitted with signature: {signature}")
             
             # Wait for confirmation
