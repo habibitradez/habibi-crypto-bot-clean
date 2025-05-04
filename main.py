@@ -3192,6 +3192,32 @@ def test_direct_swap():
         logging.error("❌ Direct swap functionality test failed.")
         return False
 
+def test_jupiter_buy():
+    """Test Jupiter buy functionality with a small amount."""
+    logging.info("===== TESTING JUPITER BUY FUNCTIONALITY =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL")
+    result = buy_token_jupiter(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Jupiter buy functionality test passed!")
+        return True
+    else:
+        logging.error("❌ Jupiter buy functionality test failed.")
+        return False
+
 def test_token_account_creation():
     """Test creating a token account for BONK and verifying it exists."""
     logging.info("=== TESTING TOKEN ACCOUNT CREATION ===")
