@@ -4326,13 +4326,6 @@ def main():
             trading_loop()
         else:
             logging.error("Helius token purchase test failed. Cannot start trading.")
-            # Fall back to previous methods if needed
-            logging.info("Attempting fallback to direct Jupiter method...")
-            if test_direct_jupiter():
-                logging.info("Direct Jupiter swap confirmed. Starting trading loop...")
-                trading_loop()
-            else:
-                logging.error("All transaction methods failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
