@@ -1820,6 +1820,7 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
     import requests
     import base64
     import json
+    import os
     
     # Default to USDC if no token specified
     if not token_address:
@@ -1834,11 +1835,16 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
         buy_successes += 1
         return True
     
-    # Get your Helius API key (you'll need to sign up for one)
-    helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+    # Get your Helius API key (directly from environment and as fallback from CONFIG)
+    helius_api_key = os.environ.get('HELIUS_API_KEY', '')
+    if not helius_api_key:
+        helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+        
     if not helius_api_key:
         logging.error("No Helius API key found. Please add one to your configuration.")
         return False
+        
+    logging.info(f"Using Helius API key: {helius_api_key[:5]}...{helius_api_key[-5:]}")
     
     # Helius RPC URL
     helius_rpc_url = f"https://rpc.helius.xyz/?api-key={helius_api_key}"
@@ -2072,12 +2078,31 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                             token_buy_timestamps[token_address] = time.time()
                             buy_successes += 1
                             
-                            # Record initial price for monitoring
-                            initial_price = get_token_price(token_address)
-                            if initial_price:
+                            # Record initial price for monitoring with error handling
+                            try:
+                                initial_price = get_token_price(token_address)
+                                if initial_price:
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                else:
+                                    # Fallback: use a placeholder price
+                                    logging.warning(f"Could not get initial price for {token_address}, using placeholder")
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': 0.01,  # Placeholder
+                                        'highest_price': 0.01,  # Placeholder
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                            except Exception as e:
+                                logging.warning(f"Error getting token price: {str(e)}")
+                                # Use placeholder price
                                 monitored_tokens[token_address] = {
-                                    'initial_price': initial_price,
-                                    'highest_price': initial_price,
+                                    'initial_price': 0.01,  # Placeholder
+                                    'highest_price': 0.01,  # Placeholder
                                     'partial_profit_taken': False,
                                     'buy_time': time.time()
                                 }
@@ -3776,12 +3801,21 @@ def test_helius_buy():
     """Test token purchase using Helius service."""
     logging.info("===== TESTING HELIUS TOKEN PURCHASE =====")
     
-    # Check if Helius API key is configured
-    helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+    # Check if Helius API key is configured - access directly from environment
+    import os
+    helius_api_key = os.environ.get('HELIUS_API_KEY', '')
+    
+    if not helius_api_key:
+        # Fall back to CONFIG dictionary if it exists there
+        helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+        
     if not helius_api_key:
         logging.error("No Helius API key found in configuration. Please add one to proceed.")
         logging.info("You can get a free API key at https://dev.helius.xyz/dashboard/app")
         return False
+    
+    # Add the API key to CONFIG for use by the buy function
+    CONFIG['HELIUS_API_KEY'] = helius_api_key
     
     # Check wallet connection
     balance = wallet.get_balance()
