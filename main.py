@@ -2265,8 +2265,9 @@ def buy_token_with_solathon(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G
         
     logging.info(f"Wallet balance: {balance} SOL")
     
-    # Get private key from your existing wallet
-    private_key = bytes(wallet.keypair.secret_key).hex()
+    # Get private key from your existing wallet - corrected for Solders keypair
+    # For Solders keypair, we need to convert the byte array directly
+    private_key = bytes(wallet.keypair._keypair.secret_key).hex()
     
     for attempt in range(max_attempts):
         try:
@@ -2316,8 +2317,7 @@ def buy_token_with_solathon(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G
                     "inputMint": sol_token,
                     "outputMint": token_address,
                     "amount": str(amount_lamports),
-                    "slippageBps": 50,  # 0.5% slippage
-                    "maxAccounts": 10  # Limit accounts to avoid transaction size issues
+                    "slippageBps": 50  # 0.5% slippage
                 }
                 
                 quote_response = requests.get(
@@ -2338,9 +2338,7 @@ def buy_token_with_solathon(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G
                 swap_params = {
                     "quoteResponse": quote_data,
                     "userPublicKey": str(sender.public_key),
-                    "wrapUnwrapSOL": True,
-                    "dynamicComputeUnitLimit": True,
-                    "dynamicSlippage": True
+                    "wrapUnwrapSOL": True
                 }
                 
                 swap_response = requests.post(
