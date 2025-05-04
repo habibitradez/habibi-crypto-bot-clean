@@ -2002,7 +2002,7 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                         program_id=ASSOCIATED_TOKEN_PROGRAM_ID,
                         accounts=[
                             {"pubkey": wallet.public_key, "is_signer": True, "is_writable": True},  # Payer
-                            {"pubkey": Pubkey.from_string(token_account_address), "is_signer": False, "is_writable": True},  # ATA
+                            {"pubkey": Pubkey.from_bytes(token_account_address), "is_signer": False, "is_writable": True}  # ATA
                             {"pubkey": owner, "is_signer": False, "is_writable": False},  # Owner
                             {"pubkey": token_mint, "is_signer": False, "is_writable": False},  # Mint
                             {"pubkey": Pubkey.from_string("11111111111111111111111111111111"), "is_signer": False, "is_writable": False},  # System Program
