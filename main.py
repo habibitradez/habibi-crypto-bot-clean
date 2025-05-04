@@ -1812,6 +1812,301 @@ def test_basic_functionality():
         logging.error("❌ Basic functionality test failed.")
         return False
 
+def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Helius transaction service."""
+    global buy_attempts, buy_successes
+    import time
+    import traceback
+    import requests
+    import base64
+    import json
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+    
+    buy_attempts += 1
+    logging.info(f"Starting Helius token buy for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Get your Helius API key (you'll need to sign up for one)
+    helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+    if not helius_api_key:
+        logging.error("No Helius API key found. Please add one to your configuration.")
+        return False
+    
+    # Helius RPC URL
+    helius_rpc_url = f"https://rpc.helius.xyz/?api-key={helius_api_key}"
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:  # Include buffer for fees
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Define token parameters (SOL and target token)
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL mint address
+            
+            # 1. Get quote from Jupiter API
+            logging.info(f"Getting Jupiter quote for {amount_sol} SOL to {token_address}...")
+            
+            amount_lamports = int(amount_sol * 1_000_000_000)  # Convert to lamports
+            
+            jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippageBps": 50  # 0.5% slippage
+            }
+            
+            quote_response = requests.get(
+                jupiter_quote_url,
+                params=quote_params,
+                timeout=15
+            )
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+            
+            # 2. Get swap instructions
+            jupiter_swap_url = "https://quote-api.jup.ag/v6/swap-instructions"
+            swap_params = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True
+            }
+            
+            swap_response = requests.post(
+                jupiter_swap_url,
+                json=swap_params,
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap instructions: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            
+            # 3. Extract instructions and create transaction
+            if not all(key in swap_data for key in ["computeBudgetInstructions", "setupInstructions", "swapInstruction"]):
+                logging.error(f"Jupiter response missing instruction data: {list(swap_data.keys())}")
+                continue
+            
+            from solders.transaction import VersionedTransaction
+            from solders.message import MessageV0
+            from solders.instruction import Instruction, AccountMeta
+            from solders.pubkey import Pubkey
+            
+            # Helper function to deserialize instructions
+            def deserialize_instruction(instruction_data):
+                return Instruction(
+                    program_id=Pubkey.from_string(instruction_data["programId"]),
+                    accounts=[
+                        AccountMeta(
+                            pubkey=Pubkey.from_string(account["pubkey"]),
+                            is_signer=account["isSigner"],
+                            is_writable=account["isWritable"]
+                        )
+                        for account in instruction_data["accounts"]
+                    ],
+                    data=base64.b64decode(instruction_data["data"])
+                )
+            
+            # Collect all instructions
+            instructions = []
+            
+            # Add token ledger instruction if present
+            if swap_data.get("tokenLedgerInstruction"):
+                instructions.append(deserialize_instruction(swap_data["tokenLedgerInstruction"]))
+            
+            # Add compute budget instructions
+            for instr in swap_data.get("computeBudgetInstructions", []):
+                instructions.append(deserialize_instruction(instr))
+            
+            # Add setup instructions
+            for instr in swap_data.get("setupInstructions", []):
+                instructions.append(deserialize_instruction(instr))
+            
+            # Add swap instruction
+            instructions.append(deserialize_instruction(swap_data["swapInstruction"]))
+            
+            # Add cleanup instruction if present
+            if swap_data.get("cleanupInstruction"):
+                instructions.append(deserialize_instruction(swap_data["cleanupInstruction"]))
+            
+            # 4. Get recent blockhash
+            blockhash_response = requests.post(
+                helius_rpc_url,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getLatestBlockhash",
+                    "params": [{"commitment": "finalized"}]
+                }
+            )
+            
+            blockhash_result = blockhash_response.json()
+            if "result" not in blockhash_result or "value" not in blockhash_result["result"]:
+                logging.error("Failed to get recent blockhash from Helius")
+                continue
+            
+            recent_blockhash = blockhash_result["result"]["value"]["blockhash"]
+            last_valid_block_height = blockhash_result["result"]["value"]["lastValidBlockHeight"]
+            
+            # 5. Create and sign transaction
+            # Get address lookup tables if present
+            address_lookup_tables = []
+            if "addressLookupTableAddresses" in swap_data and swap_data["addressLookupTableAddresses"]:
+                from solders.address_lookup_table_account import AddressLookupTableAccount
+                
+                for alt_address in swap_data["addressLookupTableAddresses"]:
+                    alt_info_response = requests.post(
+                        helius_rpc_url,
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getAccountInfo",
+                            "params": [alt_address, {"encoding": "base64"}]
+                        }
+                    )
+                    
+                    alt_info = alt_info_response.json()
+                    if "result" in alt_info and alt_info["result"]["value"]:
+                        address_lookup_table = AddressLookupTableAccount.from_bytes(
+                            base64.b64decode(alt_info["result"]["value"]["data"][0])
+                        )
+                        address_lookup_tables.append(address_lookup_table)
+            
+            # Create message
+            message = MessageV0.new_with_blockhash(
+                instructions=instructions,
+                address_lookup_tables=address_lookup_tables,
+                payer=wallet.public_key,
+                blockhash=recent_blockhash
+            )
+            
+            # Create and sign transaction
+            transaction = VersionedTransaction(message, [wallet.keypair])
+            
+            # Serialize the transaction for Helius
+            serialized_tx = base64.b64encode(bytes(transaction)).decode("utf-8")
+            
+            # 6. Submit transaction using Helius sendSmartTransaction
+            helius_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendSmartTransaction",
+                "params": [
+                    serialized_tx,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": False,
+                        "prioritizationFee": {
+                            "type": "priorityLevel",
+                            "value": "high"
+                        }
+                    }
+                ]
+            }
+            
+            logging.info("Submitting transaction via Helius sendSmartTransaction...")
+            helius_response = requests.post(helius_rpc_url, json=helius_request)
+            helius_result = helius_response.json()
+            
+            if "result" in helius_result:
+                signature = helius_result["result"]
+                
+                # Check for all 1's pattern
+                if signature == "1" * len(signature):
+                    logging.error("Received all 1's signature - transaction was simulated but not executed")
+                    continue
+                    
+                logging.info(f"Jupiter swap transaction submitted with signature: {signature}")
+                
+                # 7. Verify transaction success with Helius
+                success = False
+                for check_num in range(5):
+                    wait_time = 5 * (2 ** check_num)
+                    logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/5)...")
+                    time.sleep(wait_time)
+                    
+                    # Check transaction status
+                    status_request = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [
+                            signature,
+                            {"encoding": "json", "maxSupportedTransactionVersion": 0}
+                        ]
+                    }
+                    
+                    status_response = requests.post(helius_rpc_url, json=status_request)
+                    status_result = status_response.json()
+                    
+                    if "result" in status_result and status_result["result"]:
+                        result = status_result["result"]
+                        if result.get("meta", {}).get("err") is None:
+                            logging.info(f"Transaction confirmed successfully!")
+                            
+                            # Record transaction success
+                            token_buy_timestamps[token_address] = time.time()
+                            buy_successes += 1
+                            
+                            # Record initial price for monitoring
+                            initial_price = get_token_price(token_address)
+                            if initial_price:
+                                monitored_tokens[token_address] = {
+                                    'initial_price': initial_price,
+                                    'highest_price': initial_price,
+                                    'partial_profit_taken': False,
+                                    'buy_time': time.time()
+                                }
+                            
+                            logging.info(f"✅ Token swap via Helius successful!")
+                            success = True
+                            break
+                        else:
+                            error = result["meta"]["err"]
+                            logging.error(f"Transaction failed with error: {error}")
+                            break
+                
+                if success:
+                    return True
+            else:
+                error_message = helius_result.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed to submit transaction via Helius: {error_message}")
+                
+        except Exception as e:
+            logging.error(f"Error in Helius swap attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} Helius swap attempts for {token_address} failed")
+    return False
+
 def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Buy a token using Jupiter API directly."""
     global buy_attempts, buy_successes
@@ -3476,7 +3771,40 @@ def tiny_buy_test():
         logging.error(f"❌ [tiny_buy_test] Exception occurred: {e}")
         logging.error(traceback.format_exc())
         return False
-        
+
+def test_helius_buy():
+    """Test token purchase using Helius service."""
+    logging.info("===== TESTING HELIUS TOKEN PURCHASE =====")
+    
+    # Check if Helius API key is configured
+    helius_api_key = CONFIG.get('HELIUS_API_KEY', '')
+    if not helius_api_key:
+        logging.error("No Helius API key found in configuration. Please add one to proceed.")
+        logging.info("You can get a free API key at https://dev.helius.xyz/dashboard/app")
+        return False
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.02:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL via Helius")
+    result = buy_token_helius(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Helius token purchase test passed!")
+        return True
+    else:
+        logging.error("❌ Helius token purchase test failed.")
+        return False
+
 def test_bonk_trading_cycle():
     """Test a complete buy/sell cycle with BONK token."""
     bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -3992,12 +4320,19 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test Solathon token purchase
-        if test_solathon_buy():
-            logging.info("Solathon token purchase confirmed. Starting trading loop...")
+        # Test Helius token purchase
+        if test_helius_buy():
+            logging.info("Helius token purchase confirmed. Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Solathon token purchase test failed. Cannot start trading.")
+            logging.error("Helius token purchase test failed. Cannot start trading.")
+            # Fall back to previous methods if needed
+            logging.info("Attempting fallback to direct Jupiter method...")
+            if test_direct_jupiter():
+                logging.info("Direct Jupiter swap confirmed. Starting trading loop...")
+                trading_loop()
+            else:
+                logging.error("All transaction methods failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
