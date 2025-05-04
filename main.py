@@ -287,39 +287,39 @@ class SolanaWallet:
             logging.error(traceback.format_exc())
             return None
             
-def sign_and_submit_transaction_bytes(self, tx_bytes):
-    """Sign and submit a transaction from serialized bytes."""
-    try:
-        logging.info("Signing and submitting transaction from bytes...")
+    def sign_and_submit_transaction_bytes(self, tx_bytes):
+        """Sign and submit a transaction from serialized bytes."""
+        try:
+            logging.info("Signing and submitting transaction from bytes...")
         
-        # Encode the raw bytes in base64
-        serialized_tx = base64.b64encode(tx_bytes).decode("utf-8")
+            # Encode the raw bytes in base64
+            serialized_tx = base64.b64encode(tx_bytes).decode("utf-8")
         
-        logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
+            logging.info(f"Serialized tx (first 100 chars): {serialized_tx[:100]}...")
         
-        # Submit transaction
-        response = self._rpc_call("sendTransaction", [
-            serialized_tx,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "processed"
-            }
-        ])
+            # Submit transaction
+            response = self._rpc_call("sendTransaction", [
+             serialized_tx,
+             {
+                 "encoding": "base64",
+                 "skipPreflight": True,
+                 "maxRetries": 5,
+                 "preflightCommitment": "processed"
+             }
+         ])
         
-        logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
+         logging.info(f"Transaction submission response: {json.dumps(response, indent=2)}")
         
-        if "result" in response:
+         if "result" in response:
             return response["result"]
-        else:
-            error_message = response.get("error", {}).get("message", "Unknown error")
-            logging.error(f"Failed to submit transaction: {error_message}")
-            return None
-    except Exception as e:
-        logging.error(f"Error in sign_and_submit_transaction_bytes: {str(e)}")
-        logging.error(traceback.format_exc())
-        return None
+         else:
+             error_message = response.get("error", {}).get("message", "Unknown error")
+             logging.error(f"Failed to submit transaction: {error_message}")
+             return None
+     except Exception as e:
+         logging.error(f"Error in sign_and_submit_transaction_bytes: {str(e)}")
+         logging.error(traceback.format_exc())
+         return None
         
     def verify_transaction_exists(self, signature: str, max_attempts: int = 5) -> bool:
         """Verify a transaction exists on the Solana blockchain."""
