@@ -1896,8 +1896,8 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token_orca(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
-    """Buy a token using Orca API with direct RPC submission."""
+def buy_token_raydium(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Raydium API with direct RPC submission."""
     global buy_attempts, buy_successes
     
     # Default to USDC if no token specified
@@ -1905,7 +1905,7 @@ def buy_token_orca(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwy
         token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
     
     buy_attempts += 1
-    logging.info(f"Starting Orca buy for {token_address} - Amount: {amount_sol} SOL")
+    logging.info(f"Starting Raydium buy for {token_address} - Amount: {amount_sol} SOL")
     
     if CONFIG['SIMULATION_MODE']:
         logging.info(f"[SIMULATION] Bought token {token_address}")
@@ -1915,7 +1915,7 @@ def buy_token_orca(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwy
     
     # Check wallet balance
     balance = wallet.get_balance()
-    if balance < amount_sol + 0.005:
+    if balance < amount_sol + 0.01:  # Include buffer for fees
         logging.error(f"Insufficient balance: {balance} SOL")
         return False
         
@@ -1928,158 +1928,240 @@ def buy_token_orca(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwy
             # 1. Convert SOL to lamports
             amount_lamports = int(amount_sol * 1000000000)
             
-            # 2. Get pools from Orca API (replace with actual Orca API endpoint)
-            orca_api_url = "https://api.orca.so"
-            pools_url = f"{orca_api_url}/v1/pools/all"
+            # 2. Get Raydium API endpoints - using their AMM swap API
+            # Note: Updated URL - check Raydium docs for the most current API endpoint
+            raydium_api_url = "https://api.raydium.io/v2"
             
-            logging.info(f"Getting Orca pools...")
-            pools_response = requests.get(pools_url, timeout=15)
+            # 3. Get available liquidity pools
+            logging.info(f"Getting Raydium market info for {token_address}...")
             
-            if pools_response.status_code != 200:
-                logging.error(f"Failed to get Orca pools: {pools_response.status_code}")
+            # First, check if the pool exists for SOL/TOKEN
+            pool_info_url = f"{raydium_api_url}/main/pairs"
+            pool_response = requests.get(pool_info_url, timeout=20)
+            
+            if pool_response.status_code != 200:
+                logging.error(f"Failed to get Raydium pools: {pool_response.status_code}")
+                logging.error(f"Response: {pool_response.text[:200]}")  # Log first 200 chars of response
+                
+                # Wait before retry
+                wait_time = 5 * (attempt + 1)
+                logging.info(f"Waiting {wait_time}s before next attempt...")
+                time.sleep(wait_time)
                 continue
                 
-            pools_data = pools_response.json()
-            
-            # 3. Find the SOL/TOKEN pool
-            target_pool = None
-            for pool in pools_data:
-                if pool["tokenA"]["mint"] == SOL_TOKEN_ADDRESS and pool["tokenB"]["mint"] == token_address:
-                    target_pool = pool
-                    break
-                elif pool["tokenB"]["mint"] == SOL_TOKEN_ADDRESS and pool["tokenA"]["mint"] == token_address:
-                    target_pool = pool
-                    break
-            
-            if not target_pool:
-                logging.error(f"No Orca pool found for SOL/{token_address}")
-                continue
-                
-            logging.info(f"Found Orca pool: {target_pool['id']}")
-            
-            # 4. Get quote for swap
-            quote_url = f"{orca_api_url}/v1/quote"
-            quote_params = {
-                "inputMint": SOL_TOKEN_ADDRESS,
-                "outputMint": token_address,
-                "amount": str(amount_lamports),
-                "slippage": 1.0  # 1% slippage
-            }
-            
-            logging.info(f"Getting Orca quote...")
-            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
-            
-            if quote_response.status_code != 200:
-                logging.error(f"Orca quote failed: {quote_response.status_code}")
-                continue
-                
-            quote_data = quote_response.json()
-            
-            # 5. Build swap transaction
-            swap_url = f"{orca_api_url}/v1/swap"
-            swap_payload = {
-                "user": str(wallet.public_key),
-                "quoteId": quote_data["id"],
-                "wrapUnwrapSOL": True
-            }
-            
-            logging.info(f"Building Orca swap transaction...")
-            swap_response = requests.post(
-                swap_url, 
-                json=swap_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=15
-            )
-            
-            if swap_response.status_code != 200:
-                logging.error(f"Orca swap transaction build failed: {swap_response.status_code}")
-                continue
-                
-            swap_data = swap_response.json()
-            
-            if "transaction" not in swap_data:
-                logging.error("Orca response missing transaction data")
-                continue
-            
-            # 6. Sign and submit transaction
-            transaction_data = swap_data["transaction"]
-            
-            logging.info(f"Signing and submitting Orca transaction...")
-            
-            # Convert transaction to proper format for wallet
-            from base64 import b64decode
-            from solders.transaction import Transaction, VersionedTransaction
-            
+            # Parse pool data
             try:
-                # Try to deserialize as VersionedTransaction
-                tx_bytes = b64decode(transaction_data)
-                transaction = VersionedTransaction.from_bytes(tx_bytes)
-                logging.info("Deserialized as VersionedTransaction")
-            except Exception as e:
-                try:
-                    # Try to deserialize as regular Transaction
-                    transaction = Transaction.from_bytes(tx_bytes)
-                    logging.info("Deserialized as regular Transaction")
-                except Exception as e2:
-                    logging.error(f"Failed to deserialize transaction: {str(e2)}")
-                    continue
-            
-            # Sign and submit the transaction
-            signature = wallet.sign_and_submit_transaction(transaction)
-            
-            if not signature:
-                logging.error("Failed to sign and submit Orca transaction")
-                continue
+                pools_data = pool_response.json()
+                logging.info(f"Successfully retrieved Raydium pools data. Found {len(pools_data)} pools.")
                 
-            logging.info(f"Orca transaction submitted with signature: {signature}")
-            
-            # Wait for confirmation
-            logging.info("Waiting for transaction confirmation...")
-            time.sleep(20)  # Wait for confirmation
-            
-            # Check for transaction success
-            status_response = wallet._rpc_call("getTransaction", [
-                signature,
-                {"encoding": "json"}
-            ])
-            
-            if "result" in status_response and status_response["result"]:
-                if status_response["result"].get("meta", {}).get("err") is None:
-                    logging.info(f"Orca transaction confirmed successfully!")
+                # Find the SOL/TOKEN pool
+                target_pool = None
+                sol_address_unwrapped = "So11111111111111111111111111111111111111112"
+                
+                for pool in pools_data:
+                    # Pool structure might look different than this - adjust based on actual API response
+                    if 'baseMint' in pool and 'quoteMint' in pool:
+                        if (pool['baseMint'] == sol_address_unwrapped and pool['quoteMint'] == token_address) or \
+                           (pool['quoteMint'] == sol_address_unwrapped and pool['baseMint'] == token_address):
+                            target_pool = pool
+                            logging.info(f"Found SOL/{token_address} pool on Raydium: {pool.get('ammId', 'unknown ID')}")
+                            break
+                
+                if not target_pool:
+                    logging.error(f"No Raydium pool found for SOL/{token_address}")
+                    continue
                     
-                    # Record transaction success
-                    token_buy_timestamps[token_address] = time.time()
-                    buy_successes += 1
+                # 4. Get quote for the swap
+                quote_url = f"{raydium_api_url}/ammV3/quote"
+                quote_payload = {
+                    "inputMint": sol_address_unwrapped,
+                    "outputMint": token_address,
+                    "amount": str(amount_lamports),
+                    "slippage": 1.0,  # 1% slippage
+                    "excludeDexes": [],
+                    "onlyDirectRoutes": False
+                }
+                
+                logging.info(f"Getting Raydium swap quote...")
+                quote_response = requests.post(
+                    quote_url,
+                    json=quote_payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=20
+                )
+                
+                if quote_response.status_code != 200:
+                    logging.error(f"Raydium quote failed: {quote_response.status_code}")
+                    logging.error(f"Response: {quote_response.text[:200]}")
+                    continue
                     
-                    # Record initial price for monitoring
-                    initial_price = get_token_price(token_address)
-                    if initial_price:
-                        monitored_tokens[token_address] = {
-                            'initial_price': initial_price,
-                            'highest_price': initial_price,
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
-                        }
+                quote_data = quote_response.json()
+                logging.info(f"Received Raydium quote. Expected output amount: {quote_data.get('outAmount', 'unknown')}")
+                
+                # 5. Build the swap transaction
+                swap_url = f"{raydium_api_url}/ammV3/swap"
+                swap_payload = {
+                    "userPublicKey": str(wallet.public_key),
+                    "quoteResponse": quote_data,
+                    "wrapUnwrapSOL": True,
+                    "computeUnitPriceMicroLamports": 1000  # Specify compute unit price for priority
+                }
+                
+                logging.info(f"Building Raydium swap transaction...")
+                swap_response = requests.post(
+                    swap_url,
+                    json=swap_payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=20
+                )
+                
+                if swap_response.status_code != 200:
+                    logging.error(f"Raydium swap transaction build failed: {swap_response.status_code}")
+                    logging.error(f"Response: {swap_response.text[:200]}")
+                    continue
                     
-                    logging.info(f"✅ Orca buy transaction recorded successfully!")
-                    return True
-                else:
-                    error = status_response["result"]["meta"]["err"]
-                    logging.error(f"Orca transaction failed with error: {error}")
-            else:
-                logging.warning("Orca transaction not confirmed after 20 seconds")
+                swap_data = swap_response.json()
+                
+                # Check if we got a valid transaction
+                if "txBase64" not in swap_data:
+                    logging.error(f"Raydium response missing transaction data: {list(swap_data.keys())}")
+                    continue
+                
+                # 6. Sign and submit transaction
+                transaction_data = swap_data["txBase64"]
+                
+                # Log diagnostic information about the transaction
+                logging.info(f"Transaction data length: {len(transaction_data)}")
+                logging.info(f"Transaction data preview: {transaction_data[:50]}...")
+                
+                try:
+                    # Convert the base64 transaction to bytes
+                    from base64 import b64decode
+                    from solders.transaction import Transaction, VersionedTransaction
+                    
+                    tx_bytes = b64decode(transaction_data)
+                    logging.info(f"Decoded transaction bytes length: {len(tx_bytes)}")
+                    
+                    # Try to deserialize as VersionedTransaction first, then fall back to regular Transaction
+                    try:
+                        transaction = VersionedTransaction.from_bytes(tx_bytes)
+                        logging.info("Successfully deserialized as VersionedTransaction")
+                    except Exception as e1:
+                        logging.warning(f"Failed to deserialize as VersionedTransaction: {str(e1)}")
+                        try:
+                            transaction = Transaction.from_bytes(tx_bytes)
+                            logging.info("Successfully deserialized as regular Transaction")
+                        except Exception as e2:
+                            logging.error(f"Failed to deserialize as regular Transaction: {str(e2)}")
+                            raise Exception("Could not deserialize transaction")
+                    
+                    # Sign and submit the transaction
+                    logging.info(f"Signing and submitting Raydium transaction...")
+                    signature = wallet.sign_and_submit_transaction(transaction)
+                    
+                    if not signature:
+                        logging.error("Failed to sign and submit Raydium transaction")
+                        continue
+                    
+                    # Validate signature isn't "all 1's"
+                    if signature == "1" * len(signature):
+                        logging.error("Invalid signature detected (all 1's) - transaction wasn't actually submitted")
+                        continue
+                        
+                    logging.info(f"Raydium transaction submitted with signature: {signature}")
+                    
+                    # 7. Verify transaction success with exponential backoff
+                    max_checks = 5
+                    for check_num in range(max_checks):
+                        wait_time = 5 * (2 ** check_num)  # 5, 10, 20, 40, 80 seconds
+                        logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/{max_checks})...")
+                        time.sleep(wait_time)
+                        
+                        # Check transaction status
+                        status_response = wallet._rpc_call("getTransaction", [
+                            signature,
+                            {"encoding": "json"}
+                        ])
+                        
+                        if "result" in status_response and status_response["result"]:
+                            if status_response["result"].get("meta", {}).get("err") is None:
+                                logging.info(f"Raydium transaction confirmed successfully on check {check_num+1}!")
+                                
+                                # Record transaction success
+                                token_buy_timestamps[token_address] = time.time()
+                                buy_successes += 1
+                                
+                                # Record initial price for monitoring
+                                initial_price = get_token_price(token_address)
+                                if initial_price:
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                
+                                logging.info(f"✅ Raydium buy transaction recorded successfully!")
+                                return True
+                            else:
+                                error = status_response["result"]["meta"]["err"]
+                                logging.error(f"Raydium transaction failed with error: {error}")
+                                break
+                        
+                        # Check token balance directly
+                        balance_response = wallet._rpc_call("getTokenAccountsByOwner", [
+                            str(wallet.public_key),
+                            {"mint": token_address},
+                            {"encoding": "jsonParsed"}
+                        ])
+                        
+                        if 'result' in balance_response and 'value' in balance_response['result'] and balance_response['result']['value']:
+                            for account in balance_response['result']['value']:
+                                if 'account' in account and 'data' in account['account'] and 'parsed' in account['account']['data']:
+                                    parsed_data = account['account']['data']['parsed']
+                                    if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                                        token_amount = int(parsed_data['info']['tokenAmount']['amount'])
+                                        logging.info(f"Token balance check #{check_num+1}: {token_amount}")
+                                        
+                                        if token_amount > 0:
+                                            logging.info(f"Found positive token balance - transaction successful!")
+                                            
+                                            # Record success
+                                            token_buy_timestamps[token_address] = time.time()
+                                            buy_successes += 1
+                                            
+                                            # Record price
+                                            initial_price = get_token_price(token_address)
+                                            if initial_price:
+                                                monitored_tokens[token_address] = {
+                                                    'initial_price': initial_price,
+                                                    'highest_price': initial_price,
+                                                    'partial_profit_taken': False,
+                                                    'buy_time': time.time()
+                                                }
+                                            
+                                            return True
+                        
+                    logging.warning("Could not verify transaction success after multiple attempts")
+                    
+                except Exception as e:
+                    logging.error(f"Error processing transaction: {str(e)}")
+                    logging.error(traceback.format_exc())
+            
+            except Exception as e:
+                logging.error(f"Error parsing Raydium API response: {str(e)}")
+                logging.error(traceback.format_exc())
                 
         except Exception as e:
-            logging.error(f"Error in Orca buy attempt #{attempt+1}: {str(e)}")
+            logging.error(f"Error in Raydium buy attempt #{attempt+1}: {str(e)}")
             logging.error(traceback.format_exc())
             
             wait_time = 10 * (attempt + 1)
             logging.info(f"Waiting {wait_time}s before next attempt...")
             time.sleep(wait_time)
     
-    logging.error(f"All {max_attempts} Orca buy attempts for {token_address} failed")
+    logging.error(f"All {max_attempts} Raydium buy attempts for {token_address} failed")
     return False
-
 def test_with_public_rpc():
     """Test a transaction with a public RPC endpoint."""
     logging.info("===== TESTING WITH PUBLIC RPC ENDPOINT =====")
@@ -3105,7 +3187,33 @@ def test_wallet_functionality():
         logging.error(f"Error testing wallet: {str(e)}")
         logging.error(traceback.format_exc())
         return False
-        
+
+def test_raydium_functionality():
+    """Test basic wallet and transaction functionality using Raydium."""
+    logging.info("===== TESTING BASIC FUNCTIONALITY WITH RAYDIUM =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test a simple USDC purchase
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL using Raydium")
+    result = buy_token_raydium(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Raydium functionality test passed!")
+        return True
+    else:
+        logging.error("❌ Raydium functionality test failed.")
+        return False
+
 def test_token_account_creation():
     """Test creating a token account for BONK and verifying it exists."""
     logging.info("=== TESTING TOKEN ACCOUNT CREATION ===")
@@ -3270,22 +3378,15 @@ def main():
     solders_version = check_solders_version()
     logging.info(f"Solders version: {solders_version}")
     
-    # Log environment variables (with masked private key)
-    logging.info(f"SOLANA_RPC_URL: {CONFIG['SOLANA_RPC_URL']}")
-    logging.info(f"WALLET_ADDRESS: {CONFIG['WALLET_ADDRESS']}")
-    masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
-    logging.info(f"WALLET_PRIVATE_KEY: {masked_key}")
-    
     if initialize():
-        # Test basic functionality
-        if test_basic_functionality():
-            logging.info("Basic functionality confirmed. Starting trading loop...")
+        # Test Raydium functionality
+        if test_raydium_functionality():
+            logging.info("Raydium functionality confirmed. Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Basic functionality test failed. Cannot start trading.")
+            logging.error("Raydium functionality test failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
-
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
