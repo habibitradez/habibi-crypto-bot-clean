@@ -1936,6 +1936,8 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
     import base64
     import time
     import traceback
+    import requests
+    import json
     
     # Default to USDC if no token specified
     if not token_address:
@@ -1962,9 +1964,6 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
         try:
             logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
             
-            # Use Jupiter API as a fallback since direct methods are proving challenging
-            # This is similar to your original implementation but with improved error handling
-            
             # Define Jupiter API endpoint
             jupiter_api_url = "https://quote-api.jup.ag/v6"
             
@@ -1975,25 +1974,25 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
             # 1. Get quote from Jupiter API
             logging.info(f"Getting Jupiter quote for {amount_sol} SOL to {token_address}...")
             
+            # Fix: Removed the problematic onlyDirectRoutes parameter
             quote_params = {
                 "inputMint": sol_token,
                 "outputMint": target_token,
                 "amount": str(int(amount_sol * 1_000_000_000)),  # Convert to lamports
-                "slippageBps": 100,  # 1% slippage
-                "onlyDirectRoutes": False,
-                "asLegacyTransaction": True  # Important for compatibility
+                "slippageBps": 100  # 1% slippage
+                # Removed the problematic parameter
             }
             
             try:
                 quote_response = requests.get(
                     f"{jupiter_api_url}/quote",
                     params=quote_params,
-                    timeout=10
+                    timeout=15
                 )
                 
                 if quote_response.status_code != 200:
                     logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
-                    logging.error(f"Response: {quote_response.text[:200]}")
+                    logging.error(f"Response: {quote_response.text}")
                     continue
                     
                 quote_data = quote_response.json()
@@ -2003,19 +2002,19 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                 transaction_params = {
                     "quoteResponse": quote_data,
                     "userPublicKey": str(wallet.public_key),
-                    "wrapUnwrapSOL": True,
-                    "asLegacyTransaction": True  # Important for compatibility
+                    "wrapUnwrapSOL": True  # This handles the wrapping and unwrapping of SOL
+                    # Removed asLegacyTransaction as it might not be supported in this version
                 }
                 
                 transaction_response = requests.post(
                     f"{jupiter_api_url}/swap",
                     json=transaction_params,
-                    timeout=10
+                    timeout=15
                 )
                 
                 if transaction_response.status_code != 200:
                     logging.error(f"Failed to get Jupiter transaction: {transaction_response.status_code}")
-                    logging.error(f"Response: {transaction_response.text[:200]}")
+                    logging.error(f"Response: {transaction_response.text}")
                     continue
                     
                 transaction_data = transaction_response.json()
@@ -2028,7 +2027,6 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                 tx_base64 = transaction_data["swapTransaction"]
                 
                 # 4. Sign and submit using wallet's existing method
-                # Let your wallet implementation handle the details
                 logging.info(f"Signing and submitting Jupiter transaction...")
                 
                 try:
@@ -2036,8 +2034,7 @@ def buy_token_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                     from base64 import b64decode
                     tx_bytes = b64decode(tx_base64)
                     
-                    # Here, we use sign_and_submit_transaction directly with the serialized transaction
-                    # This should work with your existing wallet implementation
+                    # Here, we use the newly added sign_and_submit_transaction_bytes method
                     signature = wallet.sign_and_submit_transaction_bytes(tx_bytes)
                     
                     if not signature:
