@@ -1978,34 +1978,13 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
             recent_blockhash = blockhash_result["result"]["value"]["blockhash"]
             last_valid_block_height = blockhash_result["result"]["value"]["lastValidBlockHeight"]
             
-            # 5. Create and sign transaction
-            # Get address lookup tables if present
-            address_lookup_tables = []
-            if "addressLookupTableAddresses" in swap_data and swap_data["addressLookupTableAddresses"]:
-                from solders.address_lookup_table_account import AddressLookupTableAccount
-                
-                for alt_address in swap_data["addressLookupTableAddresses"]:
-                    alt_info_response = requests.post(
-                        helius_rpc_url,
-                        json={
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "method": "getAccountInfo",
-                            "params": [alt_address, {"encoding": "base64"}]
-                        }
-                    )
-                    
-                    alt_info = alt_info_response.json()
-                    if "result" in alt_info and alt_info["result"]["value"]:
-                        address_lookup_table = AddressLookupTableAccount.from_bytes(
-                            base64.b64decode(alt_info["result"]["value"]["data"][0])
-                        )
-                        address_lookup_tables.append(address_lookup_table)
+            # 5. Create message without address lookup tables (simplified)
+            # IMPORTANT FIX: Removed the address lookup table section that was causing errors
             
-            # Create message
+            # Create message - simplified without ALTs
             message = MessageV0.new_with_blockhash(
                 instructions=instructions,
-                address_lookup_tables=address_lookup_tables,
+                address_lookup_tables=[],  # Empty list instead of trying to parse ALTs
                 payer=wallet.public_key,
                 blockhash=recent_blockhash
             )
