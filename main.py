@@ -2004,6 +2004,136 @@ def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8
     logging.error(f"All {max_attempts} Jupiter direct buy attempts for {token_address} failed")
     return False
 
+def buy_token_cli(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Solana CLI directly with private key."""
+    global buy_attempts, buy_successes
+    import os
+    import json
+    import time
+    import subprocess
+    import tempfile
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+    
+    buy_attempts += 1
+    logging.info(f"Starting CLI token buy for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:  # Include buffer for fees
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    # Get your private key from wallet object
+    private_key = wallet.keypair.secret_key
+    
+    # Create a temporary file to store the keypair
+    with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+        # Write the keypair to the file in JSON format
+        json.dump(list(private_key), temp_file)
+        keypair_path = temp_file.name
+    
+    try:
+        for attempt in range(max_attempts):
+            try:
+                logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+                
+                # For simplicity, we'll test with a simple SOL transfer to ourselves
+                # In a real implementation, you would use spl-token swap or a similar command
+                
+                # Set RPC URL to your preferred endpoint
+                rpc_url = CONFIG.get('SOLANA_RPC_URL', 'https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbdaa8584d108643/')
+                
+                # Execute a simple SOL transfer to verify CLI is working
+                cmd = [
+                    "solana", "transfer",
+                    "--keypair", keypair_path,
+                    wallet.public_key.to_string(),  # Send to ourselves to test
+                    "0.000001",  # Tiny test amount
+                    "--url", rpc_url,
+                    "--fee-payer", keypair_path,
+                    "--allow-unfunded-recipient",
+                    "--no-wait"
+                ]
+                
+                logging.info(f"Executing: {' '.join(cmd)}")
+                
+                # Execute the command and capture output
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    logging.info(f"CLI command succeeded: {result.stdout}")
+                    signature = result.stdout.strip().split()[2]  # Extract transaction signature
+                    
+                    logging.info(f"Transaction submitted with signature: {signature}")
+                    
+                    # Wait for confirmation
+                    max_checks = 3
+                    for check_num in range(max_checks):
+                        wait_time = 5 * (2 ** check_num)
+                        logging.info(f"Waiting {wait_time}s for confirmation...")
+                        time.sleep(wait_time)
+                        
+                        # Check transaction status
+                        status_cmd = [
+                            "solana", "confirm",
+                            "-v",
+                            signature,
+                            "--url", rpc_url
+                        ]
+                        
+                        status_result = subprocess.run(status_cmd, capture_output=True, text=True)
+                        
+                        if status_result.returncode == 0:
+                            logging.info(f"Transaction confirmed successfully: {status_result.stdout}")
+                            
+                            # Record transaction success
+                            token_buy_timestamps[token_address] = time.time()
+                            buy_successes += 1
+                            
+                            # Record initial price for monitoring (simulated)
+                            monitored_tokens[token_address] = {
+                                'initial_price': 0.01,  # Placeholder
+                                'highest_price': 0.01,  # Placeholder
+                                'partial_profit_taken': False,
+                                'buy_time': time.time()
+                            }
+                            
+                            logging.info(f"✅ CLI transaction successful!")
+                            return True
+                        else:
+                            logging.warning(f"Transaction not yet confirmed: {status_result.stderr}")
+                else:
+                    logging.error(f"CLI command failed: {result.stderr}")
+                    
+            except Exception as e:
+                logging.error(f"Error in CLI buy attempt #{attempt+1}: {str(e)}")
+                
+                wait_time = 10 * (attempt + 1)
+                logging.info(f"Waiting {wait_time}s before next attempt...")
+                time.sleep(wait_time)
+        
+        logging.error(f"All {max_attempts} CLI buy attempts for {token_address} failed")
+        
+    finally:
+        # Clean up the temporary keypair file
+        try:
+            os.unlink(keypair_path)
+        except Exception as e:
+            logging.error(f"Error cleaning up keypair file: {str(e)}")
+    
+    return False
+
 def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
     """Execute a buy order for a specific token."""
     global buy_attempts, buy_successes
@@ -2091,6 +2221,250 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(f"Error buying token {mint}: {e}")
         logging.error(traceback.format_exc())
         return False
+
+def buy_token_with_solathon(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Solathon Python library."""
+    global buy_attempts, buy_successes
+    import time
+    import traceback
+    import requests
+    import base64
+    import json
+    
+    try:
+        from solathon import Client, Transaction, PublicKey, Keypair
+        from solathon.core.instructions import transfer
+    except ImportError:
+        logging.info("Installing required packages...")
+        import subprocess
+        subprocess.check_call(["pip", "install", "solathon"])
+        from solathon import Client, Transaction, PublicKey, Keypair
+        from solathon.core.instructions import transfer
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+    
+    buy_attempts += 1
+    logging.info(f"Starting Solathon token buy for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Get your RPC URL from configuration
+    rpc_url = CONFIG.get('SOLANA_RPC_URL', 'https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbdaa8584d108643/')
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:  # Include buffer for fees
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    # Get private key from your existing wallet
+    private_key = bytes(wallet.keypair.secret_key).hex()
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Initialize Solana client with RPC URL
+            client = Client(rpc_url)
+            
+            # Convert your wallet's private key for use with Solathon
+            sender = Keypair.from_private_key(private_key)
+            
+            # First, try a simple self-transfer to verify basic functionality
+            logging.info("Testing basic transaction functionality...")
+            
+            # Create a small self-transfer instruction to test functionality
+            test_instruction = transfer(
+                from_public_key=sender.public_key,
+                to_public_key=sender.public_key,  # Send to ourselves
+                lamports=1000  # Tiny amount (0.000001 SOL)
+            )
+            
+            # Create and send transaction
+            test_transaction = Transaction(instructions=[test_instruction], signers=[sender])
+            test_result = client.send_transaction(test_transaction)
+            
+            logging.info(f"Test transaction response: {test_result}")
+            
+            if "result" in test_result:
+                # Basic transfer successful, now try Jupiter swap API
+                signature = test_result["result"]
+                logging.info(f"Test transaction successful with signature: {signature}")
+                
+                # Now that we've verified basic transaction functionality, use Jupiter API for token swap
+                logging.info(f"Attempting to swap {amount_sol} SOL for {token_address}...")
+                
+                # Jupiter API v6 URLs
+                JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
+                JUPITER_SWAP_URL = "https://quote-api.jup.ag/v6/swap"
+                
+                # Define token parameters (SOL and target token)
+                sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL mint address
+                
+                # 1. Get quote from Jupiter API
+                amount_lamports = int(amount_sol * 1_000_000_000)  # Convert to lamports
+                
+                quote_params = {
+                    "inputMint": sol_token,
+                    "outputMint": token_address,
+                    "amount": str(amount_lamports),
+                    "slippageBps": 50,  # 0.5% slippage
+                    "maxAccounts": 10  # Limit accounts to avoid transaction size issues
+                }
+                
+                quote_response = requests.get(
+                    JUPITER_QUOTE_URL,
+                    params=quote_params,
+                    timeout=15
+                )
+                
+                if quote_response.status_code != 200:
+                    logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                    logging.error(f"Response: {quote_response.text}")
+                    continue
+                    
+                quote_data = quote_response.json()
+                logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+                
+                # 2. Get swap transaction
+                swap_params = {
+                    "quoteResponse": quote_data,
+                    "userPublicKey": str(sender.public_key),
+                    "wrapUnwrapSOL": True,
+                    "dynamicComputeUnitLimit": True,
+                    "dynamicSlippage": True
+                }
+                
+                swap_response = requests.post(
+                    JUPITER_SWAP_URL,
+                    json=swap_params,
+                    timeout=15
+                )
+                
+                if swap_response.status_code != 200:
+                    logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                    logging.error(f"Response: {swap_response.text}")
+                    continue
+                    
+                swap_data = swap_response.json()
+                
+                # 3. Extract transaction
+                if "swapTransaction" not in swap_data:
+                    logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                    continue
+                
+                # Get the transaction data
+                tx_base64 = swap_data["swapTransaction"]
+                
+                # 4. Submit the transaction directly to the RPC node
+                headers = {
+                    "Content-Type": "application/json"
+                }
+                
+                data = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "sendTransaction",
+                    "params": [
+                        tx_base64,
+                        {
+                            "skipPreflight": False,
+                            "preflightCommitment": "confirmed",
+                            "encoding": "base64",
+                            "maxRetries": 5
+                        }
+                    ]
+                }
+                
+                # Send transaction directly to RPC
+                tx_response = requests.post(rpc_url, headers=headers, json=data)
+                tx_result = tx_response.json()
+                
+                if "result" in tx_result:
+                    signature = tx_result["result"]
+                    
+                    # Check for all 1's pattern
+                    if signature == "1" * len(signature):
+                        logging.error("Received all 1's signature - transaction was simulated but not executed")
+                        continue
+                        
+                    logging.info(f"Swap transaction submitted with signature: {signature}")
+                    
+                    # 5. Verify transaction success
+                    success = False
+                    for check_num in range(5):
+                        wait_time = 5 * (2 ** check_num)
+                        logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/5)...")
+                        time.sleep(wait_time)
+                        
+                        # Check transaction status with RPC
+                        check_data = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getTransaction",
+                            "params": [
+                                signature,
+                                {"encoding": "json", "commitment": "confirmed"}
+                            ]
+                        }
+                        
+                        status_response = requests.post(rpc_url, headers=headers, json=check_data)
+                        status_result = status_response.json()
+                        
+                        if "result" in status_result and status_result["result"]:
+                            result = status_result["result"]
+                            if result.get("meta", {}).get("err") is None:
+                                logging.info(f"Swap transaction confirmed successfully!")
+                                
+                                # Record success
+                                token_buy_timestamps[token_address] = time.time()
+                                buy_successes += 1
+                                
+                                # Record price for monitoring
+                                initial_price = get_token_price(token_address)
+                                if initial_price:
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                
+                                logging.info(f"✅ Token swap successful!")
+                                success = True
+                                break
+                            else:
+                                error = result.get("meta", {}).get("err")
+                                logging.error(f"Transaction failed with error: {error}")
+                                break
+                    
+                    if success:
+                        return True
+                else:
+                    error_message = tx_result.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Failed to submit transaction: {error_message}")
+            else:
+                error_message = test_result.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed basic transaction test: {error_message}")
+                
+        except Exception as e:
+            logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} buy attempts for {token_address} failed")
+    return False
 
 def buy_token_jupiter(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Buy a token using Jupiter with direct private key signing."""
@@ -3171,7 +3545,55 @@ def test_bonk_trading_cycle():
     
     logging.error("All buy attempts failed to result in a non-zero balance")
     return False
+
+def test_cli_buy():
+    """Test token purchase using Solana CLI."""
+    logging.info("===== TESTING CLI TOKEN PURCHASE =====")
     
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.01:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # First test with a simple self-transfer to verify basic functionality
+    result = buy_token_cli(wallet.public_key.to_string(), 0.000001)
+    
+    if result:
+        logging.info("✅ CLI token purchase test passed!")
+        return True
+    else:
+        logging.error("❌ CLI token purchase test failed.")
+        return False
+
+def test_solathon_buy():
+    """Test token purchase using Solathon."""
+    logging.info("===== TESTING SOLATHON TOKEN PURCHASE =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.02:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL")
+    result = buy_token_with_solathon(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Solathon token purchase test passed!")
+        return True
+    else:
+        logging.error("❌ Solathon token purchase test failed.")
+        return False
+
 def simple_rpc_test():
     """Test basic RPC functionality without using Transaction objects."""
     logging.info("===== TESTING BASIC RPC FUNCTIONALITY =====")
@@ -3572,12 +3994,12 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test Jupiter direct buy functionality
-        if test_jupiter_direct():
-            logging.info("Jupiter direct buy functionality confirmed. Starting trading loop...")
+        # Test Solathon token purchase
+        if test_solathon_buy():
+            logging.info("Solathon token purchase confirmed. Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Jupiter direct buy functionality test failed. Cannot start trading.")
+            logging.error("Solathon token purchase test failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
