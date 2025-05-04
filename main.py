@@ -3402,12 +3402,12 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test Raydium functionality
-        if test_raydium_functionality():
-            logging.info("Raydium functionality confirmed. Starting trading loop...")
+        # Use test_direct_swap instead of test_raydium_functionality
+        if test_direct_swap():
+            logging.info("Direct swap functionality confirmed. Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Raydium functionality test failed. Cannot start trading.")
+            logging.error("Direct swap functionality test failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
