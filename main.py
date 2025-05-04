@@ -1896,9 +1896,13 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token(token_address: str, amount_sol: float = 0.02, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with direct RPC submission."""
+def buy_token(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with direct RPC submission and public endpoint."""
     global buy_attempts, buy_successes
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
     
     buy_attempts += 1
     logging.info(f"Starting buy for {token_address} - Amount: {amount_sol} SOL")
@@ -1908,6 +1912,10 @@ def buy_token(token_address: str, amount_sol: float = 0.02, max_attempts: int = 
         token_buy_timestamps[token_address] = time.time()
         buy_successes += 1
         return True
+    
+    # Use public RPC endpoint for testing
+    public_rpc = "https://api.mainnet-beta.solana.com"
+    logging.info(f"Using public RPC endpoint: {public_rpc}")
     
     # Check wallet balance
     balance = wallet.get_balance()
@@ -1968,12 +1976,12 @@ def buy_token(token_address: str, amount_sol: float = 0.02, max_attempts: int = 
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 4. Just directly submit transaction to RPC
+            # 4. Just directly submit transaction to PUBLIC RPC
             serialized_tx = swap_data["swapTransaction"]
             
-            logging.info(f"Submitting raw transaction directly to RPC...")
+            logging.info(f"Submitting raw transaction directly to public RPC...")
             response = requests.post(
-                CONFIG['SOLANA_RPC_URL'],
+                public_rpc,  # Use public RPC endpoint instead of your QuickNode
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
