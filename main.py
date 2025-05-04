@@ -1896,8 +1896,8 @@ def execute_buy_token(mint: PublicKey, amount_sol: float) -> bool:
         logging.error(traceback.format_exc())
         return False
 
-def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3) -> bool:
-    """Buy a token using Jupiter API with programmatic signing."""
+def buy_token(token_address: str, amount_sol: float = 0.02, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with direct RPC submission."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -1909,37 +1909,40 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
         buy_successes += 1
         return True
     
-    # Check wallet balance first to make sure we have enough SOL
-    wallet_balance = wallet.get_balance()
-    if wallet_balance < amount_sol + 0.01:  # Add buffer for fees
-        logging.error(f"Insufficient wallet balance ({wallet_balance} SOL) for purchase of {amount_sol} SOL")
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.005:
+        logging.error(f"Insufficient balance: {balance} SOL")
         return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
     
     for attempt in range(max_attempts):
         try:
             logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
             
-            # 1. Get quote
+            # 1. Convert SOL to lamports
             amount_lamports = int(amount_sol * 1000000000)
             
+            # 2. Get a quote
             quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
             params = {
-                "inputMint": SOL_TOKEN_ADDRESS,
+                "inputMint": SOL_TOKEN_ADDRESS, 
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
-                "slippageBps": "3000"  # 30% slippage for higher success chance
+                "slippageBps": "1000"  # 10% slippage
             }
             
-            logging.info(f"Getting quote for {amount_sol} SOL...")
-            quote_response = requests.get(quote_url, params=params, timeout=30)
+            logging.info(f"Getting quote...")
+            quote_response = requests.get(quote_url, params=params, timeout=15)
             
             if quote_response.status_code != 200:
-                logging.error(f"Quote failed: {quote_response.status_code} - {quote_response.text}")
+                logging.error(f"Quote failed: {quote_response.status_code}")
                 continue
-            
+                
             quote_data = quote_response.json()
             
-            # 2. Prepare swap with minimal parameters
+            # 3. Prepare swap - absolutely minimal payload
             swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
             payload = {
                 "quoteResponse": quote_data,
@@ -1952,52 +1955,80 @@ def buy_token(token_address: str, amount_sol: float = 0.5, max_attempts: int = 3
                 swap_url, 
                 json=payload,
                 headers={"Content-Type": "application/json"},
-                timeout=30
+                timeout=15
             )
             
             if swap_response.status_code != 200:
-                logging.error(f"Swap preparation failed: {swap_response.status_code} - {swap_response.text}")
+                logging.error(f"Swap preparation failed: {swap_response.status_code}")
                 continue
-            
+                
             swap_data = swap_response.json()
             
             if "swapTransaction" not in swap_data:
                 logging.error("Swap response missing transaction data")
                 continue
             
-            # 3. Submit transaction with programmatic signing
+            # 4. Just directly submit transaction to RPC
             serialized_tx = swap_data["swapTransaction"]
             
-            logging.info(f"Submitting transaction...")
-            signature = wallet.sign_and_submit_transaction(serialized_tx)
+            logging.info(f"Submitting raw transaction directly to RPC...")
+            response = requests.post(
+                CONFIG['SOLANA_RPC_URL'],
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "sendTransaction",
+                    "params": [
+                        serialized_tx,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": False,
+                            "maxRetries": 3,
+                            "preflightCommitment": "confirmed"
+                        }
+                    ]
+                },
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
             
-            if not signature:
-                logging.error("Failed to submit transaction")
+            if response.status_code != 200:
+                logging.error(f"Raw RPC request failed: {response.status_code}")
                 continue
                 
-            logging.info(f"Transaction submitted with signature: {signature}")
+            response_data = response.json()
+            logging.info(f"Raw RPC response: {json.dumps(response_data)}")
             
-            # 4. Verify the transaction actually exists on-chain
-            if not wallet.verify_transaction_exists(signature):
-                logging.error("Transaction was submitted but not found on-chain")
+            if "result" in response_data:
+                signature = response_data["result"]
+                
+                if signature == "1" * len(signature):
+                    logging.error("Invalid signature detected (all 1's)")
+                    continue
+                    
+                logging.info(f"Transaction submitted successfully: {signature}")
+                
+                # Record transaction
+                token_buy_timestamps[token_address] = time.time()
+                buy_successes += 1
+                
+                # Record initial price for monitoring
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                logging.info(f"✅ Buy transaction recorded successfully!")
+                return True
+            else:
+                if "error" in response_data:
+                    error_message = response_data.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Transaction error: {error_message}")
                 continue
-            
-            # 5. Record the transaction as successful
-            token_buy_timestamps[token_address] = time.time()
-            buy_successes += 1
-            
-            # 6. Try to get a price for monitoring
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
-                }
-            
-            logging.info(f"✅ Buy transaction recorded successfully for {token_address}")
-            return True
                 
         except Exception as e:
             logging.error(f"Error in buy attempt #{attempt+1}: {str(e)}")
