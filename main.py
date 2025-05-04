@@ -1864,11 +1864,13 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
             # Define token parameters (SOL and target token)
             sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL mint address
             
-            # 1. Get quote from Jupiter API
-            logging.info(f"Getting Jupiter quote for {amount_sol} SOL to {token_address}...")
+            # 1. Get swap transaction directly from Jupiter API
+            # This simplifies the process and avoids issues with Solders MessageV0
+            logging.info(f"Getting Jupiter swap transaction for {amount_sol} SOL to {token_address}...")
             
             amount_lamports = int(amount_sol * 1_000_000_000)  # Convert to lamports
             
+            # Get quote first
             jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
             quote_params = {
                 "inputMint": sol_token,
@@ -1891,8 +1893,8 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
             quote_data = quote_response.json()
             logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
             
-            # 2. Get swap instructions
-            jupiter_swap_url = "https://quote-api.jup.ag/v6/swap-instructions"
+            # Get swap transaction directly (not instructions)
+            jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
             swap_params = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
@@ -1906,114 +1908,36 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
             )
             
             if swap_response.status_code != 200:
-                logging.error(f"Failed to get swap instructions: {swap_response.status_code}")
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
                 logging.error(f"Response: {swap_response.text}")
                 continue
                 
             swap_data = swap_response.json()
             
-            # 3. Extract instructions and create transaction
-            if not all(key in swap_data for key in ["computeBudgetInstructions", "setupInstructions", "swapInstruction"]):
-                logging.error(f"Jupiter response missing instruction data: {list(swap_data.keys())}")
+            # Extract the base64-encoded transaction
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
                 continue
             
-            from solders.transaction import VersionedTransaction
-            from solders.message import MessageV0
-            from solders.instruction import Instruction, AccountMeta
-            from solders.pubkey import Pubkey
+            tx_base64 = swap_data["swapTransaction"]
             
-            # Helper function to deserialize instructions
-            def deserialize_instruction(instruction_data):
-                return Instruction(
-                    program_id=Pubkey.from_string(instruction_data["programId"]),
-                    accounts=[
-                        AccountMeta(
-                            pubkey=Pubkey.from_string(account["pubkey"]),
-                            is_signer=account["isSigner"],
-                            is_writable=account["isWritable"]
-                        )
-                        for account in instruction_data["accounts"]
-                    ],
-                    data=base64.b64decode(instruction_data["data"])
-                )
-            
-            # Collect all instructions
-            instructions = []
-            
-            # Add token ledger instruction if present
-            if swap_data.get("tokenLedgerInstruction"):
-                instructions.append(deserialize_instruction(swap_data["tokenLedgerInstruction"]))
-            
-            # Add compute budget instructions
-            for instr in swap_data.get("computeBudgetInstructions", []):
-                instructions.append(deserialize_instruction(instr))
-            
-            # Add setup instructions
-            for instr in swap_data.get("setupInstructions", []):
-                instructions.append(deserialize_instruction(instr))
-            
-            # Add swap instruction
-            instructions.append(deserialize_instruction(swap_data["swapInstruction"]))
-            
-            # Add cleanup instruction if present
-            if swap_data.get("cleanupInstruction"):
-                instructions.append(deserialize_instruction(swap_data["cleanupInstruction"]))
-            
-            # 4. Get recent blockhash
-            blockhash_response = requests.post(
-                helius_rpc_url,
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getLatestBlockhash",
-                    "params": [{"commitment": "finalized"}]
-                }
-            )
-            
-            blockhash_result = blockhash_response.json()
-            if "result" not in blockhash_result or "value" not in blockhash_result["result"]:
-                logging.error("Failed to get recent blockhash from Helius")
-                continue
-            
-            recent_blockhash = blockhash_result["result"]["value"]["blockhash"]
-            last_valid_block_height = blockhash_result["result"]["value"]["lastValidBlockHeight"]
-            
-            # 5. Create message without address lookup tables (simplified)
-            # IMPORTANT FIX: Removed the address lookup table section that was causing errors
-            
-            # Create message - simplified without ALTs
-            message = MessageV0.new_with_blockhash(
-                instructions=instructions,
-                address_lookup_tables=[],  # Empty list instead of trying to parse ALTs
-                payer=wallet.public_key,
-                blockhash=recent_blockhash
-            )
-            
-            # Create and sign transaction
-            transaction = VersionedTransaction(message, [wallet.keypair])
-            
-            # Serialize the transaction for Helius
-            serialized_tx = base64.b64encode(bytes(transaction)).decode("utf-8")
-            
-            # 6. Submit transaction using Helius sendSmartTransaction
+            # 2. Submit transaction using Helius
             helius_request = {
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "sendSmartTransaction",
+                "method": "sendTransaction",  # Using standard method, not sendSmartTransaction
                 "params": [
-                    serialized_tx,
+                    tx_base64,
                     {
                         "encoding": "base64",
                         "skipPreflight": False,
-                        "prioritizationFee": {
-                            "type": "priorityLevel",
-                            "value": "high"
-                        }
+                        "preflightCommitment": "confirmed",
+                        "maxRetries": 5
                     }
                 ]
             }
             
-            logging.info("Submitting transaction via Helius sendSmartTransaction...")
+            logging.info("Submitting transaction via Helius...")
             helius_response = requests.post(helius_rpc_url, json=helius_request)
             helius_result = helius_response.json()
             
@@ -2027,7 +1951,7 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
                     
                 logging.info(f"Jupiter swap transaction submitted with signature: {signature}")
                 
-                # 7. Verify transaction success with Helius
+                # 3. Verify transaction success with Helius
                 success = False
                 for check_num in range(5):
                     wait_time = 5 * (2 ** check_num)
