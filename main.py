@@ -2035,6 +2035,222 @@ def buy_token_helius(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZ
     logging.error(f"All {max_attempts} Helius swap attempts for {token_address} failed")
     return False
 
+def buy_token_direct_submit(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using Jupiter API with direct RPC submission."""
+    global buy_attempts, buy_successes
+    import time
+    import traceback
+    import requests
+    import base64
+    import json
+    import os
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+    
+    buy_attempts += 1
+    logging.info(f"Starting direct token buy for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:  # Include buffer for fees
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    # Get your RPC URL from configuration
+    rpc_url = CONFIG.get('SOLANA_RPC_URL', 'https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbdaa8584d108643/')
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Define token parameters (SOL and target token)
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL mint address
+            
+            # 1. Get swap transaction directly from Jupiter API
+            logging.info(f"Getting Jupiter swap transaction for {amount_sol} SOL to {token_address}...")
+            
+            amount_lamports = int(amount_sol * 1_000_000_000)  # Convert to lamports
+            
+            # Get quote first
+            jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippageBps": 100,  # 1% slippage - increased for better success chance
+                "onlyDirectRoutes": "false",  # Explicitly set as string to avoid parsing errors
+                "maxAccounts": 10
+            }
+            
+            quote_response = requests.get(
+                jupiter_quote_url,
+                params=quote_params,
+                timeout=15
+            )
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+            
+            # Get swap transaction directly (not instructions)
+            jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+            swap_params = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True,
+                "computeUnitPriceMicroLamports": 1000,  # Add priority fee
+                "priorityFeeLamports": 100000  # Additional priority fee (0.0001 SOL)
+            }
+            
+            swap_response = requests.post(
+                jupiter_swap_url,
+                json=swap_params,
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            
+            # Extract the base64-encoded transaction
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                continue
+            
+            tx_base64 = swap_data["swapTransaction"]
+            
+            # 2. Submit the transaction directly to your QuickNode RPC
+            # This bypasses any Helius-specific requirements
+            rpc_request = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendTransaction",
+                "params": [
+                    tx_base64,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": False,  # Run preflight checks
+                        "preflightCommitment": "processed",  # Use processed for faster response
+                        "maxRetries": 5
+                    }
+                ]
+            }
+            
+            logging.info(f"Submitting transaction to RPC: {rpc_url[:30]}...")
+            rpc_response = requests.post(rpc_url, json=rpc_request)
+            rpc_result = rpc_response.json()
+            
+            if "result" in rpc_result:
+                signature = rpc_result["result"]
+                
+                # Check for all 1's pattern
+                if signature == "1" * len(signature):
+                    logging.error("Received all 1's signature - transaction was simulated but not executed")
+                    continue
+                    
+                logging.info(f"Swap transaction submitted with signature: {signature}")
+                
+                # 3. Verify transaction success
+                success = False
+                for check_num in range(5):
+                    wait_time = 5 * (2 ** check_num)
+                    logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/5)...")
+                    time.sleep(wait_time)
+                    
+                    # Check transaction status
+                    status_request = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTransaction",
+                        "params": [
+                            signature,
+                            {"encoding": "json", "commitment": "confirmed"}
+                        ]
+                    }
+                    
+                    status_response = requests.post(rpc_url, json=status_request)
+                    status_result = status_response.json()
+                    
+                    if "result" in status_result and status_result["result"]:
+                        result = status_result["result"]
+                        if result.get("meta", {}).get("err") is None:
+                            logging.info(f"Transaction confirmed successfully!")
+                            
+                            # Record transaction success
+                            token_buy_timestamps[token_address] = time.time()
+                            buy_successes += 1
+                            
+                            # Record initial price for monitoring with error handling
+                            try:
+                                initial_price = get_token_price(token_address)
+                                if initial_price:
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                else:
+                                    # Fallback: use a placeholder price
+                                    logging.warning(f"Could not get initial price for {token_address}, using placeholder")
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': 0.01,  # Placeholder
+                                        'highest_price': 0.01,  # Placeholder
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                            except Exception as e:
+                                logging.warning(f"Error getting token price: {str(e)}")
+                                # Use placeholder price
+                                monitored_tokens[token_address] = {
+                                    'initial_price': 0.01,  # Placeholder
+                                    'highest_price': 0.01,  # Placeholder
+                                    'partial_profit_taken': False,
+                                    'buy_time': time.time()
+                                }
+                            
+                            logging.info(f"✅ Token swap successful!")
+                            success = True
+                            break
+                        else:
+                            error = result["meta"]["err"]
+                            logging.error(f"Transaction failed with error: {error}")
+                            break
+                
+                if success:
+                    return True
+            else:
+                error_message = rpc_result.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed to submit transaction: {error_message}")
+                
+        except Exception as e:
+            logging.error(f"Error in direct swap attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} direct swap attempts for {token_address} failed")
+    return False
+
 def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Buy a token using Jupiter API directly."""
     global buy_attempts, buy_successes
@@ -3700,6 +3916,32 @@ def tiny_buy_test():
         logging.error(traceback.format_exc())
         return False
 
+def test_direct_submit():
+    """Test direct RPC submission of Jupiter transactions."""
+    logging.info("===== TESTING DIRECT RPC SUBMISSION =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.02:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL via direct RPC submission")
+    result = buy_token_direct_submit(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Direct RPC submission test passed!")
+        return True
+    else:
+        logging.error("❌ Direct RPC submission test failed.")
+        return False
+
 def test_helius_buy():
     """Test token purchase using Helius service."""
     logging.info("===== TESTING HELIUS TOKEN PURCHASE =====")
@@ -4257,12 +4499,12 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test Helius token purchase
-        if test_helius_buy():
-            logging.info("Helius token purchase confirmed. Starting trading loop...")
+        # Try with direct RPC submission
+        if test_direct_submit():
+            logging.info("Direct RPC submission confirmed. Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Helius token purchase test failed. Cannot start trading.")
+            logging.error("All transaction methods failed. Cannot start trading.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
