@@ -3593,7 +3593,7 @@ def optimized_buy_token(token_address: str, amount_sol: float = 0.01, max_attemp
                 "outputMint": token_address,
                 "amount": str(amount_lamports),
                 "slippageBps": 100,  # 1% slippage
-                "onlyDirectRoutes": True
+                "onlyDirectRoutes": "true"
             }
             
             quote_response = requests.get(quote_url, params=quote_params, timeout=15)
@@ -3613,7 +3613,7 @@ def optimized_buy_token(token_address: str, amount_sol: float = 0.01, max_attemp
                 "wrapUnwrapSOL": True,  # Correct parameter name
                 "computeUnitPriceMicroLamports": 0,
                 "asLegacyTransaction": True,
-                "onlyDirectRoutes": True
+                "onlyDirectRoutes": "true"
             }
             
             swap_response = requests.post(swap_url, json=swap_params, timeout=15)
