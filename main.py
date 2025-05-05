@@ -6,7 +6,6 @@ import logging
 import datetime
 import requests
 import base64
-import base58
 import traceback
 from typing import Dict, List, Tuple, Optional, Any
 from decimal import Decimal
@@ -17,7 +16,7 @@ from solders.keypair import Keypair
 from solders.pubkey import Pubkey as PublicKey
 from solders.transaction import Transaction, VersionedTransaction
 from solders.system_program import transfer, TransferParams
-import base58
+from base58 import b58decode, b58encode
 
 # Configure logging with both file and console output
 current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
