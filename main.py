@@ -3557,7 +3557,7 @@ def submit_jupiter_transaction(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybap
 
 def optimized_buy_token(token_address: str, amount_sol: float = 0.01, max_attempts: int = 3):
     """Buy token using optimized parameters from the Discord bot example."""
-    global buy_attempts, buy_successes
+    global buy_attempts, buy_successes, solana_client
     
     buy_attempts += 1
     logging.info(f"Starting optimized buy for {token_address} - Amount: {amount_sol} SOL")
