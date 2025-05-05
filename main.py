@@ -2730,14 +2730,14 @@ def buy_token_optimized(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEG
             quote_data = quote_response.json()
             logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
             
-            # 2. Get swap transaction with high priority fees
+            # 2. Get swap transaction with prioritization fee ONLY (not compute unit price)
             jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
             swap_params = {
                 "quoteResponse": quote_data,
                 "userPublicKey": str(wallet.public_key),
                 "wrapUnwrapSOL": True,
                 "dynamicComputeUnitLimit": True,  # Optimize compute units automatically
-                "computeUnitPriceMicroLamports": 10000,  # Very high priority fee - 0.01 SOL per million CUs
+                # Use prioritization fee instead of compute unit price
                 "prioritizationFeeLamports": 5000000  # 0.005 SOL additional fee
             }
             
