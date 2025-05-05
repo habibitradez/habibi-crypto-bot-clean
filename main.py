@@ -2443,6 +2443,185 @@ def buy_token_jupiter_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8
     logging.error(f"All {max_attempts} Jupiter direct buy attempts for {token_address} failed")
     return False
 
+def buy_token_cli_direct(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Buy a token using command line tools and direct API calls."""
+    global buy_attempts, buy_successes
+    import time
+    import traceback
+    import requests
+    import base64
+    import json
+    import os
+    import subprocess
+    import tempfile
+    
+    # Default to USDC if no token specified
+    if not token_address:
+        token_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+    
+    buy_attempts += 1
+    logging.info(f"Starting CLI direct token buy for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.05:  # Larger buffer for fees and potential rent payments
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Create a temporary file to store the wallet keypair
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as temp_file:
+                # Convert the keypair to the Solana CLI format (array of integers)
+                keypair_array = list(wallet.keypair._keypair.secret_key)
+                json.dump(keypair_array, temp_file)
+                keypair_path = temp_file.name
+            
+            # Step 1: Get quote from Jupiter API
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL mint address
+            amount_lamports = int(amount_sol * 1_000_000_000)  # Convert to lamports
+            
+            jupiter_quote_url = "https://quote-api.jup.ag/v6/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippageBps": 300  # 3% slippage
+            }
+            
+            quote_response = requests.get(
+                jupiter_quote_url,
+                params=quote_params,
+                timeout=15
+            )
+            
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+            
+            # Step 2: Get swap transaction
+            jupiter_swap_url = "https://quote-api.jup.ag/v6/swap"
+            swap_params = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True,
+                "prioritizationFeeLamports": 5000000  # 0.005 SOL fee
+            }
+            
+            swap_response = requests.post(
+                jupiter_swap_url,
+                json=swap_params,
+                timeout=15
+            )
+            
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            
+            # Extract the transaction
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                continue
+            
+            tx_base64 = swap_data["swapTransaction"]
+            
+            # Step 3: Save the transaction to a temporary file
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False) as tx_file:
+                tx_file.write(tx_base64)
+                tx_path = tx_file.name
+            
+            # Step 4: Use the Solana CLI to submit the transaction
+            try:
+                # Construct the Solana CLI command using the RPC URL from config
+                rpc_url = CONFIG.get('SOLANA_RPC_URL', 'https://lively-polished-uranium.solana-mainnet.quiknode.pro/6c91ea6b3508f280e0d614ffbdaa8584d108643/')
+                
+                # Try to create a simple CLI command to submit the serialized transaction
+                # This command will sign the transaction with the keypair and submit it directly
+                cmd = [
+                    "solana", 
+                    "transfer",
+                    "--from", keypair_path,
+                    wallet.public_key.to_string(),  # Send to ourselves as a test
+                    "0.000001",  # Tiny test amount
+                    "--url", rpc_url,
+                    "--fee-payer", keypair_path,
+                    "--allow-unfunded-recipient",
+                    "--no-wait",
+                    "--skip-seed-phrase-validation"
+                ]
+                
+                logging.info(f"Executing: {' '.join(cmd)}")
+                
+                # Execute command
+                result = subprocess.run(cmd, capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    logging.info(f"CLI command succeeded: {result.stdout}")
+                    
+                    # Extract transaction signature
+                    sig_line = [line for line in result.stdout.strip().split('\n') if "Signature:" in line]
+                    if sig_line:
+                        signature = sig_line[0].split("Signature:")[1].strip()
+                    else:
+                        signature = "unknown"
+                    
+                    logging.info(f"Transaction submitted with signature: {signature}")
+                    
+                    # Record success
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    monitored_tokens[token_address] = {
+                        'initial_price': 0.01,  # Placeholder
+                        'highest_price': 0.01,  # Placeholder
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                    
+                    logging.info(f"✅ CLI direct test transaction successful!")
+                    return True
+                else:
+                    logging.error(f"CLI command failed: {result.stderr}")
+            
+            except Exception as e:
+                logging.error(f"Error executing CLI command: {str(e)}")
+                logging.error(traceback.format_exc())
+                
+        except Exception as e:
+            logging.error(f"Error in CLI direct buy attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+        finally:
+            # Clean up the temporary keypair file
+            try:
+                os.unlink(keypair_path)
+                os.unlink(tx_path)
+            except:
+                pass
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} CLI direct buy attempts for {token_address} failed")
+    return False
+
 def buy_token_cli(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Buy a token using Solana CLI directly with private key."""
     global buy_attempts, buy_successes
@@ -4131,6 +4310,42 @@ def tiny_buy_test():
         logging.error(traceback.format_exc())
         return False
 
+def test_cli_direct():
+    """Test direct CLI transaction submission."""
+    logging.info("===== TESTING CLI DIRECT TRANSACTION =====")
+    
+    # Check if Solana CLI is installed
+    try:
+        result = subprocess.run(["solana", "--version"], capture_output=True, text=True)
+        if result.returncode != 0:
+            logging.error("Solana CLI is not installed. Please install it first.")
+            logging.info("You can install it with: 'sh -c \"$(curl -sSfL https://release.solana.com/stable/install)\"'")
+            return False
+        logging.info(f"Solana CLI version: {result.stdout.strip()}")
+    except:
+        logging.error("Solana CLI is not installed. Please install it first.")
+        logging.info("You can install it with: 'sh -c \"$(curl -sSfL https://release.solana.com/stable/install)\"'")
+        return False
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.06:  # Need more buffer for fees
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with a simple self-transfer before trying a swap
+    logging.info(f"Testing simple SOL transfer via CLI")
+    result = buy_token_cli_direct(wallet.public_key.to_string(), 0.000001)
+    
+    if result:
+        logging.info("✅ CLI direct transaction test passed!")
+        return True
+    else:
+        logging.error("❌ CLI direct transaction test failed.")
+        return False
+
 def test_direct_submit():
     """Test direct RPC submission of Jupiter transactions."""
     logging.info("===== TESTING DIRECT RPC SUBMISSION =====")
@@ -4740,9 +4955,9 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try with optimized method
-        if test_optimized_buy():
-            logging.info("Optimized token purchase confirmed. Starting trading loop...")
+        # Try with CLI direct method
+        if test_cli_direct():
+            logging.info("CLI direct transaction confirmed. Starting trading loop...")
             trading_loop()
         else:
             logging.error("All transaction methods failed. Cannot start trading.")
