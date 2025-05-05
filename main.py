@@ -3728,28 +3728,33 @@ def direct_jupiter_swap_with_protection():
         return False
 
 def send_token_simple(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
-    """Simple token purchase using solana-py."""
+    """Simple token purchase using solana.py library."""
     global buy_attempts, buy_successes
     import time
     import requests
     import json
     import logging
+    import subprocess
+    import sys
     
-    # Check if solana-py is installed, install if needed
+    # First, ensure solana-py is properly installed
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "solana-py==0.29.2"])
+        logging.info("Successfully installed solana-py package")
+    except Exception as e:
+        logging.error(f"Error installing solana-py: {str(e)}")
+        return False
+    
+    # Now try importing the necessary modules
     try:
         from solana.rpc.api import Client
         from solana.transaction import Transaction
         from solana.keypair import Keypair
         from solana.publickey import PublicKey
-    except ImportError:
-        import subprocess
-        import sys
-        logging.info("Installing solana-py package...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "solana"])
-        from solana.rpc.api import Client
-        from solana.transaction import Transaction
-        from solana.keypair import Keypair
-        from solana.publickey import PublicKey
+        logging.info("Successfully imported solana-py modules")
+    except ImportError as e:
+        logging.error(f"Failed to import solana-py modules: {str(e)}")
+        return False
     
     buy_attempts += 1
     logging.info(f"Starting simple token purchase for {token_address} - Amount: {amount_sol} SOL")
@@ -3933,7 +3938,6 @@ def send_token_simple(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGk
     
     logging.error(f"All {max_attempts} token purchase attempts for {token_address} failed")
     return False
-
 def simple_buy_token(token_address: str, amount_sol: float) -> bool:
     """Simplified token purchase function with minimal steps."""
     logging.info(f"Simple buy attempt for {token_address} with {amount_sol} SOL")
