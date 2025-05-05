@@ -3297,6 +3297,214 @@ def buy_token_with_solathon(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G
     logging.error(f"All {max_attempts} buy attempts for {token_address} failed")
     return False
 
+def submit_jupiter_transaction(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Submit transaction from Jupiter without modification."""
+    global buy_attempts, buy_successes
+    import time
+    import requests
+    import json
+    import logging
+    import traceback
+    
+    buy_attempts += 1
+    logging.info(f"Starting Jupiter transaction for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Get RPC URL from config
+    rpc_url = CONFIG.get('SOLANA_RPC_URL')
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+    
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Step 1: Get quote from Jupiter API
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL
+            amount_lamports = int(amount_sol * 1_000_000_000)
+            
+            # Using v4 API as it might be more stable than v6
+            quote_url = "https://quote-api.jup.ag/v4/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippage": 0.5  # 0.5% slippage (note different format than v6)
+            }
+            
+            logging.info("Getting Jupiter quote...")
+            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Price: {quote_data.get('price', 'unknown')}")
+            
+            # Step 2: Get swap transaction from Jupiter
+            # Using v4 API for transaction creation
+            logging.info("Getting swap transaction from Jupiter...")
+            swap_url = "https://quote-api.jup.ag/v4/swap"
+            swap_params = {
+                "route": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True
+            }
+            
+            swap_response = requests.post(swap_url, json=swap_params, timeout=15)
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                continue
+            
+            # Get the serialized transaction
+            tx_base64 = swap_data["swapTransaction"]
+            logging.info("Successfully received transaction data from Jupiter")
+            
+            # Step 3: Submit the transaction directly to RPC without any modifications
+            # Use a clean, separate RPC call to avoid any issues
+            headers = {"Content-Type": "application/json"}
+            
+            # Important: Send the transaction exactly as received from Jupiter
+            # Try with both skipPreflight options
+            for skip_preflight in [True, False]:
+                logging.info(f"Submitting transaction with skipPreflight={skip_preflight}...")
+                
+                rpc_data = {
+                    "jsonrpc": "2.0",
+                    "id": f"{int(time.time())}",
+                    "method": "sendTransaction",
+                    "params": [
+                        tx_base64,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": skip_preflight,
+                            "preflightCommitment": "finalized",
+                            "maxRetries": 10
+                        }
+                    ]
+                }
+                
+                # Submit transaction
+                response = requests.post(rpc_url, headers=headers, json=rpc_data)
+                response_data = response.json()
+                
+                if "result" in response_data:
+                    signature = response_data["result"]
+                    
+                    # Check for all 1's pattern
+                    if signature == "1" * len(signature):
+                        logging.error("Received all 1's signature - transaction was simulated but not executed")
+                        # Continue to next skipPreflight option
+                        continue
+                    
+                    logging.info(f"Transaction submitted successfully! Signature: {signature}")
+                    
+                    # Step 4: Verify transaction success
+                    success = False
+                    for check_num in range(10):  # More checks with longer waits
+                        wait_time = 5 * (check_num + 1)  # Longer wait times
+                        logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/10)...")
+                        time.sleep(wait_time)
+                        
+                        # Check transaction status
+                        status_data = {
+                            "jsonrpc": "2.0",
+                            "id": f"{int(time.time())}",
+                            "method": "getTransaction",
+                            "params": [
+                                signature,
+                                {"encoding": "json", "commitment": "finalized"}
+                            ]
+                        }
+                        
+                        status_response = requests.post(rpc_url, headers=headers, json=status_data)
+                        status_result = status_response.json()
+                        
+                        if "result" in status_result and status_result["result"]:
+                            result = status_result["result"]
+                            if result.get("meta", {}).get("err") is None:
+                                logging.info(f"Transaction confirmed successfully!")
+                                
+                                # Record transaction success
+                                token_buy_timestamps[token_address] = time.time()
+                                buy_successes += 1
+                                
+                                # Record price for monitoring
+                                try:
+                                    initial_price = get_token_price(token_address)
+                                    if initial_price:
+                                        monitored_tokens[token_address] = {
+                                            'initial_price': initial_price,
+                                            'highest_price': initial_price,
+                                            'partial_profit_taken': False,
+                                            'buy_time': time.time()
+                                        }
+                                    else:
+                                        monitored_tokens[token_address] = {
+                                            'initial_price': 0.01,  # Placeholder
+                                            'highest_price': 0.01,
+                                            'partial_profit_taken': False,
+                                            'buy_time': time.time()
+                                        }
+                                except Exception as e:
+                                    logging.warning(f"Error getting token price: {e}")
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': 0.01,
+                                        'highest_price': 0.01,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                
+                                logging.info(f"✅ Token purchase successful!")
+                                success = True
+                                break
+                            else:
+                                error = result["meta"]["err"]
+                                logging.error(f"Transaction failed with error: {error}")
+                                break
+                        
+                        logging.info("Transaction not confirmed yet, waiting longer...")
+                    
+                    if success:
+                        return True
+                    
+                    # If we got here, this skipPreflight option didn't work
+                    logging.error(f"Transaction failed to confirm with skipPreflight={skip_preflight}")
+                else:
+                    error_message = response_data.get("error", {}).get("message", "Unknown error")
+                    logging.error(f"Failed to submit transaction: {error_message}")
+            
+            # If we got here, both skipPreflight options failed for this attempt
+            
+        except Exception as e:
+            logging.error(f"Error in transaction attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} transaction attempts for {token_address} failed")
+    return False
+
 def buy_token_jupiter(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Buy a token using Jupiter with direct private key signing."""
     global buy_attempts, buy_successes
@@ -4792,6 +5000,32 @@ def test_cli_direct():
         logging.error("❌ CLI direct transaction test failed.")
         return False
 
+def test_jupiter_transaction():
+    """Test Jupiter transaction submission."""
+    logging.info("===== TESTING JUPITER TRANSACTION SUBMISSION =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL")
+    result = submit_jupiter_transaction(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Jupiter transaction submission test passed!")
+        return True
+    else:
+        logging.error("❌ Jupiter transaction submission test failed.")
+        return False
+
 def test_direct_transaction():
     """Test direct transaction submission."""
     logging.info("===== TESTING DIRECT TRANSACTION SUBMISSION =====")
@@ -5427,9 +5661,9 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try direct transaction submission
-        if test_direct_transaction():
-            logging.info("Direct transaction submission confirmed. Starting trading loop...")
+        # Try Jupiter transaction submission
+        if test_jupiter_transaction():
+            logging.info("Jupiter transaction submission confirmed. Starting trading loop...")
             trading_loop()
         else:
             logging.error("Transaction test failed. Cannot start trading.")
