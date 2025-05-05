@@ -5121,7 +5121,140 @@ def find_tradable_tokens():
     
     logging.info(f"Found {tradable_count} tradable tokens out of {len(KNOWN_TOKENS)-1} known tokens")
     return tradable_count > 0
+
+def test_minimal_sol_transfer():
+    """Test absolute minimal SOL transfer to verify basic transaction functionality."""
+    logging.info("===== TESTING MINIMAL SOL TRANSFER =====")
     
+    try:
+        # Check wallet connection
+        balance = wallet.get_balance()
+        logging.info(f"Wallet balance: {balance} SOL")
+        
+        if balance < 0.001:  # Need very little for this test
+            logging.error(f"Wallet balance too low for testing: {balance} SOL")
+            return False
+        
+        # Create a minimal SystemProgram transfer instruction
+        from solders.system_program import transfer, TransferParams
+        from solders.transaction import Legacy, Transaction
+        from solders.message import Message
+        
+        # Send a tiny amount of SOL back to ourselves
+        amount_lamports = 1000  # Just 0.000001 SOL
+        
+        # Create transfer instruction
+        transfer_ix = transfer(
+            TransferParams(
+                from_pubkey=wallet.public_key,
+                to_pubkey=wallet.public_key,  # Send to ourselves
+                lamports=amount_lamports
+            )
+        )
+        
+        # Get recent blockhash directly via RPC
+        rpc_url = CONFIG.get('SOLANA_RPC_URL')
+        headers = {"Content-Type": "application/json"}
+        blockhash_request = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "getLatestBlockhash",
+            "params": []
+        }
+        
+        response = requests.post(rpc_url, headers=headers, json=blockhash_request)
+        data = response.json()
+        if "result" not in data or "value" not in data["result"]:
+            logging.error("Failed to get blockhash")
+            return False
+            
+        recent_blockhash = data["result"]["value"]["blockhash"]
+        logging.info(f"Got blockhash: {recent_blockhash}")
+        
+        # Create message with our instruction
+        message = Message.new_with_blockhash(
+            [transfer_ix],
+            wallet.public_key,
+            recent_blockhash
+        )
+        
+        # Create and sign transaction
+        transaction = Transaction.new_signed_with_payer(
+            [transfer_ix],
+            wallet.public_key,
+            [wallet.keypair],
+            recent_blockhash
+        )
+        
+        # Serialize transaction (raw bytes)
+        serialized_tx = bytes(transaction)
+        
+        # Send directly to RPC
+        tx_request = {
+            "jsonrpc": "2.0",
+            "id": "2",
+            "method": "sendTransaction",
+            "params": [
+                base64.b64encode(serialized_tx).decode('utf-8'),
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "preflightCommitment": "processed"
+                }
+            ]
+        }
+        
+        logging.info("Sending minimal transaction...")
+        tx_response = requests.post(rpc_url, headers=headers, json=tx_request)
+        tx_data = tx_response.json()
+        
+        if "result" in tx_data:
+            signature = tx_data["result"]
+            logging.info(f"Transaction sent with signature: {signature}")
+            
+            # Check for all 1's pattern
+            if signature == "1" * len(signature):
+                logging.error("Received all 1's signature - transaction was simulated but not executed")
+                return False
+                
+            # Wait for confirmation
+            time.sleep(10)
+            
+            # Check status
+            status_request = {
+                "jsonrpc": "2.0",
+                "id": "3",
+                "method": "getTransaction",
+                "params": [
+                    signature,
+                    {"encoding": "json"}
+                ]
+            }
+            
+            status_response = requests.post(rpc_url, headers=headers, json=status_request)
+            status_data = status_response.json()
+            
+            if "result" in status_data and status_data["result"]:
+                if status_data["result"].get("meta", {}).get("err") is None:
+                    logging.info("✅ Minimal SOL transfer successful!")
+                    return True
+                else:
+                    error = status_data["result"]["meta"]["err"]
+                    logging.error(f"Transaction failed with error: {error}")
+            else:
+                logging.error("Could not verify transaction status")
+        else:
+            error_message = tx_data.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Failed to submit transaction: {error_message}")
+        
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error in minimal SOL transfer test: {str(e)}")
+        import traceback
+        logging.error(traceback.format_exc())
+        return False
+
 def test_minimal_sol_transfer():
     """Minimal SOL transfer test using wallet's existing methods."""
     logging.info("===== TESTING MINIMAL SOL TRANSFER =====")
@@ -5923,12 +6056,14 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test optimized Jupiter swap
-        if test_optimized_jupiter_swap():
-            logging.info("Optimized Jupiter swap confirmed. Starting trading loop...")
+        # First, test basic transaction functionality
+        if test_minimal_sol_transfer():
+            logging.info("Basic transaction functionality works! Proceeding to more complex tests...")
+            # Here you could add your more complex tests if the basic one works
             trading_loop()
         else:
-            logging.error("Transaction test failed. Cannot start trading.")
+            logging.error("Basic transaction test failed. Cannot start trading.")
+            logging.error("Please verify RPC endpoint and wallet configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
