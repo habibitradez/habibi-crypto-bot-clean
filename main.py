@@ -208,29 +208,29 @@ class SolanaWallet:
         self.public_key = self.keypair.pubkey()
         logging.info(f"Wallet initialized with public key: {self.public_key}")
     
-    def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
-        """Create a Solana keypair from a base58 encoded private key string."""
-        try:
-            logging.info(f"Creating keypair from private key (length: {len(private_key)})")
-            
-            # Decode the private key from base58
-            secret_bytes = base58.b58decode(private_key)
-            
-            logging.info(f"Secret bytes length: {len(secret_bytes)}")
-            
-            # Create keypair based on secret length
-            if len(secret_bytes) == 64:
-                logging.info("Using 64-byte secret key")
-                return Keypair.from_bytes(secret_bytes)
-            elif len(secret_bytes) == 32:
-                logging.info("Using 32-byte seed")
-                return Keypair.from_seed(secret_bytes)
-            else:
-                raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
-        except Exception as e:
-            logging.error(f"Error creating keypair: {str(e)}")
-            logging.error(traceback.format_exc())
-            raise
+def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
+    """Create a Solana keypair from a base58 encoded private key string."""
+    try:
+        logging.info(f"Creating keypair from private key (length: {len(private_key)})")
+        
+        # Use the directly imported function instead of base58.b58decode
+        secret_bytes = b58decode(private_key)
+        
+        logging.info(f"Secret bytes length: {len(secret_bytes)}")
+        
+        # Create keypair based on secret length
+        if len(secret_bytes) == 64:
+            logging.info("Using 64-byte secret key")
+            return Keypair.from_bytes(secret_bytes)
+        elif len(secret_bytes) == 32:
+            logging.info("Using 32-byte seed")
+            return Keypair.from_seed(secret_bytes)
+        else:
+            raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
+    except Exception as e:
+        logging.error(f"Error creating keypair: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
     
     def get_balance(self) -> float:
         """Get the SOL balance of the wallet in SOL units."""
@@ -6090,6 +6090,53 @@ def test_basic_functionality():
         return True
     else:
         logging.error("❌ Orca functionality test failed.")
+        return False
+
+def test_rpc_execution_capability():
+    """Test if the RPC node allows actual transaction execution."""
+    try:
+        # Get a recent blockhash
+        headers = {"Content-Type": "application/json"}
+        blockhash_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getRecentBlockhash",
+            "params": []
+        }
+        
+        response = requests.post(CONFIG['SOLANA_RPC_URL'], 
+                                headers=headers, 
+                                json=blockhash_request)
+        
+        blockhash_data = response.json()
+        logging.info(f"RPC response to getRecentBlockhash: {json.dumps(blockhash_data)}")
+        
+        # Now test submitting a simple transaction
+        # For this example, we'll just simulate a transaction and check the response format
+        simulation_request = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "simulateTransaction",
+            "params": [
+                # A dummy base64 transaction would go here,
+                # but for now we just want to see if the RPC responds correctly
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+                {"encoding": "base64", "commitment": "confirmed"}
+            ]
+        }
+        
+        sim_response = requests.post(CONFIG['SOLANA_RPC_URL'], 
+                                   headers=headers, 
+                                   json=simulation_request)
+        
+        logging.info(f"RPC simulation response: {json.dumps(sim_response.json())}")
+        
+        # If the RPC responds with proper error about the invalid transaction
+        # rather than an authorization error, it's likely working correctly
+        return "error" in sim_response.json() and "code" in sim_response.json()["error"]
+    
+    except Exception as e:
+        logging.error(f"Error testing RPC: {e}")
         return False
 
 def test_wallet_functionality():
