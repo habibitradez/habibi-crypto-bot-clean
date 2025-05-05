@@ -147,6 +147,14 @@ def decode_transaction_blob(blob_str: str) -> bytes:
             logging.error(f"Failed to decode transaction blob: {e}")
             raise
 
+# Add to your existing code - secure key handling
+def get_secure_keypair():
+    """Get secure keypair for transaction signing."""
+    private_key = os.environ.get('WALLET_PRIVATE_KEY')
+    # Decode correctly for Solders library
+    secret_bytes = b58decode(private_key.strip())
+    return Keypair.from_bytes(secret_bytes)
+
 def get_backpack_keypair():
     """Get Solana keypair from Backpack wallet private key."""
     try:
