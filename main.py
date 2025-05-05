@@ -208,29 +208,29 @@ class SolanaWallet:
         self.public_key = self.keypair.pubkey()
         logging.info(f"Wallet initialized with public key: {self.public_key}")
     
-def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
-    """Create a Solana keypair from a base58 encoded private key string."""
-    try:
-        logging.info(f"Creating keypair from private key (length: {len(private_key)})")
+    def _create_keypair_from_private_key(self, private_key: str) -> Keypair:
+        """Create a Solana keypair from a base58 encoded private key string."""
+        try:
+            logging.info(f"Creating keypair from private key (length: {len(private_key)})")
         
-        # Use the directly imported function instead of base58.b58decode
-        secret_bytes = b58decode(private_key)
+            # Decode the private key from base58
+            secret_bytes = b58decode(private_key)
         
-        logging.info(f"Secret bytes length: {len(secret_bytes)}")
+            logging.info(f"Secret bytes length: {len(secret_bytes)}")
         
-        # Create keypair based on secret length
-        if len(secret_bytes) == 64:
-            logging.info("Using 64-byte secret key")
-            return Keypair.from_bytes(secret_bytes)
-        elif len(secret_bytes) == 32:
-            logging.info("Using 32-byte seed")
-            return Keypair.from_seed(secret_bytes)
-        else:
-            raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
-    except Exception as e:
-        logging.error(f"Error creating keypair: {str(e)}")
-        logging.error(traceback.format_exc())
-        raise
+            # Create keypair based on secret length
+            if len(secret_bytes) == 64:
+                logging.info("Using 64-byte secret key")
+                return Keypair.from_bytes(secret_bytes)
+            elif len(secret_bytes) == 32:
+                logging.info("Using 32-byte seed")
+                return Keypair.from_seed(secret_bytes)
+            else:
+                raise ValueError(f"Secret key must be 32 or 64 bytes. Got {len(secret_bytes)} bytes.")
+        except Exception as e:
+            logging.error(f"Error creating keypair: {str(e)}")
+            logging.error(traceback.format_exc())
+            raise
     
     def get_balance(self) -> float:
         """Get the SOL balance of the wallet in SOL units."""
