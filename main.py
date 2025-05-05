@@ -3727,6 +3727,213 @@ def direct_jupiter_swap_with_protection():
         logging.error(traceback.format_exc())
         return False
 
+def send_token_simple(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
+    """Simple token purchase using solana-py."""
+    global buy_attempts, buy_successes
+    import time
+    import requests
+    import json
+    import logging
+    
+    # Check if solana-py is installed, install if needed
+    try:
+        from solana.rpc.api import Client
+        from solana.transaction import Transaction
+        from solana.keypair import Keypair
+        from solana.publickey import PublicKey
+    except ImportError:
+        import subprocess
+        import sys
+        logging.info("Installing solana-py package...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "solana"])
+        from solana.rpc.api import Client
+        from solana.transaction import Transaction
+        from solana.keypair import Keypair
+        from solana.publickey import PublicKey
+    
+    buy_attempts += 1
+    logging.info(f"Starting simple token purchase for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Get RPC URL from config
+    rpc_url = CONFIG.get('SOLANA_RPC_URL')
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.01:
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+    
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Buy attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Step 1: Convert your existing wallet to a solana-py compatible keypair
+            # This assumes wallet.keypair._keypair.secret_key is available as seen in your code
+            secret_key_bytes = bytes(wallet.keypair._keypair.secret_key)
+            keypair = Keypair.from_secret_key(secret_key_bytes)
+            logging.info(f"Created solana-py keypair with public key: {keypair.public_key}")
+            
+            # Step 2: Get token swap transaction from Jupiter API
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL
+            amount_lamports = int(amount_sol * 1_000_000_000)
+            
+            # Get quote from Jupiter
+            quote_url = "https://quote-api.jup.ag/v6/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippageBps": 300  # 3% slippage
+            }
+            
+            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+            
+            # Get transaction from Jupiter
+            swap_url = "https://quote-api.jup.ag/v6/swap"
+            swap_params = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(keypair.public_key),
+                "wrapUnwrapSOL": True,
+                "prioritizationFeeLamports": 5000000  # 0.005 SOL fee
+            }
+            
+            swap_response = requests.post(swap_url, json=swap_params, timeout=15)
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                continue
+            
+            # Get the transaction data in base64 format
+            tx_base64 = swap_data["swapTransaction"]
+            logging.info("Got transaction data from Jupiter")
+            
+            # Step 3: Create solana-py client
+            solana_client = Client(rpc_url)
+            
+            # Step 4: Submit the transaction directly
+            # Using the raw_request method to have full control over parameters
+            resp = solana_client.raw_request(
+                method="sendTransaction",
+                params=[
+                    tx_base64,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": True,  # Skip preflight to help with simulation issues
+                        "preflightCommitment": "processed",
+                        "maxRetries": 3,
+                    }
+                ]
+            )
+            
+            if "result" in resp:
+                signature = resp["result"]
+                
+                # Check for all 1's pattern
+                if signature == "1" * len(signature):
+                    logging.error("Received all 1's signature - transaction was simulated but not executed")
+                    continue
+                
+                logging.info(f"Transaction submitted with signature: {signature}")
+                
+                # Step 5: Verify transaction success
+                success = False
+                for check_num in range(5):
+                    wait_time = 5 * (2 ** check_num)  # Exponential backoff
+                    logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/5)...")
+                    time.sleep(wait_time)
+                    
+                    # Check transaction status
+                    confirm_resp = solana_client.raw_request(
+                        method="getTransaction",
+                        params=[
+                            signature,
+                            {"encoding": "json", "commitment": "confirmed"}
+                        ]
+                    )
+                    
+                    if "result" in confirm_resp and confirm_resp["result"]:
+                        result = confirm_resp["result"]
+                        if result.get("meta", {}).get("err") is None:
+                            logging.info(f"Transaction confirmed successfully!")
+                            
+                            # Record transaction success
+                            token_buy_timestamps[token_address] = time.time()
+                            buy_successes += 1
+                            
+                            # Record initial price for monitoring
+                            try:
+                                initial_price = get_token_price(token_address)
+                                if initial_price:
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                else:
+                                    # Fallback: use a placeholder price
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': 0.01,  # Placeholder 
+                                        'highest_price': 0.01,  # Placeholder
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                            except Exception as e:
+                                logging.warning(f"Error getting token price: {str(e)}")
+                                # Use placeholder price
+                                monitored_tokens[token_address] = {
+                                    'initial_price': 0.01,  # Placeholder
+                                    'highest_price': 0.01,  # Placeholder
+                                    'partial_profit_taken': False,
+                                    'buy_time': time.time()
+                                }
+                            
+                            logging.info(f"✅ Token purchase successful!")
+                            success = True
+                            break
+                        else:
+                            error = result["meta"]["err"]
+                            logging.error(f"Transaction failed with error: {error}")
+                            break
+                
+                if success:
+                    return True
+            else:
+                error_message = resp.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed to submit transaction: {error_message}")
+                
+        except Exception as e:
+            logging.error(f"Error in simple token purchase attempt #{attempt+1}: {str(e)}")
+            import traceback
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} token purchase attempts for {token_address} failed")
+    return False
+
 def simple_buy_token(token_address: str, amount_sol: float) -> bool:
     """Simplified token purchase function with minimal steps."""
     logging.info(f"Simple buy attempt for {token_address} with {amount_sol} SOL")
@@ -4041,6 +4248,32 @@ def monitor_token_price(token_address: str) -> None:
     except Exception as e:
         logging.error(f"Error monitoring token {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
+
+def test_simple_transaction():
+    """Test simple token purchase."""
+    logging.info("===== TESTING SIMPLE TOKEN PURCHASE =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL")
+    result = send_token_simple(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Simple token purchase test passed!")
+        return True
+    else:
+        logging.error("❌ Simple token purchase test failed.")
+        return False
 
 def startup_test_buy():
     """Perform a test buy of BONK at startup to verify trading works."""
@@ -4955,9 +5188,9 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try with CLI direct method
-        if test_cli_direct():
-            logging.info("CLI direct transaction confirmed. Starting trading loop...")
+        # Try with simple transaction approach
+        if test_simple_transaction():
+            logging.info("Simple transaction confirmed. Starting trading loop...")
             trading_loop()
         else:
             logging.error("All transaction methods failed. Cannot start trading.")
