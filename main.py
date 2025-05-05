@@ -3935,6 +3935,242 @@ def direct_jupiter_swap_with_protection():
         logging.error(traceback.format_exc())
         return False
 
+def execute_jupiter_swap(token_address: str, amount_sol: float, max_attempts: int = 3) -> bool:
+    """Execute a Jupiter swap with optimized transaction handling."""
+    global buy_attempts, buy_successes
+    import time
+    import requests
+    import json
+    import logging
+    import base64
+    import traceback
+    
+    buy_attempts += 1
+    logging.info(f"Starting optimized Jupiter swap for {token_address} - Amount: {amount_sol} SOL")
+    
+    if CONFIG['SIMULATION_MODE']:
+        logging.info(f"[SIMULATION] Bought token {token_address}")
+        token_buy_timestamps[token_address] = time.time()
+        buy_successes += 1
+        return True
+    
+    # Check wallet balance
+    balance = wallet.get_balance()
+    if balance < amount_sol + 0.05:  # Include buffer for fees
+        logging.error(f"Insufficient balance: {balance} SOL")
+        return False
+        
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    # Get RPC URL from config
+    rpc_url = CONFIG.get('SOLANA_RPC_URL')
+    headers = {"Content-Type": "application/json"}
+    
+    for attempt in range(max_attempts):
+        try:
+            logging.info(f"Swap attempt #{attempt+1}/{max_attempts} for {token_address}")
+            
+            # Step 1: Get the latest blockhash - CRITICAL FOR TRANSACTION SUCCESS
+            blockhash_request = {
+                "jsonrpc": "2.0",
+                "id": f"{int(time.time())}",
+                "method": "getLatestBlockhash",
+                "params": [{"commitment": "finalized"}]
+            }
+            
+            logging.info("Getting fresh blockhash...")
+            blockhash_response = requests.post(rpc_url, headers=headers, json=blockhash_request)
+            blockhash_data = blockhash_response.json()
+            
+            if "result" not in blockhash_data or "value" not in blockhash_data["result"]:
+                logging.error("Failed to get latest blockhash")
+                continue
+                
+            blockhash = blockhash_data["result"]["value"]["blockhash"]
+            last_valid_block_height = blockhash_data["result"]["value"]["lastValidBlockHeight"]
+            logging.info(f"Got fresh blockhash: {blockhash} (valid until block {last_valid_block_height})")
+            
+            # Step 2: Get quote from Jupiter API
+            sol_token = "So11111111111111111111111111111111111111112"  # Wrapped SOL
+            amount_lamports = int(amount_sol * 1_000_000_000)
+            
+            quote_url = "https://quote-api.jup.ag/v6/quote"
+            quote_params = {
+                "inputMint": sol_token,
+                "outputMint": token_address,
+                "amount": str(amount_lamports),
+                "slippageBps": 100  # 1% slippage
+            }
+            
+            logging.info("Getting Jupiter quote...")
+            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+            if quote_response.status_code != 200:
+                logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+                logging.error(f"Response: {quote_response.text}")
+                continue
+                
+            quote_data = quote_response.json()
+            logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
+            
+            # Step 3: Get swap transaction with our fresh blockhash and priority fees
+            logging.info("Getting swap transaction from Jupiter...")
+            swap_url = "https://quote-api.jup.ag/v6/swap"
+            swap_params = {
+                "quoteResponse": quote_data,
+                "userPublicKey": str(wallet.public_key),
+                "wrapUnwrapSOL": True,
+                "dynamicComputeUnitLimit": True,  # Optimize compute units
+                "prioritizationFeeLamports": 1000000,  # 0.001 SOL fee for priority
+                "blockhash": blockhash,  # Use our fresh blockhash
+                "lastValidBlockHeight": last_valid_block_height
+            }
+            
+            swap_response = requests.post(swap_url, json=swap_params, timeout=15)
+            if swap_response.status_code != 200:
+                logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
+                logging.error(f"Response: {swap_response.text}")
+                continue
+                
+            swap_data = swap_response.json()
+            if "swapTransaction" not in swap_data:
+                logging.error(f"Jupiter response missing transaction data: {list(swap_data.keys())}")
+                continue
+            
+            tx_base64 = swap_data["swapTransaction"]
+            logging.info("Successfully received transaction data from Jupiter")
+            
+            # Step 4: Submit transaction directly to RPC with skipPreflight
+            rpc_data = {
+                "jsonrpc": "2.0",
+                "id": f"{int(time.time())}",
+                "method": "sendTransaction",
+                "params": [
+                    tx_base64,
+                    {
+                        "encoding": "base64",
+                        "skipPreflight": True,  # Skip preflight to avoid simulation-only issues
+                        "maxRetries": 3,
+                        "preflightCommitment": "processed"  # Use faster commitment level for initial submission
+                    }
+                ]
+            }
+            
+            logging.info("Submitting transaction to RPC...")
+            response = requests.post(rpc_url, headers=headers, json=rpc_data)
+            response_data = response.json()
+            
+            if "result" in response_data:
+                signature = response_data["result"]
+                
+                # Check for all 1's pattern
+                if signature == "1" * len(signature):
+                    logging.error("Received all 1's signature - transaction was simulated but not executed")
+                    continue
+                    
+                logging.info(f"Transaction submitted successfully! Signature: {signature}")
+                
+                # Step 5: Confirm transaction with exponential backoff
+                success = False
+                for check_num in range(8):  # More checks with longer timeouts
+                    wait_time = 5 * (2 ** check_num)  # Exponential backoff
+                    logging.info(f"Waiting {wait_time}s for confirmation (check {check_num+1}/8)...")
+                    time.sleep(wait_time)
+                    
+                    # Confirm transaction with blockhash and lastValidBlockHeight
+                    confirm_data = {
+                        "jsonrpc": "2.0",
+                        "id": f"{int(time.time())}",
+                        "method": "confirmTransaction",
+                        "params": [
+                            {
+                                "signature": signature,
+                                "blockhash": blockhash,
+                                "lastValidBlockHeight": last_valid_block_height
+                            },
+                            "confirmed"
+                        ]
+                    }
+                    
+                    confirm_response = requests.post(rpc_url, headers=headers, json=confirm_data)
+                    confirm_result = confirm_response.json()
+                    
+                    if "result" in confirm_result and confirm_result["result"].get("value", False):
+                        # Transaction confirmed, check for errors
+                        tx_data = {
+                            "jsonrpc": "2.0",
+                            "id": f"{int(time.time())}",
+                            "method": "getTransaction",
+                            "params": [
+                                signature,
+                                {"encoding": "json", "commitment": "confirmed"}
+                            ]
+                        }
+                        
+                        tx_response = requests.post(rpc_url, headers=headers, json=tx_data)
+                        tx_result = tx_response.json()
+                        
+                        if "result" in tx_result and tx_result["result"]:
+                            if tx_result["result"].get("meta", {}).get("err") is None:
+                                logging.info(f"Transaction confirmed successfully!")
+                                
+                                # Record transaction success
+                                token_buy_timestamps[token_address] = time.time()
+                                buy_successes += 1
+                                
+                                # Record price for monitoring
+                                try:
+                                    initial_price = get_token_price(token_address)
+                                    if initial_price:
+                                        monitored_tokens[token_address] = {
+                                            'initial_price': initial_price,
+                                            'highest_price': initial_price,
+                                            'partial_profit_taken': False,
+                                            'buy_time': time.time()
+                                        }
+                                    else:
+                                        # Fallback price
+                                        monitored_tokens[token_address] = {
+                                            'initial_price': 0.01,
+                                            'highest_price': 0.01,
+                                            'partial_profit_taken': False,
+                                            'buy_time': time.time()
+                                        }
+                                except Exception as e:
+                                    logging.warning(f"Error getting token price: {str(e)}")
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': 0.01,
+                                        'highest_price': 0.01,
+                                        'partial_profit_taken': False,
+                                        'buy_time': time.time()
+                                    }
+                                
+                                logging.info(f"✅ Token purchase successful!")
+                                success = True
+                                break
+                            else:
+                                error = tx_result["result"]["meta"]["err"]
+                                logging.error(f"Transaction failed with error: {error}")
+                                break
+                
+                if success:
+                    return True
+                else:
+                    logging.error("Transaction was not confirmed within the timeout period")
+            else:
+                error_message = response_data.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Failed to submit transaction: {error_message}")
+                
+        except Exception as e:
+            logging.error(f"Error in swap attempt #{attempt+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            
+            wait_time = 10 * (attempt + 1)
+            logging.info(f"Waiting {wait_time}s before next attempt...")
+            time.sleep(wait_time)
+    
+    logging.error(f"All {max_attempts} swap attempts for {token_address} failed")
+    return False
+
 def send_token_simple(token_address: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount_sol: float = 0.01, max_attempts: int = 3) -> bool:
     """Simple token purchase using solana.py library."""
     global buy_attempts, buy_successes
@@ -5000,6 +5236,32 @@ def test_cli_direct():
         logging.error("❌ CLI direct transaction test failed.")
         return False
 
+def test_optimized_jupiter_swap():
+    """Test optimized Jupiter swap implementation."""
+    logging.info("===== TESTING OPTIMIZED JUPITER SWAP =====")
+    
+    # Check wallet connection
+    balance = wallet.get_balance()
+    logging.info(f"Wallet balance: {balance} SOL")
+    
+    if balance < 0.05:
+        logging.error(f"Wallet balance too low for testing: {balance} SOL")
+        return False
+    
+    # Test with USDC which is highly liquid
+    usdc_address = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+    amount_sol = 0.01  # Small test amount
+    
+    logging.info(f"Testing purchase of USDC with {amount_sol} SOL")
+    result = execute_jupiter_swap(usdc_address, amount_sol)
+    
+    if result:
+        logging.info("✅ Optimized Jupiter swap test passed!")
+        return True
+    else:
+        logging.error("❌ Optimized Jupiter swap test failed.")
+        return False
+
 def test_jupiter_transaction():
     """Test Jupiter transaction submission."""
     logging.info("===== TESTING JUPITER TRANSACTION SUBMISSION =====")
@@ -5661,9 +5923,9 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try Jupiter transaction submission
-        if test_jupiter_transaction():
-            logging.info("Jupiter transaction submission confirmed. Starting trading loop...")
+        # Test optimized Jupiter swap
+        if test_optimized_jupiter_swap():
+            logging.info("Optimized Jupiter swap confirmed. Starting trading loop...")
             trading_loop()
         else:
             logging.error("Transaction test failed. Cannot start trading.")
