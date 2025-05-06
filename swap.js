@@ -34,42 +34,58 @@ async function executeSwap() {
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
-    // Per documentation: Use the base URL and add pump-fun/swap
     // Strip any trailing slash from JUPITER_API_URL
     const baseUrl = JUPITER_API_URL.endsWith('/') 
       ? JUPITER_API_URL.slice(0, -1) 
       : JUPITER_API_URL;
     
-    const swapUrl = `${baseUrl}/pump-fun/swap`;
-    console.log(`Using swap URL: ${swapUrl}`);
+    // First get a quote using the v6/quote endpoint
+    const quoteUrl = `${baseUrl}/v6/quote`;
+    console.log(`Using quote URL: ${quoteUrl}`);
     
-    // Construct the request according to the documentation
-    const swapRequest = {
-      wallet: keypair.publicKey.toBase58(),
-      type: 'BUY',
-      mint: TOKEN_ADDRESS,
-      inAmount: amountLamports.toString(),
-      priorityFeeLevel: 'high'
+    const quoteParams = {
+      inputMint: "So11111111111111111111111111111111111111112", // SOL mint address
+      outputMint: TOKEN_ADDRESS,
+      amount: amountLamports.toString(),
+      slippageBps: "100"
     };
     
-    console.log('Swap request:', JSON.stringify(swapRequest, null, 2));
+    console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
     
-    const response = await axios.post(swapUrl, swapRequest, {
-      headers: {
-        'Content-Type': 'application/json'
-      }
+    const quoteResponse = await axios.get(quoteUrl, { params: quoteParams });
+    
+    if (!quoteResponse.data) {
+      console.error('Failed to get quote', quoteResponse);
+      process.exit(1);
+    }
+    
+    console.log(`Got quote with output amount: ${quoteResponse.data.outAmount}`);
+    
+    // Now use the quote to prepare a swap transaction
+    const swapUrl = `${baseUrl}/v6/swap`;
+    console.log(`Using swap URL: ${swapUrl}`);
+    
+    const swapRequest = {
+      quoteResponse: quoteResponse.data,
+      userPublicKey: keypair.publicKey.toBase58(),
+      wrapUnwrapSOL: true,
+      computeUnitPriceMicroLamports: 1000, // Priority fee
+      dynamicComputeUnitLimit: true
+    };
+    
+    console.log('Swap request prepared');
+    
+    const swapResponse = await axios.post(swapUrl, swapRequest, {
+      headers: { 'Content-Type': 'application/json' }
     });
     
-    console.log('Response status:', response.status);
-    console.log('Response headers:', JSON.stringify(response.headers, null, 2));
-    
-    if (!response.data || !response.data.transaction) {
-      console.error('Failed to get swap transaction', JSON.stringify(response.data, null, 2));
+    if (!swapResponse.data || !swapResponse.data.swapTransaction) {
+      console.error('Failed to get swap transaction', swapResponse.data);
       process.exit(1);
     }
     
     // The transaction is already serialized from the API
-    const serializedTx = response.data.transaction;
+    const serializedTx = swapResponse.data.swapTransaction;
     console.log('Received transaction data (length):', serializedTx.length);
     
     // Submit the transaction
