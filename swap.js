@@ -34,13 +34,26 @@ async function executeSwap() {
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
-    // Strip any trailing slash from JUPITER_API_URL
-    const baseUrl = JUPITER_API_URL.endsWith('/') 
-      ? JUPITER_API_URL.slice(0, -1) 
-      : JUPITER_API_URL;
+    // For QuickNode's Metis Jupiter API, the URL structure is different
+    // It should be the base URL like https://metis.quiknode.pro/your-api-key/
     
-    // First get a quote using the v6/quote endpoint
-    const quoteUrl = `${baseUrl}/v6/quote`;
+    // First check if we're using the swap-api URL (which is incorrect)
+    let baseUrl = JUPITER_API_URL;
+    if (baseUrl.includes('jupiter-swap-api.quiknode.pro')) {
+      // Extract the API key and reconstruct the URL
+      const apiKeyMatch = baseUrl.match(/\/([A-Za-z0-9]+)\/?$/);
+      if (apiKeyMatch && apiKeyMatch[1]) {
+        baseUrl = `https://metis.quiknode.pro/${apiKeyMatch[1]}/`;
+      }
+    }
+    
+    // Ensure it ends with a slash
+    if (!baseUrl.endsWith('/')) {
+      baseUrl += '/';
+    }
+    
+    // Use the correct endpoints
+    const quoteUrl = `${baseUrl}v6/quote`;
     console.log(`Using quote URL: ${quoteUrl}`);
     
     const quoteParams = {
@@ -62,7 +75,7 @@ async function executeSwap() {
     console.log(`Got quote with output amount: ${quoteResponse.data.outAmount}`);
     
     // Now use the quote to prepare a swap transaction
-    const swapUrl = `${baseUrl}/v6/swap`;
+    const swapUrl = `${baseUrl}v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
     const swapRequest = {
