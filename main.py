@@ -37,6 +37,7 @@ CONFIG = {
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
+    'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x return
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),
@@ -1582,7 +1583,7 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         return False, None
 
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction."""
+    """Execute optimized sell transaction with direct construction and submission."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1626,7 +1627,7 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         keypair = get_secure_keypair()
         
         # 3. Get fresh blockhash
-        blockhash = wallet.get_latest_blockhash()
+        blockhash = get_fresh_blockhash()
         if not blockhash:
             logging.error("Failed to get latest blockhash")
             return False, None
@@ -1656,7 +1657,7 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
             "quoteResponse": quote_data,
             "userPublicKey": str(keypair.pubkey()),
             "wrapUnwrapSOL": True,  # Correct parameter name
-            "computeUnitPriceMicroLamports": 1000,  # Add priority fee
+            "computeUnitPriceMicroLamports": 50000,  # Add higher priority fee
             "prioritizationFeeLamports": 10000,  # Additional priority
             "asLegacyTransaction": True,  # Use legacy format
             "blockhash": blockhash  # Include fresh blockhash
@@ -1682,76 +1683,46 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
             logging.error(f"Swap response missing transaction data: {list(swap_data.keys())}")
             return False, None
         
-        # 6. Get transaction and submit
+        # 6. Get transaction and submit with optimized parameters
         tx_base64 = swap_data["swapTransaction"]
         
-        # 7. Submit with optimized parameters
-        response = wallet._rpc_call("sendTransaction", [
-            tx_base64,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "processed"
-            }
-        ])
+        # Try direct RPC submission first
+        signature = submit_transaction_with_special_params(tx_base64)
         
-        # 8. Handle response
-        if "result" in response:
-            signature = response["result"]
+        if not signature:
+            # If direct submission fails, try Helius
+            logging.info("Direct transaction submission failed. Trying Helius...")
+            # Decode the transaction to bytes
+            tx_bytes = base64.b64decode(tx_base64)
+            # Try Helius submission
+            signature = submit_via_helius(tx_bytes)
             
-            # Check for all 1's pattern
-            if signature == "1" * len(signature):
-                logging.warning("Got all 1's signature, attempting alternate submission")
-                # Try again with different parameters
-                alt_response = wallet._rpc_call("sendTransaction", [
-                    tx_base64,
-                    {
-                        "encoding": "base64",
-                        "skipPreflight": False,  # Try with skipPreflight=false
-                        "maxRetries": 10,
-                        "preflightCommitment": "confirmed"
-                    }
-                ])
-                
-                if "result" in alt_response:
-                    alt_signature = alt_response["result"]
-                    if alt_signature == "1" * len(alt_signature):
-                        logging.error("Still got all 1's signature on alternate submission")
-                        return False, None
-                    
-                    signature = alt_signature
-                else:
-                    logging.error(f"Alternate submission failed: {alt_response.get('error')}")
-                    return False, None
-                
-            # Verify success
-            logging.info(f"Transaction submitted with signature: {signature}")
-            
-            # Check transaction status
-            success = check_transaction_status(signature, max_attempts=8)
-            
-            if success:
-                logging.info(f"Transaction confirmed successfully!")
-                
-                # Record transaction success
-                sell_successes += 1
-                
-                # If we're selling 100%, remove from monitored tokens
-                if percentage == 100 and token_address in monitored_tokens:
-                    logging.info(f"Removing {token_address} from monitored tokens after complete sell")
-                    del monitored_tokens[token_address]
-                
-                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
-                return True, signature
-            else:
-                logging.error(f"Transaction failed or could not be confirmed")
+            if not signature:
+                logging.error("Both direct and Helius submission failed")
                 return False, None
-        else:
-            error_message = response.get("error", {}).get("message", "Unknown error")
-            logging.error(f"Transaction submission failed: {error_message}")
-            return False, None
+        
+        # Verify success
+        logging.info(f"Sell transaction submitted with signature: {signature}")
+        
+        # Check transaction status with more retries for sell transactions
+        success = check_transaction_status(signature, max_attempts=10)
+        
+        if success:
+            logging.info(f"Sell transaction confirmed successfully!")
             
+            # Record transaction success
+            sell_successes += 1
+            
+            # If we're selling 100%, remove from monitored tokens
+            if percentage == 100 and token_address in monitored_tokens:
+                logging.info(f"Removing {token_address} from monitored tokens after complete sell")
+                del monitored_tokens[token_address]
+            
+            logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
+            return True, signature
+        else:
+            logging.error(f"Sell transaction failed or could not be confirmed")
+            return False, None
     except Exception as e:
         logging.error(f"Error executing sell: {str(e)}")
         logging.error(traceback.format_exc())
@@ -1912,11 +1883,12 @@ def trading_loop():
                         if check_token_liquidity(token_address):
                             logging.info(f"Found promising token with liquidity: {token_address}")
                             
-                            # Use optimized buy function
-                            success, signature = execute_optimized_trade(token_address, CONFIG['BUY_AMOUNT_SOL'])
+                            # Use optimized transaction function instead of execute_optimized_trade
+                            signature = execute_optimized_transaction(token_address, CONFIG['BUY_AMOUNT_SOL'])
                             
-                            if success:
+                            if signature:
                                 logging.info(f"Successfully bought token: {token_address}")
+                                buy_successes += 1
                                 # Add a longer delay after successful buy
                                 time.sleep(15)
                             else:
@@ -2113,6 +2085,812 @@ def test_basic_swap():
         logging.error("❌ USDC swap test failed.")
         return False
 
+def extract_instructions_from_jupiter(quote_data):
+    """Extract swap instructions from Jupiter API response."""
+    try:
+        logging.info(f"Extracting swap instructions from Jupiter quote")
+        
+        # If this is a string, parse it
+        if isinstance(quote_data, str):
+            quote_data = json.loads(quote_data)
+            
+        # Extract the swap instructions based on the Jupiter API response structure
+        if "swapTransaction" in quote_data:
+            # For Jupiter v6 format
+            tx_data = quote_data["swapTransaction"]
+            tx_bytes = base64.b64decode(tx_data)
+            
+            # Use solders to parse transaction
+            from solders.transaction import VersionedTransaction
+            try:
+                tx = VersionedTransaction.from_bytes(tx_bytes)
+                return tx.message.instructions
+            except:
+                # Fall back to legacy transaction format
+                from solders.transaction import Transaction
+                tx = Transaction.from_bytes(tx_bytes)
+                return tx.message.instructions
+                
+        elif "data" in quote_data and "instructions" in quote_data["data"]:
+            # For older Jupiter API format
+            return quote_data["data"]["instructions"]
+            
+        logging.error(f"Unknown Jupiter quote format: {list(quote_data.keys())}")
+        return None
+    except Exception as e:
+        logging.error(f"Error extracting instructions: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def create_priority_fee_instruction(micro_lamports=50000):
+    """Create an instruction to set priority fee."""
+    try:
+        from solders.instruction import Instruction
+        from solders.pubkey import Pubkey
+        
+        # ComputeBudget program ID
+        compute_budget_program_id = Pubkey.from_string("ComputeBudget111111111111111111111111111111")
+        
+        # Set compute unit price instruction (0x03)
+        data = bytes([0x03]) + micro_lamports.to_bytes(4, 'little')
+        
+        # Create instruction with no accounts
+        return Instruction(
+            program_id=compute_budget_program_id,
+            accounts=[],
+            data=data
+        )
+    except Exception as e:
+        logging.error(f"Error creating priority fee instruction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def create_transaction(instructions, recent_blockhash, payer):
+    """Create a new transaction with the given instructions."""
+    try:
+        from solders.transaction import Transaction
+        from solders.message import Message
+        
+        message = Message.new_with_blockhash(
+            instructions=instructions,
+            payer=payer,
+            blockhash=recent_blockhash
+        )
+        
+        return Transaction(message=message, signatures=[])
+    except Exception as e:
+        logging.error(f"Error creating transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def get_fresh_blockhash():
+    """Get a fresh blockhash from the Solana network."""
+    try:
+        response = wallet._rpc_call("getLatestBlockhash", [])
+        
+        if 'result' in response and 'value' in response['result']:
+            blockhash = response['result']['value']['blockhash']
+            logging.info(f"Got fresh blockhash: {blockhash}")
+            return blockhash
+        else:
+            logging.error(f"Failed to get latest blockhash: {response}")
+            return None
+    except Exception as e:
+        logging.error(f"Error getting fresh blockhash: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_transaction_with_special_params(signed_transaction):
+    """Submit transaction with optimized parameters for higher success rate."""
+    try:
+        # Encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # First attempt with skipPreflight=True
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature
+            if signature == "1" * len(signature):
+                logging.warning("Got all 1's signature, retrying with different parameters")
+                
+                # Try with Helius if configured
+                if CONFIG.get('HELIUS_API_KEY'):
+                    return submit_via_helius(signed_transaction)
+                
+                # Otherwise try again with different parameters
+                return retry_transaction_submission(serialized_tx)
+            
+            logging.info(f"Transaction submitted successfully: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction submission failed: {error_message}")
+            
+            # Try with different parameters
+            return retry_transaction_submission(serialized_tx)
+    except Exception as e:
+        logging.error(f"Error submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def retry_transaction_submission(serialized_tx):
+    """Retry transaction submission with alternate parameters."""
+    try:
+        # Try with skipPreflight=False and higher retry count
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 10,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature again
+            if signature == "1" * len(signature):
+                logging.error("Still received all 1's signature - transaction failed")
+                return None
+            
+            logging.info(f"Retry transaction submission successful: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Retry transaction submission failed: {error_message}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in retry transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_via_helius(signed_transaction):
+    """Submit transaction via Helius for better execution success."""
+    try:
+        helius_endpoint = f"https://mainnet.helius-rpc.com/?api-key={CONFIG.get('HELIUS_API_KEY')}"
+        
+        # Serialize and encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # Prepare request
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "confirmed"
+                }
+            ]
+        }
+        
+        # Send request
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(helius_endpoint, json=payload, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if "result" in data:
+                signature = data["result"]
+                logging.info(f"Helius transaction submission successful: {signature}")
+                return signature
+            else:
+                error_message = data.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Helius transaction submission failed: {error_message}")
+                return None
+        else:
+            logging.error(f"Helius API request failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in Helius transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def extract_instructions_from_jupiter(quote_data):
+    """Extract swap instructions from Jupiter API response."""
+    try:
+        logging.info(f"Extracting swap instructions from Jupiter quote")
+        
+        # If this is a string, parse it
+        if isinstance(quote_data, str):
+            quote_data = json.loads(quote_data)
+            
+        # Extract the swap instructions based on the Jupiter API response structure
+        if "swapTransaction" in quote_data:
+            # For Jupiter v6 format
+            tx_data = quote_data["swapTransaction"]
+            tx_bytes = base64.b64decode(tx_data)
+            
+            # Use solders to parse transaction
+            from solders.transaction import VersionedTransaction
+            try:
+                tx = VersionedTransaction.from_bytes(tx_bytes)
+                return tx.message.instructions
+            except:
+                # Fall back to legacy transaction format
+                from solders.transaction import Transaction
+                tx = Transaction.from_bytes(tx_bytes)
+                return tx.message.instructions
+                
+        elif "data" in quote_data and "instructions" in quote_data["data"]:
+            # For older Jupiter API format
+            return quote_data["data"]["instructions"]
+            
+        logging.error(f"Unknown Jupiter quote format: {list(quote_data.keys())}")
+        return None
+    except Exception as e:
+        logging.error(f"Error extracting instructions: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def create_priority_fee_instruction(micro_lamports=50000):
+    """Create an instruction to set priority fee."""
+    try:
+        from solders.instruction import Instruction
+        from solders.pubkey import Pubkey
+        
+        # ComputeBudget program ID
+        compute_budget_program_id = Pubkey.from_string("ComputeBudget111111111111111111111111111111")
+        
+        # Set compute unit price instruction (0x03)
+        data = bytes([0x03]) + micro_lamports.to_bytes(4, 'little')
+        
+        # Create instruction with no accounts
+        return Instruction(
+            program_id=compute_budget_program_id,
+            accounts=[],
+            data=data
+        )
+    except Exception as e:
+        logging.error(f"Error creating priority fee instruction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def create_transaction(instructions, recent_blockhash, payer):
+    """Create a new transaction with the given instructions."""
+    try:
+        from solders.transaction import Transaction
+        from solders.message import Message
+        
+        message = Message.new_with_blockhash(
+            instructions=instructions,
+            payer=payer,
+            blockhash=recent_blockhash
+        )
+        
+        return Transaction(message=message, signatures=[])
+    except Exception as e:
+        logging.error(f"Error creating transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def get_fresh_blockhash():
+    """Get a fresh blockhash from the Solana network."""
+    try:
+        response = wallet._rpc_call("getLatestBlockhash", [])
+        
+        if 'result' in response and 'value' in response['result']:
+            blockhash = response['result']['value']['blockhash']
+            logging.info(f"Got fresh blockhash: {blockhash}")
+            return blockhash
+        else:
+            logging.error(f"Failed to get latest blockhash: {response}")
+            return None
+    except Exception as e:
+        logging.error(f"Error getting fresh blockhash: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_transaction_with_special_params(signed_transaction):
+    """Submit transaction with optimized parameters for higher success rate."""
+    try:
+        # Encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # First attempt with skipPreflight=True
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature
+            if signature == "1" * len(signature):
+                logging.warning("Got all 1's signature, retrying with different parameters")
+                
+                # Try with Helius if configured
+                if CONFIG.get('HELIUS_API_KEY'):
+                    return submit_via_helius(signed_transaction)
+                
+                # Otherwise try again with different parameters
+                return retry_transaction_submission(serialized_tx)
+            
+            logging.info(f"Transaction submitted successfully: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction submission failed: {error_message}")
+            
+            # Try with different parameters
+            return retry_transaction_submission(serialized_tx)
+    except Exception as e:
+        logging.error(f"Error submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def retry_transaction_submission(serialized_tx):
+    """Retry transaction submission with alternate parameters."""
+    try:
+        # Try with skipPreflight=False and higher retry count
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 10,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature again
+            if signature == "1" * len(signature):
+                logging.error("Still received all 1's signature - transaction failed")
+                return None
+            
+            logging.info(f"Retry transaction submission successful: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Retry transaction submission failed: {error_message}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in retry transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_via_helius(signed_transaction):
+    """Submit transaction via Helius for better execution success."""
+    try:
+        helius_endpoint = f"https://mainnet.helius-rpc.com/?api-key={CONFIG.get('HELIUS_API_KEY')}"
+        
+        # Serialize and encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # Prepare request
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "confirmed"
+                }
+            ]
+        }
+        
+        # Send request
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(helius_endpoint, json=payload, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if "result" in data:
+                signature = data["result"]
+                logging.info(f"Helius transaction submission successful: {signature}")
+                return signature
+            else:
+                error_message = data.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Helius transaction submission failed: {error_message}")
+                return None
+        else:
+            logging.error(f"Helius API request failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in Helius transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def execute_optimized_transaction(token_address, amount_sol):
+    """Execute an optimized transaction with direct construction and submission."""
+    try:
+        logging.info(f"Starting optimized transaction for {token_address} with {amount_sol} SOL")
+        
+        # 1. Get secure keypair
+        keypair = get_secure_keypair()
+        
+        # 2. Convert SOL amount to lamports
+        amount_lamports = int(amount_sol * 1_000_000_000)
+        
+        # 3. Get Jupiter quote
+        quote_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": str(amount_lamports),
+            "slippageBps": "100"
+        }
+        
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+        
+        if quote_response.status_code != 200:
+            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+            return None
+            
+        quote_data = quote_response.json()
+        logging.info(f"Got Jupiter quote for {amount_sol} SOL -> {token_address}")
+        
+        # 4. Prepare swap with all parameters
+        swap_params = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(keypair.pubkey()),
+            "wrapUnwrapSOL": True,
+            "computeUnitPriceMicroLamports": 50000,  # Higher priority fee
+            "prioritizationFeeLamports": 10000
+        }
+        
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        swap_response = requests.post(
+            swap_url,
+            json=swap_params,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+            return None
+            
+        swap_data = swap_response.json()
+        
+        if "swapTransaction" not in swap_data:
+            logging.error(f"Swap response missing transaction data")
+            return None
+            
+        # 5. Directly submit the transaction with optimized parameters
+        tx_base64 = swap_data["swapTransaction"]
+        
+        # Submit with special parameters
+        signature = submit_transaction_with_special_params(tx_base64)
+        
+        if signature:
+            # Check transaction success
+            success = check_transaction_status(signature)
+            if success:
+                logging.info(f"Transaction confirmed successfully: {signature}")
+                
+                # Record transaction success
+                token_buy_timestamps[token_address] = time.time()
+                
+                # Initialize token monitoring
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                return signature
+            else:
+                logging.error(f"Transaction failed or could not be confirmed")
+                return None
+        else:
+            logging.error("Failed to submit transaction")
+            return None
+    except Exception as e:
+        logging.error(f"Error in optimized transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def create_priority_fee_instruction(micro_lamports=50000):
+    """Create an instruction to set priority fee."""
+    try:
+        from solders.instruction import Instruction
+        from solders.pubkey import Pubkey
+        
+        # ComputeBudget program ID
+        compute_budget_program_id = Pubkey.from_string("ComputeBudget111111111111111111111111111111")
+        
+        # Set compute unit price instruction (0x03)
+        data = bytes([0x03]) + micro_lamports.to_bytes(4, 'little')
+        
+        # Create instruction with no accounts
+        return Instruction(
+            program_id=compute_budget_program_id,
+            accounts=[],
+            data=data
+        )
+    except Exception as e:
+        logging.error(f"Error creating priority fee instruction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def create_transaction(instructions, recent_blockhash, payer):
+    """Create a new transaction with the given instructions."""
+    try:
+        from solders.transaction import Transaction
+        from solders.message import Message
+        
+        message = Message.new_with_blockhash(
+            instructions=instructions,
+            payer=payer,
+            blockhash=recent_blockhash
+        )
+        
+        return Transaction(message=message, signatures=[])
+    except Exception as e:
+        logging.error(f"Error creating transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        raise
+
+def get_fresh_blockhash():
+    """Get a fresh blockhash from the Solana network."""
+    try:
+        response = wallet._rpc_call("getLatestBlockhash", [])
+        
+        if 'result' in response and 'value' in response['result']:
+            blockhash = response['result']['value']['blockhash']
+            logging.info(f"Got fresh blockhash: {blockhash}")
+            return blockhash
+        else:
+            logging.error(f"Failed to get latest blockhash: {response}")
+            return None
+    except Exception as e:
+        logging.error(f"Error getting fresh blockhash: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_transaction_with_special_params(signed_transaction):
+    """Submit transaction with optimized parameters for higher success rate."""
+    try:
+        # Encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # First attempt with skipPreflight=True
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature
+            if signature == "1" * len(signature):
+                logging.warning("Got all 1's signature, retrying with different parameters")
+                
+                # Try with Helius if configured
+                if CONFIG.get('HELIUS_API_KEY'):
+                    return submit_via_helius(signed_transaction)
+                
+                # Otherwise try again with different parameters
+                return retry_transaction_submission(serialized_tx)
+            
+            logging.info(f"Transaction submitted successfully: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction submission failed: {error_message}")
+            
+            # Try with different parameters
+            return retry_transaction_submission(serialized_tx)
+    except Exception as e:
+        logging.error(f"Error submitting transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def retry_transaction_submission(serialized_tx):
+    """Retry transaction submission with alternate parameters."""
+    try:
+        # Try with skipPreflight=False and higher retry count
+        response = wallet._rpc_call("sendTransaction", [
+            serialized_tx,
+            {
+                "encoding": "base64",
+                "skipPreflight": False,
+                "maxRetries": 10,
+                "preflightCommitment": "confirmed"
+            }
+        ])
+        
+        if "result" in response:
+            signature = response["result"]
+            
+            # Check for all 1's signature again
+            if signature == "1" * len(signature):
+                logging.error("Still received all 1's signature - transaction failed")
+                return None
+            
+            logging.info(f"Retry transaction submission successful: {signature}")
+            return signature
+        else:
+            error_message = response.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Retry transaction submission failed: {error_message}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in retry transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def submit_via_helius(signed_transaction):
+    """Submit transaction via Helius for better execution success."""
+    try:
+        helius_endpoint = f"https://mainnet.helius-rpc.com/?api-key={CONFIG.get('HELIUS_API_KEY')}"
+        
+        # Serialize and encode transaction
+        serialized_tx = base64.b64encode(signed_transaction.serialize()).decode("utf-8")
+        
+        # Prepare request
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "sendTransaction",
+            "params": [
+                serialized_tx,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "confirmed"
+                }
+            ]
+        }
+        
+        # Send request
+        headers = {"Content-Type": "application/json"}
+        response = requests.post(helius_endpoint, json=payload, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if "result" in data:
+                signature = data["result"]
+                logging.info(f"Helius transaction submission successful: {signature}")
+                return signature
+            else:
+                error_message = data.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Helius transaction submission failed: {error_message}")
+                return None
+        else:
+            logging.error(f"Helius API request failed: {response.status_code} - {response.text}")
+            return None
+    except Exception as e:
+        logging.error(f"Error in Helius transaction submission: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
+def execute_optimized_transaction(token_address, amount_sol):
+    """Execute an optimized transaction with direct construction and submission."""
+    try:
+        logging.info(f"Starting optimized transaction for {token_address} with {amount_sol} SOL")
+        
+        # 1. Get secure keypair
+        keypair = get_secure_keypair()
+        
+        # 2. Convert SOL amount to lamports
+        amount_lamports = int(amount_sol * 1_000_000_000)
+        
+        # 3. Get Jupiter quote
+        quote_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": str(amount_lamports),
+            "slippageBps": "100"
+        }
+        
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+        
+        if quote_response.status_code != 200:
+            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+            return None
+            
+        quote_data = quote_response.json()
+        logging.info(f"Got Jupiter quote for {amount_sol} SOL -> {token_address}")
+        
+        # 4. Prepare swap with all parameters
+        swap_params = {
+            "quoteResponse": quote_data,
+            "userPublicKey": str(keypair.pubkey()),
+            "wrapUnwrapSOL": True,
+            "computeUnitPriceMicroLamports": 50000,  # Higher priority fee
+            "prioritizationFeeLamports": 10000
+        }
+        
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        swap_response = requests.post(
+            swap_url,
+            json=swap_params,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+            return None
+            
+        swap_data = swap_response.json()
+        
+        if "swapTransaction" not in swap_data:
+            logging.error(f"Swap response missing transaction data")
+            return None
+            
+        # 5. Directly submit the transaction with optimized parameters
+        tx_base64 = swap_data["swapTransaction"]
+        
+        # Submit with special parameters
+        signature = submit_transaction_with_special_params(tx_base64)
+        
+        if signature:
+            # Check transaction success
+            success = check_transaction_status(signature)
+            if success:
+                logging.info(f"Transaction confirmed successfully: {signature}")
+                
+                # Record transaction success
+                token_buy_timestamps[token_address] = time.time()
+                
+                # Initialize token monitoring
+                initial_price = get_token_price(token_address)
+                if initial_price:
+                    monitored_tokens[token_address] = {
+                        'initial_price': initial_price,
+                        'highest_price': initial_price,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+                
+                return signature
+            else:
+                logging.error(f"Transaction failed or could not be confirmed")
+                return None
+        else:
+            logging.error("Failed to submit transaction")
+            return None
+    except Exception as e:
+        logging.error(f"Error in optimized transaction: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None
+
 def main():
     """Main entry point."""
     logging.info("============ BOT STARTING ============")
@@ -2122,20 +2900,36 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try the simplified transaction approach
+        # Test the optimized transaction function instead of simplified_buy_token
         test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
         test_amount = 0.005  # Small test amount
         
-        logging.info(f"Testing simplified transaction with {test_amount} SOL...")
-        if simplified_buy_token(test_token, test_amount):
-            logging.info("Simplified transaction successful! Starting trading loop...")
+        logging.info(f"Testing optimized transaction with {test_amount} SOL...")
+        
+        # Try the new optimized transaction function
+        signature = execute_optimized_transaction(test_token, test_amount)
+        
+        if signature:
+            logging.info(f"Optimized transaction successful with signature: {signature}!")
+            logging.info("Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Transaction test failed. Cannot start trading.")
-            logging.error("Please verify RPC endpoint and wallet configuration.")
+            logging.error("Optimized transaction test failed. Cannot start trading.")
+            
+            # Fallback to alternate RPC and retry
+            logging.info("Trying alternate RPC endpoint...")
+            if fallback_rpc():
+                # Try one more time with fallback RPC
+                signature = execute_optimized_transaction(test_token, test_amount)
+                if signature:
+                    logging.info(f"Optimized transaction successful with fallback RPC!")
+                    trading_loop()
+                else:
+                    logging.error("Transaction still failed with fallback RPC. Please verify wallet configuration.")
+            else:
+                logging.error("Failed to find working RPC endpoint. Please verify RPC configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
-
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
