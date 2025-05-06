@@ -1674,6 +1674,8 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
 
 def execute_via_javascript(token_address, amount_sol):
     """Execute a swap using the JavaScript implementation."""
+    global buy_successes  # Add this line to declare it's a global variable
+    
     try:
         logging.info(f"Starting JavaScript swap for {token_address} with {amount_sol} SOL")
         
@@ -1705,7 +1707,7 @@ def execute_via_javascript(token_address, amount_sol):
                     
                     # Update state for successful transaction
                     token_buy_timestamps[token_address] = time.time()
-                    buy_successes += 1
+                    buy_successes += 1  # This is where the error occurs
                     
                     # Initialize token monitoring
                     initial_price = get_token_price(token_address)
