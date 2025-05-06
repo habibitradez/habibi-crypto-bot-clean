@@ -1400,6 +1400,95 @@ def verify_token(token_address: str) -> bool:
     logging.info(f"Token {token_address} PASSED verification")
     return True
 
+def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
+    """Get Jupiter quote and swap data with better error handling."""
+    try:
+        # 1. Prepare quote parameters
+        slippage = "100" if is_buy else "500"  # Lower slippage for buys, higher for sells
+        
+        quote_params = {
+            "inputMint": input_mint,
+            "outputMint": output_mint,
+            "amount": str(amount),
+            "slippageBps": slippage,
+            "onlyDirectRoutes": "false",  # Allow any route
+            "asLegacyTransaction": "true"  # Use legacy transaction format
+        }
+        
+        logging.info(f"Getting Jupiter quote: {json.dumps(quote_params)}")
+        
+        # 2. Make quote request
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+        
+        # 3. Check for quote errors
+        if quote_response.status_code != 200:
+            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code} - {quote_response.text}")
+            return None, None
+            
+        quote_data = quote_response.json()
+        
+        # 4. Verify quote data
+        if "outAmount" not in quote_data:
+            logging.error(f"Invalid quote response: {quote_data}")
+            return None, None
+        
+        logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount')}")
+        
+        # 5. Prepare swap with all required parameters
+        public_key = str(wallet.public_key)
+        
+        # Get fresh blockhash
+        blockhash = get_fresh_blockhash()
+        if not blockhash:
+            logging.error("Failed to get blockhash for swap")
+            return quote_data, None
+        
+        # Prepare swap params - EXACT FORMAT IS CRITICAL
+        swap_params = {
+            "quoteResponse": quote_data,
+            "userPublicKey": public_key,
+            "wrapUnwrapSOL": True,  # Boolean, not string
+            "computeUnitPriceMicroLamports": 1000,  # Reasonable priority fee
+            "asLegacyTransaction": True,  # Boolean, not string
+            "useSharedAccounts": True,  # Use Jupiter's shared accounts
+            "dynamicComputeUnitLimit": True,  # Let Jupiter handle compute limits
+            "skipUserAccountsCheck": True  # Skip extra checks that might fail
+        }
+        
+        if blockhash:
+            swap_params["blockhash"] = blockhash
+        
+        logging.info(f"Preparing swap with params: {json.dumps(swap_params)}")
+        
+        # 6. Make swap request
+        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
+        swap_response = requests.post(
+            swap_url,
+            json=swap_params,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+        
+        # 7. Check for swap errors
+        if swap_response.status_code != 200:
+            logging.error(f"Failed to prepare swap: {swap_response.status_code} - {swap_response.text}")
+            return quote_data, None
+            
+        swap_data = swap_response.json()
+        
+        # 8. Verify swap data
+        if "swapTransaction" not in swap_data:
+            logging.error(f"Swap response missing transaction data: {swap_data}")
+            return quote_data, None
+        
+        return quote_data, swap_data
+        
+    except Exception as e:
+        logging.error(f"Error in Jupiter quote/swap: {str(e)}")
+        logging.error(traceback.format_exc())
+        return None, None
+
 def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tuple[bool, Optional[str]]:
     """Execute trade with optimized transaction handling."""
     global buy_attempts, buy_successes
@@ -2524,77 +2613,98 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute an optimized transaction with direct construction and submission."""
+    """Execute an optimized transaction using robust Jupiter API handling."""
     try:
         logging.info(f"Starting optimized transaction for {token_address} with {amount_sol} SOL")
         
-        # 1. Get secure keypair
-        keypair = get_secure_keypair()
+        if CONFIG['SIMULATION_MODE']:
+            logging.info(f"[SIMULATION] Bought token {token_address}")
+            token_buy_timestamps[token_address] = time.time()
+            return "simulation-signature"
+        
+        # 1. Check wallet balance
+        balance = wallet.get_balance()
+        if balance < amount_sol + 0.05:  # Include buffer for fees
+            logging.error(f"Insufficient balance: {balance} SOL")
+            return None
+            
+        logging.info(f"Wallet balance: {balance} SOL")
         
         # 2. Convert SOL amount to lamports
         amount_lamports = int(amount_sol * 1_000_000_000)
         
-        # 3. Get Jupiter quote
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": "100"
-        }
-        
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
-        
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
-            return None
-            
-        quote_data = quote_response.json()
-        logging.info(f"Got Jupiter quote for {amount_sol} SOL -> {token_address}")
-        
-        # 4. Prepare swap with all parameters
-        swap_params = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(keypair.pubkey()),
-            "wrapUnwrapSOL": True,
-            "computeUnitPriceMicroLamports": 50000,  # Higher priority fee
-            "prioritizationFeeLamports": 10000
-        }
-        
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        swap_response = requests.post(
-            swap_url,
-            json=swap_params,
-            headers={"Content-Type": "application/json"},
-            timeout=15
+        # 3. Get Jupiter quote and swap data with better error handling
+        quote_data, swap_data = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,  # Input mint
+            token_address,      # Output mint
+            amount_lamports,    # Amount
+            is_buy=True         # This is a buy
         )
         
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
+        if not swap_data:
+            logging.error("Failed to prepare swap")
             return None
-            
-        swap_data = swap_response.json()
         
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing transaction data")
-            return None
-            
-        # 5. Directly submit the transaction with optimized parameters
+        # 4. Submit transaction
         tx_base64 = swap_data["swapTransaction"]
         
-        # Submit with special parameters
-        signature = submit_transaction_with_special_params(tx_base64)
+        # Submit with specialized parameters
+        signature = wallet._rpc_call("sendTransaction", [
+            tx_base64,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "processed"
+            }
+        ])
         
-        if signature:
-            # Check transaction success
-            success = check_transaction_status(signature)
-            if success:
-                logging.info(f"Transaction confirmed successfully: {signature}")
+        # 5. Check for errors
+        if "result" not in signature:
+            error_message = signature.get("error", {}).get("message", "Unknown error")
+            logging.error(f"Transaction submission failed: {error_message}")
+            return None
+        
+        tx_signature = signature["result"]
+        
+        # 6. Check for all 1's signature
+        if tx_signature == "1" * len(tx_signature):
+            logging.warning("Got all 1's signature, trying alternative approach")
+            
+            # Try with skipPreflight=False
+            alt_signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": False,
+                    "maxRetries": 10,
+                    "preflightCommitment": "confirmed"
+                }
+            ])
+            
+            if "result" not in alt_signature:
+                error_message = alt_signature.get("error", {}).get("message", "Unknown error")
+                logging.error(f"Alternative submission failed: {error_message}")
+                return None
                 
-                # Record transaction success
-                token_buy_timestamps[token_address] = time.time()
-                
-                # Initialize token monitoring
+            tx_signature = alt_signature["result"]
+            
+            if tx_signature == "1" * len(tx_signature):
+                logging.error("Still received all 1's signature - transaction failed")
+                return None
+        
+        # 7. Verify transaction success
+        logging.info(f"Transaction submitted with signature: {tx_signature}")
+        success = check_transaction_status(tx_signature, max_attempts=8)
+        
+        if success:
+            logging.info(f"Transaction confirmed successfully!")
+            
+            # Record transaction success
+            token_buy_timestamps[token_address] = time.time()
+            
+            # Initialize token monitoring
+            try:
                 initial_price = get_token_price(token_address)
                 if initial_price:
                     monitored_tokens[token_address] = {
@@ -2603,13 +2713,27 @@ def execute_optimized_transaction(token_address, amount_sol):
                         'partial_profit_taken': False,
                         'buy_time': time.time()
                     }
-                
-                return signature
-            else:
-                logging.error(f"Transaction failed or could not be confirmed")
-                return None
+                else:
+                    # Use placeholder value
+                    monitored_tokens[token_address] = {
+                        'initial_price': 0.0001,
+                        'highest_price': 0.0001,
+                        'partial_profit_taken': False,
+                        'buy_time': time.time()
+                    }
+            except Exception as e:
+                logging.warning(f"Error setting initial price: {str(e)}")
+                # Use placeholder value
+                monitored_tokens[token_address] = {
+                    'initial_price': 0.0001,
+                    'highest_price': 0.0001,
+                    'partial_profit_taken': False,
+                    'buy_time': time.time()
+                }
+            
+            return tx_signature
         else:
-            logging.error("Failed to submit transaction")
+            logging.error(f"Transaction failed or could not be confirmed")
             return None
     except Exception as e:
         logging.error(f"Error in optimized transaction: {str(e)}")
