@@ -12,12 +12,10 @@ const AMOUNT_SOL = parseFloat(process.argv[3] || '0.005');
 
 // Get environment variables
 const RPC_URL = process.env.SOLANA_RPC_URL || process.env.solana_rpc_url || '';
-const JUPITER_API_URL = process.env.JUPITER_API_URL || process.env.jupiter_api_url || '';
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
 
 // Show environment variables are available (without revealing sensitive data)
 console.log(`RPC_URL available: ${!!RPC_URL}`);
-console.log(`JUPITER_API_URL available: ${!!JUPITER_API_URL}`);
 console.log(`PRIVATE_KEY available: ${!!PRIVATE_KEY}`);
 
 async function executeSwap() {
@@ -34,26 +32,11 @@ async function executeSwap() {
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
-    // For QuickNode's Metis Jupiter API, the URL structure is different
-    // It should be the base URL like https://metis.quiknode.pro/your-api-key/
+    // Use the public Jupiter API
+    const JUPITER_API_BASE = 'https://quote-api.jup.ag';
     
-    // First check if we're using the swap-api URL (which is incorrect)
-    let baseUrl = JUPITER_API_URL;
-    if (baseUrl.includes('jupiter-swap-api.quiknode.pro')) {
-      // Extract the API key and reconstruct the URL
-      const apiKeyMatch = baseUrl.match(/\/([A-Za-z0-9]+)\/?$/);
-      if (apiKeyMatch && apiKeyMatch[1]) {
-        baseUrl = `https://metis.quiknode.pro/${apiKeyMatch[1]}/`;
-      }
-    }
-    
-    // Ensure it ends with a slash
-    if (!baseUrl.endsWith('/')) {
-      baseUrl += '/';
-    }
-    
-    // Use the correct endpoints
-    const quoteUrl = `${baseUrl}v6/quote`;
+    // Step 1: Get a quote
+    const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
     console.log(`Using quote URL: ${quoteUrl}`);
     
     const quoteParams = {
@@ -74,8 +57,8 @@ async function executeSwap() {
     
     console.log(`Got quote with output amount: ${quoteResponse.data.outAmount}`);
     
-    // Now use the quote to prepare a swap transaction
-    const swapUrl = `${baseUrl}v6/swap`;
+    // Step 2: Get swap instructions
+    const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
     const swapRequest = {
