@@ -1671,6 +1671,64 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         logging.error(traceback.format_exc())
         return False, None
 
+def execute_via_javascript(token_address, amount_sol):
+    """Execute a swap using the JavaScript implementation."""
+    try:
+        logging.info(f"Starting JavaScript swap for {token_address} with {amount_sol} SOL")
+        
+        # Call the JavaScript script with Node.js
+        command = ['node', 'swap.js', token_address, str(amount_sol)]
+        
+        logging.info(f"Executing command: {' '.join(command)}")
+        result = subprocess.run(
+            command,
+            env=os.environ,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+        
+        # Log the output
+        logging.info(f"STDOUT: {result.stdout}")
+        if result.stderr:
+            logging.error(f"STDERR: {result.stderr}")
+        
+        # Check if the script executed successfully
+        if result.returncode == 0:
+            # Extract the transaction signature from the output
+            output_lines = result.stdout.strip().split('\n')
+            for line in output_lines:
+                if line.startswith('SUCCESS'):
+                    signature = line.split(' ')[1].strip()
+                    logging.info(f"JavaScript swap successful: {signature}")
+                    
+                    # Update state for successful transaction
+                    token_buy_timestamps[token_address] = time.time()
+                    buy_successes += 1
+                    
+                    # Initialize token monitoring
+                    initial_price = get_token_price(token_address)
+                    if initial_price:
+                        monitored_tokens[token_address] = {
+                            'initial_price': initial_price,
+                            'highest_price': initial_price,
+                            'partial_profit_taken': False,
+                            'buy_time': time.time()
+                        }
+                    
+                    return True, signature
+            
+            logging.error(f"Could not find transaction signature in output")
+            return False, None
+        else:
+            logging.error(f"JavaScript execution failed with code {result.returncode}")
+            return False, None
+            
+    except Exception as e:
+        logging.error(f"Error in JavaScript execution: {str(e)}")
+        logging.error(traceback.format_exc())
+        return False, None
+
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
     """Execute optimized sell transaction with direct construction and submission."""
     global sell_attempts, sell_successes
@@ -1973,7 +2031,7 @@ def trading_loop():
                             logging.info(f"Found promising token with liquidity: {token_address}")
                             
                             # Use optimized transaction function instead of execute_optimized_trade
-                            signature = execute_optimized_transaction(token_address, CONFIG['BUY_AMOUNT_SOL'])
+                            success, signature = execute_via_javascript(token_address, CONFIG['BUY_AMOUNT_SOL'])
                             
                             if signature:
                                 logging.info(f"Successfully bought token: {token_address}")
@@ -3024,34 +3082,20 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Test the optimized transaction function instead of simplified_buy_token
+        # Try using the JavaScript implementation
         test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
         test_amount = 0.005  # Small test amount
         
-        logging.info(f"Testing optimized transaction with {test_amount} SOL...")
+        logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
+        success, signature = execute_via_javascript(test_token, test_amount)
         
-        # Try the new optimized transaction function
-        signature = execute_optimized_transaction(test_token, test_amount)
-        
-        if signature:
-            logging.info(f"Optimized transaction successful with signature: {signature}!")
+        if success:
+            logging.info(f"JavaScript transaction successful with signature: {signature}!")
             logging.info("Starting trading loop...")
             trading_loop()
         else:
-            logging.error("Optimized transaction test failed. Cannot start trading.")
-            
-            # Fallback to alternate RPC and retry
-            logging.info("Trying alternate RPC endpoint...")
-            if fallback_rpc():
-                # Try one more time with fallback RPC
-                signature = execute_optimized_transaction(test_token, test_amount)
-                if signature:
-                    logging.info(f"Optimized transaction successful with fallback RPC!")
-                    trading_loop()
-                else:
-                    logging.error("Transaction still failed with fallback RPC. Please verify wallet configuration.")
-            else:
-                logging.error("Failed to find working RPC endpoint. Please verify RPC configuration.")
+            logging.error("JavaScript transaction test failed. Cannot start trading.")
+            logging.error("Please verify RPC endpoint and wallet configuration.")
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 # Add this at the end of your file
