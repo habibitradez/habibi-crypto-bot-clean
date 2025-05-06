@@ -1,0 +1,11 @@
+{
+  "name": "solana-swap-bot",
+  "version": "1.0.0",
+  "description": "Solana swap bot",
+  "main": "swap.js",
+  "dependencies": {
+    "@solana/web3.js": "^1.91.2",
+    "axios": "^1.6.2",
+    "bs58": "^5.0.0"
+  }
+}
