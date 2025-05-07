@@ -55,7 +55,7 @@ CONFIG = {
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))
 }
-}
+
 
 def check_solders_version():
     """Check the installed version of Solders library."""
