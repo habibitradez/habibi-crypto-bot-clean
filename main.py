@@ -1954,8 +1954,8 @@ def monitor_token_price(token_address: str) -> None:
         logging.error(traceback.format_exc())
 
 def trading_loop():
-    """Main trading loop with optimized functions."""
-    global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
+    """Main trading loop with JavaScript transaction execution."""
+    global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit, buy_successes
     
     logging.info("Starting main trading loop with optimized transaction handling")
     
