@@ -1672,15 +1672,16 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         logging.error(traceback.format_exc())
         return False, None
 
-def execute_via_javascript(token_address, amount_sol):
+def execute_via_javascript(token_address, amount_sol, is_sell=False):
     """Execute a swap using the JavaScript implementation."""
-    global buy_successes  # Add this line to declare it's a global variable
+    global buy_successes, sell_successes
     
     try:
-        logging.info(f"Starting JavaScript swap for {token_address} with {amount_sol} SOL")
+        operation = "sell" if is_sell else "buy"
+        logging.info(f"Starting JavaScript {operation} for {token_address} with {amount_sol} SOL")
         
         # Call the JavaScript script with Node.js
-        command = ['node', 'swap.js', token_address, str(amount_sol)]
+        command = ['node', 'swap.js', token_address, str(amount_sol), 'true' if is_sell else 'false']
         
         logging.info(f"Executing command: {' '.join(command)}")
         result = subprocess.run(
@@ -1703,21 +1704,29 @@ def execute_via_javascript(token_address, amount_sol):
             for line in output_lines:
                 if line.startswith('SUCCESS'):
                     signature = line.split(' ')[1].strip()
-                    logging.info(f"JavaScript swap successful: {signature}")
+                    logging.info(f"JavaScript {operation} successful: {signature}")
                     
-                    # Update state for successful transaction
-                    token_buy_timestamps[token_address] = time.time()
-                    buy_successes += 1  # This is where the error occurs
-                    
-                    # Initialize token monitoring
-                    initial_price = get_token_price(token_address)
-                    if initial_price:
-                        monitored_tokens[token_address] = {
-                            'initial_price': initial_price,
-                            'highest_price': initial_price,
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
-                        }
+                    if is_sell:
+                        # Handle sell success
+                        sell_successes += 1
+                        
+                        # If selling 100%, remove from monitored tokens
+                        if token_address in monitored_tokens:
+                            del monitored_tokens[token_address]
+                    else:
+                        # Handle buy success
+                        token_buy_timestamps[token_address] = time.time()
+                        buy_successes += 1
+                        
+                        # Initialize token monitoring
+                        initial_price = get_token_price(token_address)
+                        if initial_price:
+                            monitored_tokens[token_address] = {
+                                'initial_price': initial_price,
+                                'highest_price': initial_price,
+                                'partial_profit_taken': False,
+                                'buy_time': time.time()
+                            }
                     
                     return True, signature
             
@@ -1731,9 +1740,9 @@ def execute_via_javascript(token_address, amount_sol):
         logging.error(f"Error in JavaScript execution: {str(e)}")
         logging.error(traceback.format_exc())
         return False, None
-
+        
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction with direct construction and submission."""
+    """Execute optimized sell transaction with direct JavaScript execution."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1750,7 +1759,7 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         return True, "simulation-signature"
     
     try:
-        # 1. Check token balance
+        # Check token balance
         token_accounts = wallet.get_token_accounts(token_address)
         if not token_accounts:
             logging.error(f"No token accounts found for {token_address}")
@@ -1773,94 +1782,15 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         amount_to_sell = int(token_amount * percentage / 100)
         logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
         
-        # 2. Get secure keypair
-        keypair = get_secure_keypair()
+        # For now, we only support selling 100% as we're using the JavaScript method
+        if percentage != 100:
+            logging.warning(f"Partial selling not yet supported with JavaScript method. Selling 100% instead of {percentage}%")
         
-        # 3. Get fresh blockhash
-        blockhash = get_fresh_blockhash()
-        if not blockhash:
-            logging.error("Failed to get latest blockhash")
-            return False, None
-        
-        # 4. Get Jupiter quote for selling
-        quote_params = {
-            "inputMint": token_address,
-            "outputMint": SOL_TOKEN_ADDRESS,
-            "amount": str(amount_to_sell),
-            "slippageBps": "500"  # 5% slippage for selling
-        }
-        
-        # Get quote from Jupiter
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
-        
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
-            logging.error(f"Response: {quote_response.text}")
-            return False, None
-            
-        quote_data = quote_response.json()
-        logging.info(f"Got Jupiter quote. SOL output amount: {quote_data.get('outAmount', 'unknown')}")
-        
-        # 5. Prepare swap with critical parameter fixes
-        swap_params = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(keypair.pubkey()),
-            "wrapUnwrapSOL": True,  # Correct parameter name
-            "computeUnitPriceMicroLamports": 50000,  # Add higher priority fee
-            "prioritizationFeeLamports": 10000,  # Additional priority
-            "asLegacyTransaction": True,  # Use legacy format
-            "blockhash": blockhash  # Include fresh blockhash
-        }
-        
-        # Get swap transaction from Jupiter
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        swap_response = requests.post(
-            swap_url,
-            json=swap_params,
-            headers={"Content-Type": "application/json"},
-            timeout=15
-        )
-        
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to get swap transaction: {swap_response.status_code}")
-            logging.error(f"Response: {swap_response.text}")
-            return False, None
-            
-        swap_data = swap_response.json()
-        
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing transaction data: {list(swap_data.keys())}")
-            return False, None
-        
-        # 6. Get transaction and submit with optimized parameters
-        tx_base64 = swap_data["swapTransaction"]
-        
-        # Try direct RPC submission first
-        signature = submit_transaction_with_special_params(tx_base64)
-        
-        if not signature:
-            # If direct submission fails, try Helius
-            logging.info("Direct transaction submission failed. Trying Helius...")
-            # Decode the transaction to bytes
-            tx_bytes = base64.b64decode(tx_base64)
-            # Try Helius submission
-            signature = submit_via_helius(tx_bytes)
-            
-            if not signature:
-                logging.error("Both direct and Helius submission failed")
-                return False, None
-        
-        # Verify success
-        logging.info(f"Sell transaction submitted with signature: {signature}")
-        
-        # Check transaction status with more retries for sell transactions
-        success = check_transaction_status(signature, max_attempts=10)
+        # Use a dummy amount - the JavaScript function will determine the actual token balance
+        amount_sol = 0.001
+        success, signature = execute_via_javascript(token_address, amount_sol, is_sell=True)
         
         if success:
-            logging.info(f"Sell transaction confirmed successfully!")
-            
-            # Record transaction success
             sell_successes += 1
             
             # If we're selling 100%, remove from monitored tokens
@@ -1873,6 +1803,7 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         else:
             logging.error(f"Sell transaction failed or could not be confirmed")
             return False, None
+            
     except Exception as e:
         logging.error(f"Error executing sell: {str(e)}")
         logging.error(traceback.format_exc())
