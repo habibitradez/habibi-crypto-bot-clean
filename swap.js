@@ -76,9 +76,27 @@ async function executeSwap() {
     
     // For sell operations, we need to get token balance first to know how much to sell
     let amount = amountLamports;
+    
     if (IS_SELL) {
       console.log("Getting token accounts to determine available balance...");
+      
       try {
+        // CRITICAL: Since we're finding zero balances, let's try a direct token supply query first
+        // to check if the token even exists on the blockchain
+        try {
+          const tokenInfoResponse = await connection.getTokenSupply(new PublicKey(TOKEN_ADDRESS));
+          console.log(`Token supply info:`, JSON.stringify(tokenInfoResponse.value, null, 2));
+          // The decimals will be important for properly formatting the amount
+        } catch (tokenInfoError) {
+          console.log(`Token supply query failed, token may not exist: ${tokenInfoError.message}`);
+          // If token doesn't exist, mark as sold
+          if (tokenInfoError.message.includes("Invalid") || tokenInfoError.message.includes("not found")) {
+            console.error("Token appears to be invalid. Marking as sold to remove from monitoring.");
+            process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+          }
+        }
+        
+        // Continue with the token account lookup
         const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
           keypair.publicKey,
           { mint: new PublicKey(TOKEN_ADDRESS) }
@@ -96,6 +114,21 @@ async function executeSwap() {
           
           console.log(`Found ${allTokens.value.length} total token accounts`);
           
+          // Log all tokens for debugging
+          if (allTokens.value.length > 0) {
+            console.log("Listing all token accounts:");
+            for (let i = 0; i < allTokens.value.length; i++) {
+              try {
+                const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
+                const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
+                const tokenAmount = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount || "0";
+                console.log(`Token ${i+1}: Mint=${mint}, Amount=${tokenAmount}`);
+              } catch (e) {
+                console.log(`Error parsing token ${i+1}: ${e.message}`);
+              }
+            }
+          }
+          
           let foundTokenAccount = false;
           
           // Loop through all tokens to find our target token
@@ -108,6 +141,13 @@ async function executeSwap() {
                 console.log(`Found token account for ${TOKEN_ADDRESS}`);
                 const tokenBalance = parseInt(parsedInfo.tokenAmount.amount);
                 console.log(`Found token balance: ${tokenBalance}`);
+                
+                // Force a minimum amount for sell operations
+                if (tokenBalance === 0 || tokenBalance < 100) {
+                  console.log("Token balance is zero or too small, marking as sold.");
+                  process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+                }
+                
                 amount = tokenBalance;
                 foundTokenAccount = true;
                 break;
@@ -123,29 +163,58 @@ async function executeSwap() {
             process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
           }
         } else {
-          // Get the balance of the first account
-          const tokenBalance = parseInt(tokenAccounts.value[0].account.data.parsed.info.tokenAmount.amount);
-          console.log(`Found token balance: ${tokenBalance}`);
+          // We found token accounts through the standard method
+          // Log all accounts for debugging
+          console.log(`Found ${tokenAccounts.value.length} token accounts for ${TOKEN_ADDRESS}`);
           
-          // If balance is 0, mark as sold and exit
-          if (tokenBalance === 0) {
-            console.log("Token balance is 0, marking as sold.");
+          let validTokenAccount = false;
+          let largestBalance = 0;
+          
+          // Find the account with the largest balance
+          for (const account of tokenAccounts.value) {
+            const tokenBalance = parseInt(account.account.data.parsed.info.tokenAmount.amount);
+            console.log(`Token account ${account.pubkey.toString()}: Balance=${tokenBalance}`);
+            
+            if (tokenBalance > largestBalance) {
+              largestBalance = tokenBalance;
+            }
+          }
+          
+          // Get the balance of the account with the largest balance
+          if (largestBalance > 0) {
+            console.log(`Using largest balance: ${largestBalance}`);
+            amount = largestBalance;
+            validTokenAccount = true;
+          } else {
+            // All accounts have zero balance
+            console.log("All token accounts have zero balance, marking as sold.");
             process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
           }
           
-          // If selling 100%, use the full balance
-          amount = tokenBalance;
-          console.log(`Selling ${amount} tokens (100% of ${tokenBalance})`);
+          if (!validTokenAccount) {
+            console.error("No valid token account found. Marking as sold.");
+            process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+          }
         }
       } catch (error) {
         console.error("Error checking token balance:", error.message);
+        
         if (error.message.includes("Invalid public key input")) {
           console.error("Invalid token address. Marking as sold to remove from monitoring.");
           process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
         }
+        
         console.error("Could not find token. Marking as sold anyway to remove from monitoring.");
         process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
       }
+      
+      // Final check that we have a valid amount to sell
+      if (amount <= 0) {
+        console.error("Amount to sell is zero or negative. Marking as sold.");
+        process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+      }
+      
+      console.log(`Final amount to sell: ${amount}`);
     }
     
     // Step 1: Get a quote with retry logic for rate limiting
@@ -156,7 +225,7 @@ async function executeSwap() {
       inputMint: inputMint,
       outputMint: outputMint,
       amount: amount.toString(),
-      slippageBps: IS_SELL ? "300" : "100"  // Higher slippage for selling
+      slippageBps: IS_SELL ? "500" : "100"  // Even higher slippage for selling (5%)
     };
     
     console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
@@ -187,7 +256,7 @@ async function executeSwap() {
       quoteResponse: quoteResponse.data,
       userPublicKey: keypair.publicKey.toBase58(),
       wrapUnwrapSOL: true,
-      prioritizationFeeLamports: 100000, // 0.0001 SOL priority fee
+      prioritizationFeeLamports: 300000, // 0.0003 SOL priority fee (increased)
       dynamicComputeUnitLimit: true
     };
     
