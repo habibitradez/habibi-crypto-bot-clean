@@ -1858,6 +1858,8 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
 
 def monitor_token_price(token_address):
     """Monitor token price and execute sell when conditions are met."""
+    global daily_profit  # Move this to the top of the function
+    
     try:
         if token_address not in monitored_tokens:
             logging.warning(f"Tried to monitor {token_address} but it's not in monitored_tokens dict")
@@ -1912,7 +1914,6 @@ def monitor_token_price(token_address):
                 logging.info(f"Profit taken: ${profit_amount:.2f}")
                 
                 # Update daily profit tracking
-                global daily_profit
                 daily_profit += profit_amount
                 
                 # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
@@ -1932,7 +1933,6 @@ def monitor_token_price(token_address):
                 logging.info(f"Loss taken: ${loss_amount:.2f}")
                 
                 # Update daily profit tracking (negative)
-                global daily_profit
                 daily_profit -= loss_amount
                 
                 # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
@@ -1955,7 +1955,6 @@ def monitor_token_price(token_address):
                     logging.info(f"Loss taken: ${-profit_amount:.2f}")
                 
                 # Update daily profit tracking
-                global daily_profit
                 daily_profit += profit_amount
                 
                 # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
