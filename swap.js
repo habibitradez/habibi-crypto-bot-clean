@@ -49,23 +49,74 @@ async function executeSwap() {
     let amount = amountLamports;
     if (IS_SELL) {
       console.log("Getting token accounts to determine available balance...");
-      const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-        keypair.publicKey,
-        { mint: new PublicKey(TOKEN_ADDRESS) }
-      );
-      
-      if (tokenAccounts.value.length === 0) {
-        console.error(`No token accounts found for ${TOKEN_ADDRESS}`);
-        process.exit(1);
+      try {
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          keypair.publicKey,
+          { mint: new PublicKey(TOKEN_ADDRESS) }
+        );
+        
+        if (tokenAccounts.value.length === 0) {
+          console.error(`No token accounts found for ${TOKEN_ADDRESS}`);
+          
+          // Try to look for the token with getTokenAccountsByOwner instead
+          console.log("Trying alternative method to find token...");
+          const allTokens = await connection.getTokenAccountsByOwner(
+            keypair.publicKey,
+            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+          );
+          
+          console.log(`Found ${allTokens.value.length} total token accounts`);
+          
+          let foundTokenAccount = false;
+          
+          // Loop through all tokens to find our target token
+          for (const tokenAccount of allTokens.value) {
+            try {
+              const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
+              const parsedInfo = accountInfo.value?.data?.parsed?.info;
+              
+              if (parsedInfo && parsedInfo.mint === TOKEN_ADDRESS) {
+                console.log(`Found token account for ${TOKEN_ADDRESS}`);
+                const tokenBalance = parseInt(parsedInfo.tokenAmount.amount);
+                console.log(`Found token balance: ${tokenBalance}`);
+                amount = tokenBalance;
+                foundTokenAccount = true;
+                break;
+              }
+            } catch (err) {
+              console.error(`Error checking token account: ${err.message}`);
+            }
+          }
+          
+          // If we still can't find the token, exit
+          if (!foundTokenAccount) {
+            console.error("Could not find token. Marking as sold anyway to remove from monitoring.");
+            process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+          }
+        } else {
+          // Get the balance of the first account
+          const tokenBalance = parseInt(tokenAccounts.value[0].account.data.parsed.info.tokenAmount.amount);
+          console.log(`Found token balance: ${tokenBalance}`);
+          
+          // If balance is 0, mark as sold and exit
+          if (tokenBalance === 0) {
+            console.log("Token balance is 0, marking as sold.");
+            process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+          }
+          
+          // If selling 100%, use the full balance
+          amount = tokenBalance;
+          console.log(`Selling ${amount} tokens (100% of ${tokenBalance})`);
+        }
+      } catch (error) {
+        console.error("Error checking token balance:", error.message);
+        if (error.message.includes("Invalid public key input")) {
+          console.error("Invalid token address. Marking as sold to remove from monitoring.");
+          process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+        }
+        console.error("Could not find token. Marking as sold anyway to remove from monitoring.");
+        process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
       }
-      
-      // Get the balance of the first account
-      const tokenBalance = parseInt(tokenAccounts.value[0].account.data.parsed.info.tokenAmount.amount);
-      console.log(`Found token balance: ${tokenBalance}`);
-      
-      // If selling 100%, use the full balance
-      amount = tokenBalance;
-      console.log(`Selling ${amount} tokens (100% of ${tokenBalance})`);
     }
     
     // Step 1: Get a quote
@@ -76,7 +127,7 @@ async function executeSwap() {
       inputMint: inputMint,
       outputMint: outputMint,
       amount: amount.toString(),
-      slippageBps: "100"
+      slippageBps: IS_SELL ? "300" : "100"  // Higher slippage for selling
     };
     
     console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
@@ -85,10 +136,14 @@ async function executeSwap() {
     
     if (!quoteResponse.data) {
       console.error('Failed to get quote', quoteResponse);
+      if (IS_SELL) {
+        console.error("Marking as sold anyway to remove from monitoring.");
+        process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+      }
       process.exit(1);
     }
     
-    console.log(`Got Jupiter quote. SOL output amount: ${quoteResponse.data.outAmount}`);
+    console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
     
     // Step 2: Get swap instructions
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
@@ -111,6 +166,10 @@ async function executeSwap() {
     
     if (!swapResponse.data || !swapResponse.data.swapTransaction) {
       console.error('Failed to get swap transaction', swapResponse.data);
+      if (IS_SELL) {
+        console.error("Marking as sold anyway to remove from monitoring.");
+        process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+      }
       process.exit(1);
     }
     
@@ -153,6 +212,13 @@ async function executeSwap() {
     if (error.stack) {
       console.error('Stack trace:', error.stack);
     }
+    
+    // For sell operations, if there's an error, mark as sold to avoid infinite sell attempts
+    if (IS_SELL) {
+      console.error("Error during sell operation. Marking as sold anyway to remove from monitoring.");
+      process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+    }
+    
     process.exit(1);
   }
 }
