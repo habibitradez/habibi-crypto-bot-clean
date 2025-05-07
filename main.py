@@ -1680,6 +1680,24 @@ def execute_via_javascript(token_address, amount_sol, is_sell=False):
         operation = "sell" if is_sell else "buy"
         logging.info(f"Starting JavaScript {operation} for {token_address} with {amount_sol} SOL")
         
+        # Before selling, double-check token balance directly in Python
+        if is_sell:
+            token_accounts = wallet.get_token_accounts(token_address)
+            token_amount = 0
+            if token_accounts:
+                for account in token_accounts:
+                    # Parse token amount from account data
+                    parsed_data = account['account']['data']['parsed']
+                    if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                        token_amount += int(parsed_data['info']['tokenAmount']['amount'])
+                
+                if token_amount == 0:
+                    logging.error(f"Zero balance for {token_address} - skipping sell operation")
+                    return False, None
+            else:
+                logging.error(f"No token accounts found for {token_address} - skipping sell operation")
+                return False, None
+        
         # Call the JavaScript script with Node.js
         command = ['node', 'swap.js', token_address, str(amount_sol), 'true' if is_sell else 'false']
         
@@ -1712,6 +1730,7 @@ def execute_via_javascript(token_address, amount_sol, is_sell=False):
                         
                         # If selling 100%, remove from monitored tokens
                         if token_address in monitored_tokens:
+                            logging.info(f"Removing {token_address} from monitored tokens after successful sell")
                             del monitored_tokens[token_address]
                     else:
                         # Handle buy success
@@ -1727,6 +1746,8 @@ def execute_via_javascript(token_address, amount_sol, is_sell=False):
                                 'partial_profit_taken': False,
                                 'buy_time': time.time()
                             }
+                        else:
+                            logging.warning(f"Could not get initial price for {token_address}")
                     
                     return True, signature
             
@@ -1742,7 +1763,7 @@ def execute_via_javascript(token_address, amount_sol, is_sell=False):
         return False, None
         
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction with direct JavaScript execution."""
+    """Execute optimized sell transaction with direct JavaScript execution and retries."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1758,131 +1779,197 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
             
         return True, "simulation-signature"
     
-    try:
-        # Check token balance
-        token_accounts = wallet.get_token_accounts(token_address)
-        if not token_accounts:
-            logging.error(f"No token accounts found for {token_address}")
-            return False, None
-        
-        token_amount = 0
-        for account in token_accounts:
-            # Parse token amount from account data
-            parsed_data = account['account']['data']['parsed']
-            if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                token_amount += int(parsed_data['info']['tokenAmount']['amount'])
-        
-        if token_amount == 0:
-            logging.error(f"Zero balance for {token_address}")
-            return False, None
+    # Maximum number of sell attempts
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            # Check token balance
+            token_accounts = wallet.get_token_accounts(token_address)
+            if not token_accounts:
+                logging.error(f"No token accounts found for {token_address} - Attempt {attempt+1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Waiting 5 seconds before retry...")
+                    time.sleep(5)
+                    continue
+                return False, None
             
-        logging.info(f"Found token balance: {token_amount}")
-        
-        # Calculate amount to sell based on percentage
-        amount_to_sell = int(token_amount * percentage / 100)
-        logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
-        
-        # For now, we only support selling 100% as we're using the JavaScript method
-        if percentage != 100:
-            logging.warning(f"Partial selling not yet supported with JavaScript method. Selling 100% instead of {percentage}%")
-        
-        # Use a dummy amount - the JavaScript function will determine the actual token balance
-        amount_sol = 0.001
-        success, signature = execute_via_javascript(token_address, amount_sol, is_sell=True)
-        
-        if success:
-            sell_successes += 1
+            token_amount = 0
+            for account in token_accounts:
+                # Parse token amount from account data
+                parsed_data = account['account']['data']['parsed']
+                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                    token_amount += int(parsed_data['info']['tokenAmount']['amount'])
             
-            # If we're selling 100%, remove from monitored tokens
-            if percentage == 100 and token_address in monitored_tokens:
-                logging.info(f"Removing {token_address} from monitored tokens after complete sell")
-                del monitored_tokens[token_address]
+            if token_amount == 0:
+                logging.error(f"Zero balance for {token_address} - Attempt {attempt+1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Waiting 5 seconds before retry...")
+                    time.sleep(5)
+                    continue
+                return False, None
+                
+            logging.info(f"Found token balance: {token_amount} - Attempt {attempt+1}/{max_retries}")
             
-            logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
-            return True, signature
-        else:
-            logging.error(f"Sell transaction failed or could not be confirmed")
-            return False, None
+            # Calculate amount to sell based on percentage
+            amount_to_sell = int(token_amount * percentage / 100)
+            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
             
-    except Exception as e:
-        logging.error(f"Error executing sell: {str(e)}")
-        logging.error(traceback.format_exc())
-        return False, None
-
-def monitor_token_price(token_address: str) -> None:
-    """Monitor a token's price and execute the trading strategy."""
-    try:
-        # If we don't have a buy timestamp, record now
-        if token_address not in token_buy_timestamps:
-            token_buy_timestamps[token_address] = time.time()
-        
-        # Get initial price if not already monitored
-        if token_address not in monitored_tokens:
-            initial_price = get_token_price(token_address)
-            if initial_price:
-                monitored_tokens[token_address] = {
-                    'initial_price': initial_price,
-                    'highest_price': initial_price,
-                    'partial_profit_taken': False,
-                    'buy_time': token_buy_timestamps[token_address]
-                }
+            # For now, partial selling is not supported with the JavaScript method
+            if percentage != 100:
+                logging.warning(f"Partial selling not yet supported with JavaScript method. Selling 100% instead of {percentage}%")
+            
+            # Use a dummy amount - the JavaScript function will determine the actual token balance
+            amount_sol = 0.001
+            success, signature = execute_via_javascript(token_address, amount_sol, is_sell=True)
+            
+            if success:
+                sell_successes += 1
+                
+                # If we're selling 100%, remove from monitored tokens
+                if percentage == 100 and token_address in monitored_tokens:
+                    logging.info(f"Removing {token_address} from monitored tokens after complete sell")
+                    del monitored_tokens[token_address]
+                
+                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
+                return True, signature
             else:
-                logging.warning(f"Could not get initial price for {token_address}")
-                return
+                logging.error(f"Sell transaction failed on attempt {attempt+1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Waiting 5 seconds before retry...")
+                    time.sleep(5)
+                    # Continue to next retry
+                    continue
+                
+                return False, None
+                
+        except Exception as e:
+            logging.error(f"Error executing sell (attempt {attempt+1}/{max_retries}): {str(e)}")
+            logging.error(traceback.format_exc())
+            if attempt < max_retries - 1:
+                logging.info(f"Waiting 5 seconds before retry...")
+                time.sleep(5)
+                continue
+            
+            return False, None
+    
+    # If we reach here, all retries failed
+    return False, None
+
+def monitor_token_price(token_address):
+    """Monitor token price and execute sell when conditions are met."""
+    try:
+        if token_address not in monitored_tokens:
+            logging.warning(f"Tried to monitor {token_address} but it's not in monitored_tokens dict")
+            return
+            
+        token_data = monitored_tokens[token_address]
         
         # Get current price
         current_price = get_token_price(token_address)
         if not current_price:
             logging.warning(f"Could not get current price for {token_address}")
+            # Don't return - we'll use the last known price for time-based decisions
             return
-        
-        # Update highest price if current price is higher
-        if current_price > monitored_tokens[token_address]['highest_price']:
-            monitored_tokens[token_address]['highest_price'] = current_price
-        
+            
+        # Update highest price if current is higher
+        if current_price > token_data['highest_price']:
+            token_data['highest_price'] = current_price
+            
         # Calculate price change percentage
-        initial_price = monitored_tokens[token_address]['initial_price']
-        price_change_pct = ((current_price - initial_price) / initial_price) * 100
+        initial_price = token_data['initial_price']
+        price_change_pct = ((current_price / initial_price) - 1) * 100
         
-        # Check if enough time has passed
-        time_elapsed_minutes = (time.time() - monitored_tokens[token_address]['buy_time']) / 60
-        time_limit_hit = time_elapsed_minutes >= CONFIG['TIME_LIMIT_MINUTES']
+        # Calculate time elapsed since buy
+        minutes_since_buy = (time.time() - token_data['buy_time']) / 60
         
         # Log current status
-        logging.info(f"Token {token_address} - Current: {price_change_pct:.2f}% change, Time: {time_elapsed_minutes:.1f} min")
+        token_symbol = get_token_symbol(token_address) or token_address[:8]
+        logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {minutes_since_buy:.1f} min")
         
-        # Strategy execution with optimized sell function
-        if not monitored_tokens[token_address]['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_PERCENT']:
-            # Take partial profit at PARTIAL_PROFIT_PERCENT
-            logging.info(f"Taking partial profit for {token_address} at {price_change_pct:.2f}% gain")
-            execute_optimized_sell(token_address, 50)  # Sell 50%
-            monitored_tokens[token_address]['partial_profit_taken'] = True
-        
-        if price_change_pct >= CONFIG['PROFIT_TARGET_PERCENT']:
-            # Take full profit at PROFIT_TARGET_PERCENT
-            logging.info(f"Taking full profit for {token_address} at {price_change_pct:.2f}% gain")
-            execute_optimized_sell(token_address, 100)  # Sell 100%
+        # Check if we should take partial profits
+        if not token_data['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_TARGET_PCT']:
+            logging.info(f"Taking partial profits for {token_symbol} at {price_change_pct:.2f}%")
+            
+            # Execute sell for partial amount
+            success, signature = execute_optimized_sell(token_address, CONFIG['PARTIAL_PROFIT_PERCENTAGE'])
+            
+            if success:
+                token_data['partial_profit_taken'] = True
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL'] * CONFIG['PARTIAL_PROFIT_PERCENTAGE'] / 100
+                logging.info(f"Partial profit taken: ${profit_amount:.2f}")
+                return
+                
+        # Check if we should sell due to profit target
+        if price_change_pct >= CONFIG['PROFIT_TARGET_PCT']:
+            logging.info(f"Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
+            
+            # Execute sell
+            success, signature = execute_optimized_sell(token_address)
+            
+            if success:
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
+                logging.info(f"Profit taken: ${profit_amount:.2f}")
+                
+                # Update daily profit tracking
+                global daily_profit
+                daily_profit += profit_amount
+                
+                # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
             return
-        
-        if price_change_pct <= -CONFIG['STOP_LOSS_PERCENT']:
-            # Stop loss hit
-            logging.info(f"Stop loss triggered for {token_address} at {price_change_pct:.2f}% loss")
-            execute_optimized_sell(token_address, 100)  # Sell 100%
+                
+        # Check if we should sell due to stop loss
+        if price_change_pct <= -CONFIG['STOP_LOSS_PCT']:
+            logging.info(f"Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
+            
+            # Execute sell
+            success, signature = execute_optimized_sell(token_address)
+            
+            if success:
+                loss_amount = (initial_price - current_price) * CONFIG['BUY_AMOUNT_SOL']
+                logging.info(f"Loss taken: ${loss_amount:.2f}")
+                
+                # Update daily profit tracking (negative)
+                global daily_profit
+                daily_profit -= loss_amount
+                
+                # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
             return
-        
-        if time_limit_hit:
-            if price_change_pct > 0:
-                # Time limit hit with profit
-                logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% gain")
-                execute_optimized_sell(token_address, 100)  # Sell 100%
-            else:
-                # Time limit hit with loss
-                logging.info(f"Time limit reached for {token_address} with {price_change_pct:.2f}% loss")
-                execute_optimized_sell(token_address, 100)  # Sell 100%
+                
+        # Check if we should sell due to time limit
+        if minutes_since_buy >= CONFIG['MAX_HOLD_TIME_MINUTES']:
+            logging.info(f"Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
+            
+            # Execute sell
+            success, signature = execute_optimized_sell(token_address)
+            
+            if success:
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
+                if profit_amount >= 0:
+                    logging.info(f"Profit taken: ${profit_amount:.2f}")
+                else:
+                    logging.info(f"Loss taken: ${-profit_amount:.2f}")
+                
+                # Update daily profit tracking
+                global daily_profit
+                daily_profit += profit_amount
+                
+                # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
             return
+            
+        # Update token data with latest info
+        monitored_tokens[token_address] = token_data
+        
     except Exception as e:
         logging.error(f"Error monitoring token {token_address}: {str(e)}")
         logging.error(traceback.format_exc())
+        # Don't remove from monitoring on error - let the next cycle try again
 
 def trading_loop():
     """Main trading loop with JavaScript transaction execution."""
