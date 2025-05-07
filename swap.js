@@ -1,4 +1,4 @@
-const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
+vconst { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction, SystemProgram } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
 
@@ -22,8 +22,11 @@ async function executeSwap() {
   try {
     console.log(`Starting swap for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL`);
     
-    // Create connection to Solana
-    const connection = new Connection(RPC_URL, 'confirmed');
+    // Create connection to Solana with higher timeout and extra confirmations
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed',
+      confirmTransactionInitialTimeout: 60000 // 60 seconds
+    });
     
     // Create keypair from private key
     const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -65,7 +68,7 @@ async function executeSwap() {
       quoteResponse: quoteResponse.data,
       userPublicKey: keypair.publicKey.toBase58(),
       wrapUnwrapSOL: true,
-      computeUnitPriceMicroLamports: 10000, // Increased priority fee for faster processing
+      computeUnitPriceMicroLamports: 20000, // Increased priority fee for faster processing
       dynamicComputeUnitLimit: true
     };
     
@@ -84,13 +87,37 @@ async function executeSwap() {
     const serializedTx = swapResponse.data.swapTransaction;
     console.log('Received transaction data (length):', serializedTx.length);
     
+    // Deserialize the transaction
+    const txBuffer = Buffer.from(serializedTx, 'base64');
+    
+    // Get latest blockhash for transaction finality
+    const {blockhash, lastValidBlockHeight} = await connection.getLatestBlockhash('finalized');
+    
+    // Create transaction from the buffer
+    const transaction = Transaction.from(txBuffer);
+    
+    // Update the transaction with the latest blockhash
+    transaction.recentBlockhash = blockhash;
+    transaction.lastValidBlockHeight = lastValidBlockHeight;
+    
+    // Set fee payer to ensure proper signing
+    transaction.feePayer = keypair.publicKey;
+    
+    // Clear existing signatures if any (important to avoid signature verification failures)
+    transaction.signatures = [];
+    
+    // Now sign the transaction with the keypair
+    const signedTx = transaction.sign([keypair]);
+    
     // Submit the transaction
     console.log('Submitting transaction...');
+    
+    // Use sendRawTransaction with properly serialized, signed transaction
     const txSignature = await connection.sendRawTransaction(
-      Buffer.from(serializedTx, 'base64'),
+      signedTx.serialize(),
       {
-        skipPreflight: true,
-        maxRetries: 10,        // Increased retries
+        skipPreflight: false, // Run preflight checks to catch issues
+        maxRetries: 5,
         preflightCommitment: 'processed'
       }
     );
@@ -98,46 +125,26 @@ async function executeSwap() {
     console.log('Transaction submitted:', txSignature);
     console.log(`View on Solscan: https://solscan.io/tx/${txSignature}`);
     
-    // Instead of waiting for confirmation, just consider it successful if submitted
-    // This avoids the timeout issue
-    console.log('Transaction submitted successfully. Check Solscan for confirmation status.');
-    console.log('SUCCESS', txSignature);
+    console.log('Waiting for confirmation...');
     
-    // Instead of waiting for confirmation with the built-in method, check manually
-    // This gives you more control over timeouts
+    // Wait for confirmation with increased timeout
     try {
-      console.log('Waiting for confirmation (manual check)...');
-      // Loop to check status manually
-      for (let i = 0; i < 10; i++) {
-        try {
-          // Wait 5 seconds between checks
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          
-          // Check transaction status
-          const status = await connection.getSignatureStatus(txSignature, {
-            searchTransactionHistory: true
-          });
-          
-          console.log(`Check ${i+1}/10:`, status?.value ? 'Found' : 'Not confirmed yet');
-          
-          if (status?.value) {
-            if (status.value.err) {
-              console.error('Transaction confirmed but has error:', status.value.err);
-            } else {
-              console.log('Transaction confirmed successfully!');
-            }
-            break;
-          }
-        } catch (checkError) {
-          console.log(`Error checking status (attempt ${i+1}/10):`, checkError.message);
-        }
+      const confirmation = await connection.confirmTransaction({
+        signature: txSignature,
+        blockhash,
+        lastValidBlockHeight
+      }, 'confirmed');
+      
+      if (confirmation.value.err) {
+        console.error('Transaction confirmed but has error:', confirmation.value.err);
+      } else {
+        console.log('Transaction confirmed successfully!');
       }
     } catch (confirmError) {
-      // Even if confirmation check fails, we still return success since the tx was submitted
-      console.log('Error during confirmation checks, but transaction was submitted:', confirmError.message);
+      console.log('Confirmation timeout or error. Transaction might still go through:', confirmError.message);
     }
     
-    // Return success regardless of confirmation
+    console.log('SUCCESS', txSignature);
     process.exit(0);
   } catch (error) {
     console.error('Error executing swap:', error.message);
