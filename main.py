@@ -39,13 +39,14 @@ CONFIG = {
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
-    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x return
-    'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '40')),
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x return
+    'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
     'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '5')),
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),
+    'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),  # Using TIME_LIMIT_MINUTES as fallback
     'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
@@ -1903,7 +1904,6 @@ def monitor_token_price(token_address):
         current_price = get_token_price(token_address)
         if not current_price:
             logging.warning(f"Could not get current price for {token_address}")
-            # Don't return - we'll use the last known price for time-based decisions
             return
             
         # Update highest price if current is higher
@@ -1921,21 +1921,25 @@ def monitor_token_price(token_address):
         token_symbol = get_token_symbol(token_address) or token_address[:8]
         logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {minutes_since_buy:.1f} min")
         
-        # Check if we should take partial profits
-        if not token_data['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_TARGET_PCT']:
+        # Check if we should take partial profits - with safety checks for missing CONFIG values
+        partial_profit_target = CONFIG.get('PARTIAL_PROFIT_TARGET_PCT', 50)  # Default to 50% if not set
+        partial_profit_percentage = CONFIG.get('PARTIAL_PROFIT_PERCENTAGE', 50)  # Default to 50% if not set
+        
+        if not token_data['partial_profit_taken'] and price_change_pct >= partial_profit_target:
             logging.info(f"Taking partial profits for {token_symbol} at {price_change_pct:.2f}%")
             
             # Execute sell for partial amount
-            success, signature = execute_optimized_sell(token_address, CONFIG['PARTIAL_PROFIT_PERCENTAGE'])
+            success, signature = execute_optimized_sell(token_address, partial_profit_percentage)
             
             if success:
                 token_data['partial_profit_taken'] = True
-                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL'] * CONFIG['PARTIAL_PROFIT_PERCENTAGE'] / 100
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL'] * partial_profit_percentage / 100
                 logging.info(f"Partial profit taken: ${profit_amount:.2f}")
                 return
                 
-        # Check if we should sell due to profit target
-        if price_change_pct >= CONFIG['PROFIT_TARGET_PCT']:
+        # Check if we should sell due to profit target - with safety check
+        profit_target = CONFIG.get('PROFIT_TARGET_PCT', 100)  # Default to 100% if not set
+        if price_change_pct >= profit_target:
             logging.info(f"Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
             
             # Execute sell
@@ -1953,8 +1957,9 @@ def monitor_token_price(token_address):
                     del monitored_tokens[token_address]
             return
                 
-        # Check if we should sell due to stop loss
-        if price_change_pct <= -CONFIG['STOP_LOSS_PCT']:
+        # Check if we should sell due to stop loss - with safety check
+        stop_loss = CONFIG.get('STOP_LOSS_PCT', 15)  # Default to 15% if not set
+        if price_change_pct <= -stop_loss:
             logging.info(f"Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
             
             # Execute sell
@@ -1972,8 +1977,9 @@ def monitor_token_price(token_address):
                     del monitored_tokens[token_address]
             return
                 
-        # Check if we should sell due to time limit
-        if minutes_since_buy >= CONFIG['MAX_HOLD_TIME_MINUTES']:
+        # Check if we should sell due to time limit - with safety check
+        max_hold_time = CONFIG.get('MAX_HOLD_TIME_MINUTES', 60)  # Default to 60 minutes if not set
+        if minutes_since_buy >= max_hold_time:
             logging.info(f"Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
             
             # Execute sell
