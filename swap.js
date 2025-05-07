@@ -256,7 +256,7 @@ async function executeSwap() {
       quoteResponse: quoteResponse.data,
       userPublicKey: keypair.publicKey.toBase58(),
       wrapUnwrapSOL: true,
-      prioritizationFeeLamports: 300000, // 0.0003 SOL priority fee (increased)
+      prioritizationFeeLamports: 500000, // 0.0003 SOL priority fee (increased)
       dynamicComputeUnitLimit: true
     };
     
