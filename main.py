@@ -2040,6 +2040,7 @@ def monitor_token_price(token_address):
 def trading_loop():
     """Main trading loop with optimized transaction handling."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
+    global buy_attempts, buy_successes, sell_attempts, sell_successes  # Add this line
     
     logging.info("Starting main trading loop with optimized transaction handling")
     
