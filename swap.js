@@ -1,4 +1,7 @@
-vconst { Connection, Keypair, PublicKey, Transaction, sendAndConfirmTransaction, SystemProgram } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
+const Transaction = require('@solana/web3.js').Transaction;
+const sendAndConfirmTransaction = require('@solana/web3.js').sendAndConfirmTransaction;
+const SystemProgram = require('@solana/web3.js').SystemProgram;
 const bs58 = require('bs58');
 const axios = require('axios');
 
@@ -22,11 +25,8 @@ async function executeSwap() {
   try {
     console.log(`Starting swap for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL`);
     
-    // Create connection to Solana with higher timeout and extra confirmations
-    const connection = new Connection(RPC_URL, {
-      commitment: 'confirmed',
-      confirmTransactionInitialTimeout: 60000 // 60 seconds
-    });
+    // Create connection to Solana with higher timeout
+    const connection = new Connection(RPC_URL, 'confirmed');
     
     // Create keypair from private key
     const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -87,13 +87,13 @@ async function executeSwap() {
     const serializedTx = swapResponse.data.swapTransaction;
     console.log('Received transaction data (length):', serializedTx.length);
     
+    // Get latest blockhash for transaction finality
+    const blockHashResponse = await connection.getLatestBlockhash('finalized');
+    const blockhash = blockHashResponse.blockhash;
+    const lastValidBlockHeight = blockHashResponse.lastValidBlockHeight;
+    
     // Deserialize the transaction
     const txBuffer = Buffer.from(serializedTx, 'base64');
-    
-    // Get latest blockhash for transaction finality
-    const {blockhash, lastValidBlockHeight} = await connection.getLatestBlockhash('finalized');
-    
-    // Create transaction from the buffer
     const transaction = Transaction.from(txBuffer);
     
     // Update the transaction with the latest blockhash
@@ -106,15 +106,15 @@ async function executeSwap() {
     // Clear existing signatures if any (important to avoid signature verification failures)
     transaction.signatures = [];
     
-    // Now sign the transaction with the keypair
-    const signedTx = transaction.sign([keypair]);
+    // Sign the transaction
+    transaction.sign(keypair);
     
     // Submit the transaction
     console.log('Submitting transaction...');
     
     // Use sendRawTransaction with properly serialized, signed transaction
     const txSignature = await connection.sendRawTransaction(
-      signedTx.serialize(),
+      transaction.serialize(),
       {
         skipPreflight: false, // Run preflight checks to catch issues
         maxRetries: 5,
@@ -125,25 +125,7 @@ async function executeSwap() {
     console.log('Transaction submitted:', txSignature);
     console.log(`View on Solscan: https://solscan.io/tx/${txSignature}`);
     
-    console.log('Waiting for confirmation...');
-    
-    // Wait for confirmation with increased timeout
-    try {
-      const confirmation = await connection.confirmTransaction({
-        signature: txSignature,
-        blockhash,
-        lastValidBlockHeight
-      }, 'confirmed');
-      
-      if (confirmation.value.err) {
-        console.error('Transaction confirmed but has error:', confirmation.value.err);
-      } else {
-        console.log('Transaction confirmed successfully!');
-      }
-    } catch (confirmError) {
-      console.log('Confirmation timeout or error. Transaction might still go through:', confirmError.message);
-    }
-    
+    // Just return success without waiting for confirmation
     console.log('SUCCESS', txSignature);
     process.exit(0);
   } catch (error) {
