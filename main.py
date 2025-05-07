@@ -1869,6 +1869,55 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         logging.error(f"Error in force sell attempt: {str(e)}")
         return False, None
 
+def monitor_token_peak_price(token_address):
+    """Track token peak price and sell if it drops significantly after gains."""
+    global daily_profit
+    
+    if token_address not in monitored_tokens:
+        return
+        
+    token_data = monitored_tokens[token_address]
+    current_price = get_token_price(token_address)
+    
+    if not current_price:
+        return
+        
+    # Update initial price if this is first check
+    if 'initial_price' not in token_data:
+        token_data['initial_price'] = current_price
+        token_data['peak_price'] = current_price
+        return
+    
+    initial_price = token_data['initial_price']
+    
+    # Update peak price if current is higher
+    if current_price > token_data.get('peak_price', 0):
+        token_data['peak_price'] = current_price
+        token_data['highest_price'] = current_price  # For compatibility
+    
+    peak_price = token_data['peak_price']
+    
+    # Calculate price changes
+    pct_gain_from_initial = ((current_price / initial_price) - 1) * 100
+    pct_drop_from_peak = ((peak_price - current_price) / peak_price) * 100
+    
+    # Sell if gained at least 30% but then dropped 10% from peak
+    if pct_gain_from_initial >= 30 and pct_drop_from_peak >= 10:
+        logging.info(f"Trend-based exit: Token gained {pct_gain_from_initial:.2f}% but dropped {pct_drop_from_peak:.2f}% from peak")
+        
+        # Execute sell
+        success, signature = execute_optimized_sell(token_address)
+        
+        if success:
+            profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
+            logging.info(f"Trend-based profit taken: ${profit_amount:.2f}")
+            daily_profit += profit_amount
+            
+            # Token will be removed from monitored_tokens in execute_optimized_sell
+    
+    # Update token data with latest info
+    monitored_tokens[token_address] = token_data
+
 def monitor_token_price(token_address):
     """Monitor token price and execute sell when conditions are met."""
     global daily_profit  # Move this to the top of the function
