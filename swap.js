@@ -2,6 +2,10 @@ const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solan
 const bs58 = require('bs58');
 const axios = require('axios');
 
+// Rate limiting constants
+const MAX_RETRIES = 5;
+const INITIAL_RETRY_DELAY = 2000; // 2 seconds
+
 // Print Node.js version for debugging
 console.log(`Node.js version: ${process.version}`);
 console.log(`Running in directory: ${process.cwd()}`);
@@ -19,6 +23,31 @@ const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
 console.log(`RPC_URL available: ${!!RPC_URL}`);
 console.log(`PRIVATE_KEY available: ${!!PRIVATE_KEY}`);
 console.log(`Operation: ${IS_SELL ? 'SELL' : 'BUY'}`);
+
+// Retry function with exponential backoff
+async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INITIAL_RETRY_DELAY) {
+  let retries = 0;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error.response && error.response.status === 429) {
+        retries++;
+        if (retries > maxRetries) {
+          console.error(`Failed after ${maxRetries} retries due to rate limiting`);
+          throw error;
+        }
+        
+        // Calculate exponential backoff with jitter
+        const delay = initialDelay * Math.pow(2, retries - 1) * (1 + Math.random() * 0.2);
+        console.log(`Rate limited (429). Retry ${retries}/${maxRetries} after ${Math.round(delay)}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      throw error;
+    }
+  }
+}
 
 async function executeSwap() {
   try {
@@ -119,7 +148,7 @@ async function executeSwap() {
       }
     }
     
-    // Step 1: Get a quote
+    // Step 1: Get a quote with retry logic for rate limiting
     const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
     console.log(`Using quote URL: ${quoteUrl}`);
     
@@ -132,7 +161,11 @@ async function executeSwap() {
     
     console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
     
-    const quoteResponse = await axios.get(quoteUrl, { params: quoteParams });
+    // Use retryWithBackoff for quote request
+    const quoteResponse = await retryWithBackoff(async () => {
+      console.log('Attempting to get Jupiter quote...');
+      return await axios.get(quoteUrl, { params: quoteParams });
+    });
     
     if (!quoteResponse.data) {
       console.error('Failed to get quote', quoteResponse);
@@ -145,7 +178,7 @@ async function executeSwap() {
     
     console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
     
-    // Step 2: Get swap instructions
+    // Step 2: Get swap instructions with retry logic for rate limiting
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
@@ -160,8 +193,12 @@ async function executeSwap() {
     
     console.log('Swap request prepared');
     
-    const swapResponse = await axios.post(swapUrl, swapRequest, {
-      headers: { 'Content-Type': 'application/json' }
+    // Use retryWithBackoff for swap request
+    const swapResponse = await retryWithBackoff(async () => {
+      console.log('Attempting to prepare swap...');
+      return await axios.post(swapUrl, swapRequest, {
+        headers: { 'Content-Type': 'application/json' }
+      });
     });
     
     if (!swapResponse.data || !swapResponse.data.swapTransaction) {
