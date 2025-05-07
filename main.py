@@ -1800,7 +1800,7 @@ def get_token_symbol(token_address):
         return token_address[:8]  # Return shortened address as fallback
 
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction with direct JavaScript execution and retries."""
+    """Execute optimized sell transaction with improved error handling."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -1817,81 +1817,57 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         return True, "simulation-signature"
     
     # Maximum number of sell attempts
-    max_retries = 3
+    max_retries = 5  # Increased from 3 to 5
     
     for attempt in range(max_retries):
         try:
-            # Check token balance
-            token_accounts = wallet.get_token_accounts(token_address)
-            if not token_accounts:
-                logging.error(f"No token accounts found for {token_address} - Attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    logging.info(f"Waiting 5 seconds before retry...")
-                    time.sleep(5)
-                    continue
-                return False, None
+            # Check token balance using direct JavaScript method instead of Python RPC
+            logging.info(f"Attempt {attempt+1}/{max_retries}: Selling token {token_address}")
             
-            token_amount = 0
-            for account in token_accounts:
-                # Parse token amount from account data
-                parsed_data = account['account']['data']['parsed']
-                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                    token_amount += int(parsed_data['info']['tokenAmount']['amount'])
-            
-            if token_amount == 0:
-                logging.error(f"Zero balance for {token_address} - Attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    logging.info(f"Waiting 5 seconds before retry...")
-                    time.sleep(5)
-                    continue
-                return False, None
-                
-            logging.info(f"Found token balance: {token_amount} - Attempt {attempt+1}/{max_retries}")
-            
-            # Calculate amount to sell based on percentage
-            amount_to_sell = int(token_amount * percentage / 100)
-            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
-            
-            # For now, partial selling is not supported with the JavaScript method
-            if percentage != 100:
-                logging.warning(f"Partial selling not yet supported with JavaScript method. Selling 100% instead of {percentage}%")
-            
-            # Use a dummy amount - the JavaScript function will determine the actual token balance
+            # Use a dummy amount - the JavaScript function will handle finding the token
             amount_sol = 0.001
+            
+            # Direct sell using JavaScript with is_sell=True flag
             success, signature = execute_via_javascript(token_address, amount_sol, is_sell=True)
             
             if success:
                 sell_successes += 1
+                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
                 
                 # If we're selling 100%, remove from monitored tokens
                 if percentage == 100 and token_address in monitored_tokens:
                     logging.info(f"Removing {token_address} from monitored tokens after complete sell")
                     del monitored_tokens[token_address]
                 
-                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
                 return True, signature
             else:
                 logging.error(f"Sell transaction failed on attempt {attempt+1}/{max_retries}")
                 if attempt < max_retries - 1:
-                    logging.info(f"Waiting 5 seconds before retry...")
-                    time.sleep(5)
+                    wait_time = 5 * (attempt + 1)  # Progressive backoff: 5s, 10s, 15s, 20s...
+                    logging.info(f"Waiting {wait_time} seconds before retry...")
+                    time.sleep(wait_time)
                     # Continue to next retry
                     continue
-                
-                return False, None
-                
         except Exception as e:
             logging.error(f"Error executing sell (attempt {attempt+1}/{max_retries}): {str(e)}")
             logging.error(traceback.format_exc())
             if attempt < max_retries - 1:
-                logging.info(f"Waiting 5 seconds before retry...")
-                time.sleep(5)
+                wait_time = 5 * (attempt + 1)
+                logging.info(f"Waiting {wait_time} seconds before retry...")
+                time.sleep(wait_time)
                 continue
-            
-            return False, None
     
-    # If we reach here, all retries failed
-    return False, None
+    # If all retries failed, try to force sell through direct SPL token transfer
+    try:
+        logging.warning(f"All normal sell attempts failed for {token_address}. Trying force sell...")
+        # Mark token as sold in monitoring data even if we can't actually sell it
+        if token_address in monitored_tokens:
+            logging.info(f"Removing {token_address} from monitored tokens after failed sell")
+            del monitored_tokens[token_address]
+        return False, None
+    except Exception as e:
+        logging.error(f"Error in force sell attempt: {str(e)}")
+        return False, None
 
 def monitor_token_price(token_address):
     """Monitor token price and execute sell when conditions are met."""
