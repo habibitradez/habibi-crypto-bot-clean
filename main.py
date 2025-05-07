@@ -2038,8 +2038,8 @@ def monitor_token_price(token_address):
         # Don't remove from monitoring on error - let the next cycle try again
 
 def trading_loop():
-    """Main trading loop with JavaScript transaction execution."""
-    global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit, buy_successes
+    """Main trading loop with optimized transaction handling."""
+    global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     
     logging.info("Starting main trading loop with optimized transaction handling")
     
@@ -2079,9 +2079,10 @@ def trading_loop():
             # Monitor tokens we're already trading
             for token_address in list(monitored_tokens.keys()):
                 monitor_token_price(token_address)
+                monitor_token_peak_price(token_address)  # Added trend-based monitoring
                 
-                # Add a sleep between token monitoring to avoid rate limits
-                time.sleep(3)
+                # Add a small sleep between token monitoring to avoid rate limits
+                time.sleep(1)
             
             # Only look for new tokens if we have capacity
             if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
@@ -2111,24 +2112,25 @@ def trading_loop():
                     if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
                         break
                     
-                    # Verify token is suitable for trading
+                    # Verify token is suitable for trading (including blacklist check)
                     if verify_token(token_address):
                         # Check liquidity before buying
                         if check_token_liquidity(token_address):
                             logging.info(f"Found promising token with liquidity: {token_address}")
                             
-                            # Use optimized transaction function instead of execute_optimized_trade
+                            # Use optimized transaction function for buying
                             success, signature = execute_via_javascript(token_address, CONFIG['BUY_AMOUNT_SOL'])
                             
-                            if signature:
+                            buy_attempts += 1
+                            if success:
                                 logging.info(f"Successfully bought token: {token_address}")
                                 buy_successes += 1
                                 # Add a longer delay after successful buy
-                                time.sleep(15)
+                                time.sleep(5)
                             else:
                                 logging.warning(f"Failed to buy token: {token_address}")
                                 # Add a delay after failed buy
-                                time.sleep(5)
+                                time.sleep(2)
                                 
                     tokens_checked += 1
             
@@ -2142,8 +2144,8 @@ def trading_loop():
             logging.error(f"Error in main loop: {str(e)}")
             logging.error(traceback.format_exc())
             # Longer sleep on error
-            logging.info("Error encountered, sleeping for 30 seconds before continuing")
-            time.sleep(30)
+            logging.info("Error encountered, sleeping for 10 seconds before continuing")
+            time.sleep(10)
 
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
