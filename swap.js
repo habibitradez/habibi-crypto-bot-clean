@@ -55,17 +55,19 @@ async function executeSwap() {
       process.exit(1);
     }
     
-    console.log(`Got quote with output amount: ${quoteResponse.data.outAmount}`);
+    console.log(`Got Jupiter quote. SOL output amount: ${quoteResponse.data.outAmount}`);
     
     // Step 2: Get swap instructions
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
+    // Fixed parameter conflict - don't use both compute unit price and prioritization fee
     const swapRequest = {
       quoteResponse: quoteResponse.data,
       userPublicKey: keypair.publicKey.toBase58(),
       wrapUnwrapSOL: true,
-      computeUnitPriceMicroLamports: 20000, // Increased priority fee for faster processing
+      // Using only prioritizationFeeLamports instead of computeUnitPriceMicroLamports
+      prioritizationFeeLamports: 100000, // 0.0001 SOL priority fee
       dynamicComputeUnitLimit: true
     };
     
