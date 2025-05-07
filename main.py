@@ -1761,7 +1761,39 @@ def execute_via_javascript(token_address, amount_sol, is_sell=False):
         logging.error(f"Error in JavaScript execution: {str(e)}")
         logging.error(traceback.format_exc())
         return False, None
+
+def get_token_symbol(token_address):
+    """Get symbol for token address, or return None if not found."""
+    try:
+        # Common tokens mapping - you can expand this list
+        known_tokens = {
+            "DezXAZ8z7PnrnRJjz3wXBoRpiXCa6xjnB7YaBipPB263": "BONK",
+            "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm": "WIF",
+            "So11111111111111111111111111111111111111112": "SOL",
+            # Add more token mappings as you discover them
+        }
         
+        # Check if we know this token
+        if token_address in known_tokens:
+            return known_tokens[token_address]
+            
+        # If not in our mapping, try to get from RPC
+        if wallet:
+            try:
+                # This is a simplified approach - you may need to adjust based on your wallet implementation
+                token_info = wallet._rpc_call("getTokenSupply", [token_address])
+                if 'result' in token_info and 'value' in token_info['result'] and 'symbol' in token_info['result']['value']:
+                    return token_info['result']['value']['symbol']
+            except Exception as e:
+                logging.debug(f"Error getting token symbol from RPC: {str(e)}")
+                
+        # Return a shortened address if we couldn't get a symbol
+        return token_address[:8]
+        
+    except Exception as e:
+        logging.error(f"Error in get_token_symbol: {str(e)}")
+        return token_address[:8]  # Return shortened address as fallback
+
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
     """Execute optimized sell transaction with direct JavaScript execution and retries."""
     global sell_attempts, sell_successes
