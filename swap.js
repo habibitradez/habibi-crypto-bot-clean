@@ -1,7 +1,4 @@
-const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
-const Transaction = require('@solana/web3.js').Transaction;
-const sendAndConfirmTransaction = require('@solana/web3.js').sendAndConfirmTransaction;
-const SystemProgram = require('@solana/web3.js').SystemProgram;
+const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
 
@@ -87,27 +84,12 @@ async function executeSwap() {
     const serializedTx = swapResponse.data.swapTransaction;
     console.log('Received transaction data (length):', serializedTx.length);
     
-    // Get latest blockhash for transaction finality
-    const blockHashResponse = await connection.getLatestBlockhash('finalized');
-    const blockhash = blockHashResponse.blockhash;
-    const lastValidBlockHeight = blockHashResponse.lastValidBlockHeight;
+    // For Versioned Transactions, we need to deserialize differently
+    const buffer = Buffer.from(serializedTx, 'base64');
+    const transaction = VersionedTransaction.deserialize(buffer);
     
-    // Deserialize the transaction
-    const txBuffer = Buffer.from(serializedTx, 'base64');
-    const transaction = Transaction.from(txBuffer);
-    
-    // Update the transaction with the latest blockhash
-    transaction.recentBlockhash = blockhash;
-    transaction.lastValidBlockHeight = lastValidBlockHeight;
-    
-    // Set fee payer to ensure proper signing
-    transaction.feePayer = keypair.publicKey;
-    
-    // Clear existing signatures if any (important to avoid signature verification failures)
-    transaction.signatures = [];
-    
-    // Sign the transaction
-    transaction.sign(keypair);
+    // Sign the transaction with our keypair
+    transaction.sign([keypair]);
     
     // Submit the transaction
     console.log('Submitting transaction...');
