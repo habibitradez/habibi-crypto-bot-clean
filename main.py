@@ -834,6 +834,52 @@ def initialize():
     logging.info("Bot successfully initialized!")
     return True
 
+def get_recent_transactions_for_token(token_address, limit=5):
+    """Get recent transactions for a token."""
+    try:
+        if not wallet:
+            return None
+            
+        # Use the RPC client to get recent transactions for the token
+        result = wallet._rpc_call("getSignaturesForAddress", [
+            token_address,
+            {
+                "limit": limit
+            }
+        ])
+        
+        if 'result' in result:
+            return result['result']
+        return None
+    except Exception as e:
+        logging.error(f"Error getting recent transactions: {str(e)}")
+        return None
+
+def is_recent_token(token_address):
+    """Check if a token was created very recently."""
+    try:
+        # Try to get recent transactions for this token
+        recent_txs = get_recent_transactions_for_token(token_address, limit=5)
+        
+        # If we can't get transactions, be conservative and assume it's not recent
+        if not recent_txs:
+            return False
+            
+        # Check the first transaction timestamp (token creation)
+        first_tx = recent_txs[0]
+        if 'blockTime' not in first_tx:
+            return False
+            
+        # Calculate how many minutes ago the token was created
+        creation_time = first_tx['blockTime']
+        minutes_since_creation = (time.time() - creation_time) / 60
+        
+        # Consider a token "recent" if it was created in the last 30 minutes
+        return minutes_since_creation <= 30
+    except Exception as e:
+        logging.error(f"Error checking token age: {str(e)}")
+        return False
+
 def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = "") -> bool:
     """Determine if a token is likely a meme token based on patterns."""
     token_address_lower = token_address.lower()
@@ -1358,53 +1404,66 @@ def check_token_tradability(token_address: str) -> bool:
         logging.error(f"Error checking tradability for {token_address}: {str(e)}")
         return False
 
-def verify_token(token_address: str) -> bool:
-    """Verify if a token is valid, has liquidity, and is worth trading."""
-    # Skip SOL token
-    if token_address == SOL_TOKEN_ADDRESS:
-        return False
-    
-    # Log verification steps
-    logging.info(f"Verifying token {token_address}")
-    
-    # List of tokens we've verified to be tradable
-    TRADABLE_TOKENS = [
-        "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-        # Add more tokens here that you've verified are tradable
-    ]
-    
-    if token_address in TRADABLE_TOKENS:
-        logging.info(f"Token {token_address} is in verified tradable list")
-        return True
-    
-    # For known tokens, check tradability
-    for token in KNOWN_TOKENS:
-        if token["address"] == token_address:
-            # Explicitly check tradability for all tokens
-            is_tradable = check_token_tradability(token_address)
-            if is_tradable:
-                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is tradable")
-                return True
-            else:
-                logging.info(f"Known token {token_address} ({token.get('symbol', '')}) is NOT tradable")
+def verify_token(token_address):
+    """Verify if a token is suitable for trading."""
+    try:
+        # Check if the token is in our verified list (skip verification)
+        if token_address in VERIFIED_TOKENS:
+            logging.info(f"Token {token_address} is in verified list")
+            return True
+            
+        # Check if token is already being monitored
+        if token_address in monitored_tokens:
+            logging.info(f"Token {token_address} is already being monitored")
+            return False
+            
+        # Check if we've recently traded this token
+        if token_address in token_buy_timestamps:
+            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                logging.info(f"Token {token_address} was recently traded ({minutes_since_last_buy:.1f} minutes ago)")
                 return False
-    
-    # Check if token has a price
-    token_price = get_token_price(token_address)
-    if token_price is None:
-        logging.info(f"Token {token_address} verification failed: No price available")
+
+        # Prioritize recent tokens
+        if not is_recent_token(token_address):
+            # Only continue with older tokens if they're on our verified list
+            if token_address not in [
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+                "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"   # WIF
+            ]:
+                logging.info(f"Token {token_address} is not recent and not in verified list - skipping")
+                return False
+
+        # Get token info from chain
+        token_info = get_token_info(token_address)
+        if not token_info:
+            logging.warning(f"Could not get token info for {token_address}")
+            return False
+            
+        # Check if token is tradable on Jupiter
+        is_tradable = check_token_tradability(token_address)
+        if not is_tradable:
+            logging.info(f"Token {token_address} is not tradable on Jupiter")
+            return False
+            
+        # Check token supply
+        token_supply = get_token_supply(token_address)
+        if not token_supply:
+            logging.warning(f"Could not get token supply for {token_address}")
+            return False
+            
+        # Check if token has a website, socials, etc.
+        has_socials = check_token_socials(token_address)
+        
+        # Additional checks here if needed
+        
+        # If we get this far, the token is considered valid
+        logging.info(f"Token {token_address} is verified as tradable")
+        return True
+    except Exception as e:
+        logging.error(f"Error verifying token {token_address}: {str(e)}")
+        logging.error(traceback.format_exc())
         return False
-    else:
-        logging.info(f"Token {token_address} price: {token_price} SOL")
-    
-    # Check tradability
-    is_tradable = check_token_tradability(token_address)
-    if not is_tradable:
-        logging.info(f"Token {token_address} verification failed: Not tradable on Jupiter")
-        return False
-    
-    logging.info(f"Token {token_address} PASSED verification")
-    return True
 
 def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
     """Get Jupiter quote and swap data with better error handling."""
@@ -1799,6 +1858,42 @@ def get_token_symbol(token_address):
         logging.error(f"Error in get_token_symbol: {str(e)}")
         return token_address[:8]  # Return shortened address as fallback
 
+def force_sell_all_tokens():
+    """Force sell all tokens in the wallet (one-time cleanup)."""
+    logging.info("Starting force sell of all tokens in wallet")
+    
+    try:
+        # Get all token accounts
+        if not wallet:
+            logging.error("Wallet not initialized")
+            return
+            
+        all_tokens = wallet.get_all_token_accounts()
+        logging.info(f"Found {len(all_tokens)} token accounts")
+        
+        for token in all_tokens:
+            try:
+                mint = token['account']['data']['parsed']['info']['mint']
+                balance = int(token['account']['data']['parsed']['info']['tokenAmount']['amount'])
+                
+                if balance > 0:
+                    logging.info(f"Attempting to sell token: {mint} with balance {balance}")
+                    success, signature = execute_via_javascript(mint, 0.001, is_sell=True)
+                    
+                    if success:
+                        logging.info(f"Successfully sold token: {mint}")
+                    else:
+                        logging.warning(f"Failed to sell token: {mint}")
+                    
+                    # Wait a bit between sells to avoid rate limits
+                    time.sleep(5)
+            except Exception as e:
+                logging.error(f"Error selling token: {str(e)}")
+        
+        logging.info("Force sell complete")
+    except Exception as e:
+        logging.error(f"Error in force sell: {str(e)}")
+
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
     """Execute optimized sell transaction with improved error handling."""
     global sell_attempts, sell_successes
@@ -1869,6 +1964,31 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         logging.error(f"Error in force sell attempt: {str(e)}")
         return False, None
 
+def is_recent_token(token_address):
+    """Check if a token was created very recently."""
+    try:
+        # Try to get recent transactions for this token
+        recent_txs = get_recent_transactions_for_token(token_address, limit=5)
+        
+        # If we can't get transactions, be conservative and assume it's not recent
+        if not recent_txs:
+            return False
+            
+        # Check the first transaction timestamp (token creation)
+        first_tx = recent_txs[0]
+        if 'blockTime' not in first_tx:
+            return False
+            
+        # Calculate how many minutes ago the token was created
+        creation_time = first_tx['blockTime']
+        minutes_since_creation = (time.time() - creation_time) / 60
+        
+        # Consider a token "recent" if it was created in the last 30 minutes
+        return minutes_since_creation <= 30
+    except Exception as e:
+        logging.error(f"Error checking token age: {str(e)}")
+        return False
+
 def monitor_token_peak_price(token_address):
     """Track token peak price and sell if it drops significantly after gains."""
     global daily_profit
@@ -1920,7 +2040,7 @@ def monitor_token_peak_price(token_address):
 
 def monitor_token_price(token_address):
     """Monitor token price and execute sell when conditions are met."""
-    global daily_profit  # Move this to the top of the function
+    global daily_profit
     
     try:
         if token_address not in monitored_tokens:
@@ -1932,9 +2052,18 @@ def monitor_token_price(token_address):
         # Get current price
         current_price = get_token_price(token_address)
         if not current_price:
-            logging.warning(f"Could not get current price for {token_address}")
+            # If we can't get price for 3 consecutive checks, force sell
+            token_data['price_check_failures'] = token_data.get('price_check_failures', 0) + 1
+            if token_data['price_check_failures'] >= 3:
+                logging.warning(f"Forcing sell after 3 failed price checks for {token_address}")
+                execute_optimized_sell(token_address)
+                return
+            monitored_tokens[token_address] = token_data
             return
             
+        # Reset failure counter on successful price check
+        token_data['price_check_failures'] = 0
+        
         # Update highest price if current is higher
         if current_price > token_data['highest_price']:
             token_data['highest_price'] = current_price
@@ -1950,25 +2079,49 @@ def monitor_token_price(token_address):
         token_symbol = get_token_symbol(token_address) or token_address[:8]
         logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {minutes_since_buy:.1f} min")
         
-        # Check if we should take partial profits - with safety checks for missing CONFIG values
-        partial_profit_target = CONFIG.get('PARTIAL_PROFIT_TARGET_PCT', 50)  # Default to 50% if not set
-        partial_profit_percentage = CONFIG.get('PARTIAL_PROFIT_PERCENTAGE', 50)  # Default to 50% if not set
+        # Aggressive price drop check - sell faster if dropping
+        peak_price = token_data['highest_price']
+        drop_from_peak_pct = ((peak_price - current_price) / peak_price) * 100
         
-        if not token_data['partial_profit_taken'] and price_change_pct >= partial_profit_target:
+        if price_change_pct > 10 and drop_from_peak_pct > 5:
+            logging.info(f"Selling {token_symbol} due to 5% drop from peak after initial 10% gain")
+            
+            # Execute sell
+            success, signature = execute_optimized_sell(token_address)
+            
+            if success:
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
+                logging.info(f"Profit taken: ${profit_amount:.2f}")
+                
+                # Update daily profit tracking
+                daily_profit += profit_amount
+                
+                # Delete from monitored tokens (redundant as execute_optimized_sell also does this)
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
+            return
+        
+        # Check if we should take partial profits
+        if not token_data['partial_profit_taken'] and price_change_pct >= CONFIG['PARTIAL_PROFIT_TARGET_PCT']:
             logging.info(f"Taking partial profits for {token_symbol} at {price_change_pct:.2f}%")
             
             # Execute sell for partial amount
-            success, signature = execute_optimized_sell(token_address, partial_profit_percentage)
+            success, signature = execute_optimized_sell(token_address, CONFIG['PARTIAL_PROFIT_PERCENTAGE'])
             
             if success:
                 token_data['partial_profit_taken'] = True
-                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL'] * partial_profit_percentage / 100
+                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL'] * CONFIG['PARTIAL_PROFIT_PERCENTAGE'] / 100
                 logging.info(f"Partial profit taken: ${profit_amount:.2f}")
-                return
                 
-        # Check if we should sell due to profit target - with safety check
-        profit_target = CONFIG.get('PROFIT_TARGET_PCT', 100)  # Default to 100% if not set
-        if price_change_pct >= profit_target:
+                # Update daily profit tracking
+                daily_profit += profit_amount
+                
+                # Update token data with latest info
+                monitored_tokens[token_address] = token_data
+            return
+                
+        # Check if we should sell due to profit target
+        if price_change_pct >= CONFIG['PROFIT_TARGET_PCT']:
             logging.info(f"Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
             
             # Execute sell
@@ -1986,9 +2139,8 @@ def monitor_token_price(token_address):
                     del monitored_tokens[token_address]
             return
                 
-        # Check if we should sell due to stop loss - with safety check
-        stop_loss = CONFIG.get('STOP_LOSS_PCT', 15)  # Default to 15% if not set
-        if price_change_pct <= -stop_loss:
+        # Check if we should sell due to stop loss
+        if price_change_pct <= -CONFIG['STOP_LOSS_PCT']:
             logging.info(f"Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
             
             # Execute sell
@@ -2006,9 +2158,8 @@ def monitor_token_price(token_address):
                     del monitored_tokens[token_address]
             return
                 
-        # Check if we should sell due to time limit - with safety check
-        max_hold_time = CONFIG.get('MAX_HOLD_TIME_MINUTES', 60)  # Default to 60 minutes if not set
-        if minutes_since_buy >= max_hold_time:
+        # Check if we should sell due to time limit
+        if minutes_since_buy >= CONFIG['MAX_HOLD_TIME_MINUTES']:
             logging.info(f"Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
             
             # Execute sell
