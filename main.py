@@ -143,7 +143,11 @@ KNOWN_TOKENS = [
     {"symbol": "RENDER", "address": "RNDRxx6LYgjvGdgkTKYbJ3y4KMqZyWawN7GpfSZJT3z", "tradable": True}
 ]
 
-# New helper functions for transaction handling
+# Define verified tokens list
+VERIFIED_TOKENS = [
+    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+    "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"   # WIF
+]
 def decode_transaction_blob(blob_str: str) -> bytes:
     """Try to decode a transaction blob using multiple formats."""
     try:
