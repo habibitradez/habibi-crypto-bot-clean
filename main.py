@@ -1353,7 +1353,8 @@ def analyze_transaction(signature: str) -> List[str]:
 def get_pump_fun_trending_tokens(limit=20):
     """Get trending tokens from pump.fun API."""
     try:
-        url = "https://api.pump.fun/tokens/trending"
+        # Updated URL based on actual pump.fun API structure
+        url = "https://api.pump.fun/v1/tokens/trending"
         response = requests.get(url, params={"limit": limit})
         
         if response.status_code != 200:
@@ -1361,15 +1362,15 @@ def get_pump_fun_trending_tokens(limit=20):
             return []
             
         data = response.json()
-        if not data or "data" not in data:
+        if not data or "tokens" not in data:
             return []
             
         tokens = []
-        for token in data["data"]:
+        for token in data["tokens"]:
             # Extract token address and other details
-            if "address" in token:
+            if "mint" in token:
                 token_data = {
-                    "address": token["address"],
+                    "address": token["mint"],
                     "symbol": token.get("symbol", "Unknown"),
                     "name": token.get("name", "Unknown"),
                     "price": token.get("price", 0),
@@ -1387,7 +1388,8 @@ def get_pump_fun_trending_tokens(limit=20):
 def get_newest_pump_fun_tokens(limit=20):
     """Get newest tokens from pump.fun API."""
     try:
-        url = "https://api.pump.fun/tokens/newest"
+        # Updated URL based on actual pump.fun API structure
+        url = "https://api.pump.fun/v1/tokens/newest"
         response = requests.get(url, params={"limit": limit})
         
         if response.status_code != 200:
@@ -1395,19 +1397,19 @@ def get_newest_pump_fun_tokens(limit=20):
             return []
             
         data = response.json()
-        if not data or "data" not in data:
+        if not data or "tokens" not in data:
             return []
             
         tokens = []
-        for token in data["data"]:
+        for token in data["tokens"]:
             # Extract token address and other details
-            if "address" in token:
+            if "mint" in token:
                 # Calculate how recent the token is (in minutes)
                 created_at = token.get("createdAt", 0) / 1000  # Convert ms to seconds
                 minutes_ago = (time.time() - created_at) / 60
                 
                 token_data = {
-                    "address": token["address"],
+                    "address": token["mint"],
                     "symbol": token.get("symbol", "Unknown"),
                     "name": token.get("name", "Unknown"),
                     "price": token.get("price", 0),
