@@ -913,7 +913,46 @@ def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = 
         return True
     
     return False
-    
+
+def get_token_info(token_address):
+    """Get information about a token."""
+    try:
+        if not wallet:
+            return None
+            
+        # Get token supply info which includes decimals, etc.
+        response = wallet._rpc_call("getTokenSupply", [token_address])
+        
+        if 'result' not in response or 'value' not in response['result']:
+            logging.warning(f"Could not get token supply for {token_address}")
+            return None
+            
+        token_supply_info = response['result']['value']
+        
+        # Try to get the token's metadata
+        token_metadata = None
+        try:
+            metadata_response = wallet._rpc_call("getTokenLargestAccounts", [token_address])
+            if 'result' in metadata_response and 'value' in metadata_response['result'] and len(metadata_response['result']['value']) > 0:
+                largest_account = metadata_response['result']['value'][0]['address']
+                token_metadata = wallet._rpc_call("getAccountInfo", [largest_account, {"encoding": "jsonParsed"}])
+            
+        except Exception as e:
+            logging.debug(f"Could not get token metadata: {str(e)}")
+        
+        # Return a dictionary of token info
+        token_info = {
+            'address': token_address,
+            'supply': token_supply_info.get('amount'),
+            'decimals': token_supply_info.get('decimals'),
+            'metadata': token_metadata
+        }
+        
+        return token_info
+    except Exception as e:
+        logging.error(f"Error getting token info: {str(e)}")
+        return None
+
 def ensure_token_account_exists(token_address: str, max_attempts: int = 3) -> bool:
     """Ensure a token account exists with better retry handling."""
     logging.info(f"Checking if token account exists for {token_address}...")
