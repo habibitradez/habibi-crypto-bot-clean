@@ -1353,20 +1353,24 @@ def analyze_transaction(signature: str) -> List[str]:
 def get_pump_fun_trending_tokens(limit=20):
     """Get trending tokens from pump.fun API."""
     try:
-        # Updated URL based on actual pump.fun API structure
-        url = "https://api.pump.fun/v1/tokens/trending"
-        response = requests.get(url, params={"limit": limit})
+        # Updated URL based on network inspection of pump.fun website
+        url = "https://backend.pump.fun/tokens/trending"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, params={"limit": limit})
         
         if response.status_code != 200:
             logging.error(f"Error fetching trending tokens: {response.status_code}")
             return []
             
         data = response.json()
-        if not data or "tokens" not in data:
+        if not data:
             return []
             
         tokens = []
-        for token in data["tokens"]:
+        for token in data:
             # Extract token address and other details
             if "mint" in token:
                 token_data = {
@@ -1374,8 +1378,6 @@ def get_pump_fun_trending_tokens(limit=20):
                     "symbol": token.get("symbol", "Unknown"),
                     "name": token.get("name", "Unknown"),
                     "price": token.get("price", 0),
-                    "priceChange24h": token.get("priceChange24h", 0),
-                    "volumeChange24h": token.get("volumeChange24h", 0),
                     "createdAt": token.get("createdAt", 0)
                 }
                 tokens.append(token_data)
@@ -1384,24 +1386,28 @@ def get_pump_fun_trending_tokens(limit=20):
     except Exception as e:
         logging.error(f"Error in pump.fun API: {str(e)}")
         return []
-
+        
 def get_newest_pump_fun_tokens(limit=20):
     """Get newest tokens from pump.fun API."""
     try:
-        # Updated URL based on actual pump.fun API structure
-        url = "https://api.pump.fun/v1/tokens/newest"
-        response = requests.get(url, params={"limit": limit})
+        # Updated URL based on network inspection of pump.fun website
+        url = "https://backend.pump.fun/tokens/newest"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(url, headers=headers, params={"limit": limit})
         
         if response.status_code != 200:
             logging.error(f"Error fetching newest tokens: {response.status_code}")
             return []
             
         data = response.json()
-        if not data or "tokens" not in data:
+        if not data:
             return []
             
         tokens = []
-        for token in data["tokens"]:
+        for token in data:
             # Extract token address and other details
             if "mint" in token:
                 # Calculate how recent the token is (in minutes)
