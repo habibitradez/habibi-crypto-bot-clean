@@ -18,11 +18,16 @@ const IS_SELL = process.argv[4] === 'true'; // Third argument for sell operation
 // Get environment variables
 const RPC_URL = process.env.SOLANA_RPC_URL || process.env.solana_rpc_url || '';
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
+// Check if this is a small token sell operation
+const IS_SMALL_TOKEN_SELL = process.env.SMALL_TOKEN_SELL === 'true' && IS_SELL;
 
 // Show environment variables are available (without revealing sensitive data)
 console.log(`RPC_URL available: ${!!RPC_URL}`);
 console.log(`PRIVATE_KEY available: ${!!PRIVATE_KEY}`);
 console.log(`Operation: ${IS_SELL ? 'SELL' : 'BUY'}`);
+if (IS_SMALL_TOKEN_SELL) {
+  console.log('Small token sell mode activated - using higher slippage and priority fees');
+}
 
 // Retry function with exponential backoff
 async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INITIAL_RETRY_DELAY) {
@@ -76,6 +81,7 @@ async function executeSwap() {
     
     // For sell operations, we need to get token balance first to know how much to sell
     let amount = amountLamports;
+    let isVerySmallBalance = false;
     
     if (IS_SELL) {
       console.log("Getting token accounts to determine available balance...");
@@ -107,60 +113,72 @@ async function executeSwap() {
           
           // Try to look for the token with getTokenAccountsByOwner instead
           console.log("Trying alternative method to find token...");
-          const allTokens = await connection.getTokenAccountsByOwner(
-            keypair.publicKey,
-            { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-          );
-          
-          console.log(`Found ${allTokens.value.length} total token accounts`);
-          
-          // Log all tokens for debugging
-          if (allTokens.value.length > 0) {
-            console.log("Listing all token accounts:");
-            for (let i = 0; i < allTokens.value.length; i++) {
-              try {
-                const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
-                const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
-                const tokenAmount = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount || "0";
-                console.log(`Token ${i+1}: Mint=${mint}, Amount=${tokenAmount}`);
-              } catch (e) {
-                console.log(`Error parsing token ${i+1}: ${e.message}`);
-              }
-            }
-          }
-          
-          let foundTokenAccount = false;
-          
-          // Loop through all tokens to find our target token
-          for (const tokenAccount of allTokens.value) {
-            try {
-              const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
-              const parsedInfo = accountInfo.value?.data?.parsed?.info;
-              
-              if (parsedInfo && parsedInfo.mint === TOKEN_ADDRESS) {
-                console.log(`Found token account for ${TOKEN_ADDRESS}`);
-                const tokenBalance = parseInt(parsedInfo.tokenAmount.amount);
-                console.log(`Found token balance: ${tokenBalance}`);
-                
-                // Force a minimum amount for sell operations
-                if (tokenBalance === 0 || tokenBalance < 100) {
-                  console.log("Token balance is zero or too small, marking as sold.");
-                  process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+          try {
+            const allTokens = await connection.getTokenAccountsByOwner(
+              keypair.publicKey,
+              { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
+            );
+            
+            console.log(`Found ${allTokens.value.length} total token accounts`);
+            
+            // Log all tokens for debugging
+            if (allTokens.value.length > 0) {
+              console.log("Listing all token accounts:");
+              for (let i = 0; i < Math.min(allTokens.value.length, 10); i++) {
+                try {
+                  const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
+                  const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
+                  const tokenAmount = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount || "0";
+                  console.log(`Token ${i+1}: Mint=${mint}, Amount=${tokenAmount}`);
+                } catch (e) {
+                  console.log(`Error parsing token ${i+1}: ${e.message}`);
                 }
-                
-                amount = tokenBalance;
-                foundTokenAccount = true;
-                break;
               }
-            } catch (err) {
-              console.error(`Error checking token account: ${err.message}`);
             }
-          }
-          
-          // If we still can't find the token, exit
-          if (!foundTokenAccount) {
-            console.error("Could not find token. Marking as sold anyway to remove from monitoring.");
-            process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+            
+            let foundTokenAccount = false;
+            
+            // Loop through all tokens to find our target token
+            for (const tokenAccount of allTokens.value) {
+              try {
+                const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
+                const parsedInfo = accountInfo.value?.data?.parsed?.info;
+                
+                if (parsedInfo && parsedInfo.mint === TOKEN_ADDRESS) {
+                  console.log(`Found token account for ${TOKEN_ADDRESS}`);
+                  const tokenBalance = parseInt(parsedInfo.tokenAmount.amount);
+                  console.log(`Found token balance: ${tokenBalance}`);
+                  
+                  // Check if this is a very small balance
+                  if (tokenBalance < 1000) {
+                    isVerySmallBalance = true;
+                    console.log(`Very small balance detected (${tokenBalance}). Using aggressive sell parameters.`);
+                  }
+                  
+                  // Force a minimum amount for sell operations
+                  if (tokenBalance === 0) {
+                    console.log("Token balance is zero, marking as sold.");
+                    process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+                  }
+                  
+                  amount = tokenBalance;
+                  foundTokenAccount = true;
+                  break;
+                }
+              } catch (err) {
+                console.error(`Error checking token account: ${err.message}`);
+              }
+            }
+            
+            // If we still can't find the token, exit
+            if (!foundTokenAccount) {
+              console.error("Could not find token. Marking as sold anyway to remove from monitoring.");
+              process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
+            }
+          } catch (error) {
+            console.error(`Error getting all token accounts: ${error.message}`);
+            console.error("Marking as sold to remove from monitoring.");
+            process.exit(0);
           }
         } else {
           // We found token accounts through the standard method
@@ -178,6 +196,12 @@ async function executeSwap() {
             if (tokenBalance > largestBalance) {
               largestBalance = tokenBalance;
             }
+          }
+          
+          // Check if this is a very small balance
+          if (largestBalance < 1000) {
+            isVerySmallBalance = true;
+            console.log(`Very small balance detected (${largestBalance}). Using aggressive sell parameters.`);
           }
           
           // Get the balance of the account with the largest balance
@@ -221,11 +245,22 @@ async function executeSwap() {
     const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
     console.log(`Using quote URL: ${quoteUrl}`);
     
+    // Determine slippage based on operation type and token size
+    let slippageBps;
+    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance) {
+      slippageBps = "1000";  // 10% slippage for small tokens
+      console.log("Using 10% slippage for small token sell");
+    } else if (IS_SELL) {
+      slippageBps = "500";   // 5% slippage for normal sells
+    } else {
+      slippageBps = "100";   // 1% slippage for buys
+    }
+    
     const quoteParams = {
       inputMint: inputMint,
       outputMint: outputMint,
       amount: amount.toString(),
-      slippageBps: IS_SELL ? "500" : "100"  // Even higher slippage for selling (5%)
+      slippageBps: slippageBps
     };
     
     console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
@@ -251,24 +286,36 @@ async function executeSwap() {
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
+    // Determine priority fee based on operation type and token size
+    let priorityFee;
+    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance) {
+      priorityFee = 1000000;  // 0.001 SOL priority fee for small tokens (very high)
+      console.log("Using high priority fee for small token sell");
+    } else if (IS_SELL) {
+      priorityFee = 500000;   // 0.0005 SOL for normal sells
+    } else {
+      priorityFee = 100000;   // 0.0001 SOL for buys
+    }
+    
     // Fixed parameter conflict - use only prioritizationFeeLamports
     const swapRequest = {
       quoteResponse: quoteResponse.data,
       userPublicKey: keypair.publicKey.toBase58(),
       wrapUnwrapSOL: true,
-      prioritizationFeeLamports: 500000, // 0.0003 SOL priority fee (increased)
+      prioritizationFeeLamports: priorityFee,
       dynamicComputeUnitLimit: true
     };
     
     console.log('Swap request prepared');
     
-    // Use retryWithBackoff for swap request
+    // Use retryWithBackoff for swap request with more retries for small tokens
+    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? 10 : 5;
     const swapResponse = await retryWithBackoff(async () => {
       console.log('Attempting to prepare swap...');
       return await axios.post(swapUrl, swapRequest, {
         headers: { 'Content-Type': 'application/json' }
       });
-    });
+    }, maxRetries);
     
     if (!swapResponse.data || !swapResponse.data.swapTransaction) {
       console.error('Failed to get swap transaction', swapResponse.data);
@@ -293,14 +340,17 @@ async function executeSwap() {
     // Submit the transaction
     console.log('Submitting transaction...');
     
+    // Determine transaction parameters based on token type
+    const txParams = {
+      skipPreflight: (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? true : false,
+      maxRetries: (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? 10 : 5,
+      preflightCommitment: 'processed'
+    };
+    
     // Use sendRawTransaction with properly serialized, signed transaction
     const txSignature = await connection.sendRawTransaction(
       transaction.serialize(),
-      {
-        skipPreflight: false, // Run preflight checks to catch issues
-        maxRetries: 5,
-        preflightCommitment: 'processed'
-      }
+      txParams
     );
     
     console.log('Transaction submitted:', txSignature);
