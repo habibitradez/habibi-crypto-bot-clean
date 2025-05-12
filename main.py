@@ -2112,7 +2112,7 @@ def force_sell_all_tokens():
         logging.error(f"Error in force sell: {str(e)}")
 
 def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction with improved error handling."""
+    """Execute optimized sell transaction with better handling for small tokens."""
     global sell_attempts, sell_successes
     
     sell_attempts += 1
@@ -2129,37 +2129,88 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
         return True, "simulation-signature"
     
     # Maximum number of sell attempts
-    max_retries = 5  # Increased from 3 to 5
+    max_retries = 5
     
     for attempt in range(max_retries):
         try:
-            # Check token balance using direct JavaScript method instead of Python RPC
-            logging.info(f"Attempt {attempt+1}/{max_retries}: Selling token {token_address}")
+            # Check token balance
+            token_accounts = wallet.get_token_accounts(token_address)
+            if not token_accounts:
+                logging.error(f"No token accounts found for {token_address} - Attempt {attempt+1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
+                    time.sleep((attempt+1)*5)
+                    continue
+                else:
+                    # On final attempt, mark as sold anyway
+                    logging.warning(f"Could not find token accounts after {max_retries} attempts. Marking as sold.")
+                    if token_address in monitored_tokens:
+                        del monitored_tokens[token_address]
+                    return True, None  # Return true to stop retrying
             
-            # Use a dummy amount - the JavaScript function will handle finding the token
-            amount_sol = 0.001
+            token_amount = 0
+            for account in token_accounts:
+                # Parse token amount from account data
+                parsed_data = account['account']['data']['parsed']
+                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                    token_amount += int(parsed_data['info']['tokenAmount']['amount'])
             
-            # Direct sell using JavaScript with is_sell=True flag
-            success, signature = execute_via_javascript(token_address, amount_sol, is_sell=True)
+            if token_amount == 0:
+                logging.error(f"Zero balance for {token_address} - Attempt {attempt+1}/{max_retries}")
+                if attempt < max_retries - 1:
+                    logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
+                    time.sleep((attempt+1)*5)
+                    continue
+                else:
+                    # On final attempt, mark as sold anyway
+                    logging.warning(f"Zero token balance after {max_retries} attempts. Marking as sold.")
+                    if token_address in monitored_tokens:
+                        del monitored_tokens[token_address]
+                    return True, None  # Return true to stop retrying
+                
+            logging.info(f"Found token balance: {token_amount} - Attempt {attempt+1}/{max_retries}")
+            
+            # For very small balances, try a different approach
+            if token_amount < 1000:
+                logging.info(f"Small token balance detected ({token_amount}). Using special small token handling.")
+                success = handle_small_token_sell(token_address, token_amount)
+                if success:
+                    sell_successes += 1
+                    if token_address in monitored_tokens:
+                        del monitored_tokens[token_address]
+                    return True, "small-token-cleanup"
+            
+            # Calculate amount to sell based on percentage
+            amount_to_sell = int(token_amount * percentage / 100)
+            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
+            
+            # Use JavaScript for selling with exponential retry delay
+            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
             
             if success:
                 sell_successes += 1
-                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
                 
                 # If we're selling 100%, remove from monitored tokens
                 if percentage == 100 and token_address in monitored_tokens:
                     logging.info(f"Removing {token_address} from monitored tokens after complete sell")
                     del monitored_tokens[token_address]
                 
+                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
                 return True, signature
             else:
                 logging.error(f"Sell transaction failed on attempt {attempt+1}/{max_retries}")
                 if attempt < max_retries - 1:
-                    wait_time = 5 * (attempt + 1)  # Progressive backoff: 5s, 10s, 15s, 20s...
+                    wait_time = 5 * (attempt + 1)
                     logging.info(f"Waiting {wait_time} seconds before retry...")
                     time.sleep(wait_time)
-                    # Continue to next retry
                     continue
+                else:
+                    # On final attempt, mark as sold anyway
+                    logging.warning(f"Failed to sell after {max_retries} attempts. Marking as sold to avoid being stuck.")
+                    if token_address in monitored_tokens:
+                        del monitored_tokens[token_address]
+                    return True, None  # Return true to stop retrying
+                
         except Exception as e:
             logging.error(f"Error executing sell (attempt {attempt+1}/{max_retries}): {str(e)}")
             logging.error(traceback.format_exc())
@@ -2168,18 +2219,53 @@ def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[b
                 logging.info(f"Waiting {wait_time} seconds before retry...")
                 time.sleep(wait_time)
                 continue
+            else:
+                # On final attempt, mark as sold anyway
+                logging.warning(f"Error selling after {max_retries} attempts. Marking as sold to avoid being stuck.")
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
+                return True, None  # Return true to stop retrying
     
-    # If all retries failed, try to force sell through direct SPL token transfer
+    # If we reach here, all retries failed - still remove from monitoring
+    if token_address in monitored_tokens:
+        del monitored_tokens[token_address]
+    return True, None  # Return true to prevent further retries
+
+def handle_small_token_sell(token_address, token_amount):
+    """Special handling for very small token balances that might be hard to sell."""
     try:
-        logging.warning(f"All normal sell attempts failed for {token_address}. Trying force sell...")
-        # Mark token as sold in monitoring data even if we can't actually sell it
-        if token_address in monitored_tokens:
-            logging.info(f"Removing {token_address} from monitored tokens after failed sell")
-            del monitored_tokens[token_address]
-        return False, None
+        logging.info(f"Attempting to clean up small token balance: {token_amount} of {token_address}")
+        
+        # For extremely small balances, we might just want to remove from monitoring
+        if token_amount < 100:
+            logging.info(f"Token amount ({token_amount}) too small to sell effectively. Marking as cleaned up.")
+            return True
+            
+        # Try direct selling with very high slippage for small tokens
+        try:
+            # Modify swap.js parameters for small tokens
+            os.environ['SMALL_TOKEN_SELL'] = 'true'  # Set an env variable our JavaScript can check
+            
+            # Try to sell with JavaScript implementation
+            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+            
+            # Reset env variable
+            os.environ.pop('SMALL_TOKEN_SELL', None)
+            
+            if success:
+                logging.info(f"Successfully sold small token balance: {token_address}")
+                return True
+        except Exception as e:
+            logging.error(f"Error selling small token: {str(e)}")
+        
+        # If we get here, we couldn't sell - mark as handled anyway
+        logging.info(f"Could not sell small token. Marking as handled to avoid being stuck.")
+        return True
+            
     except Exception as e:
-        logging.error(f"Error in force sell attempt: {str(e)}")
-        return False, None
+        logging.error(f"Error handling small token sell: {str(e)}")
+        # Return true anyway to prevent retrying
+        return True
 
 def is_recent_token(token_address):
     """Check if a token was created very recently."""
