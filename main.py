@@ -2377,12 +2377,23 @@ def trading_loop():
             
             # Only look for new tokens if we have capacity
             if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
-                # Scan for new tokens
-                potential_tokens = scan_for_new_tokens(limit=100)
+                # Scan for new tokens using your existing function
+                potential_tokens = scan_for_new_tokens()
                 
                 # Prioritize tokens that appear to be newly created
                 prioritized_tokens = []
                 for token_address in potential_tokens:
+                    # Skip tokens we're already monitoring
+                    if token_address in monitored_tokens:
+                        continue
+                    
+                    # Skip if we've bought this token recently (cooldown period)
+                    if token_address in token_buy_timestamps:
+                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                            continue
+                            
+                    # Check token age
                     token_age = check_token_age(token_address)
                     if token_age is not None and token_age < 10:  # Less than 10 minutes old
                         prioritized_tokens.append((token_address, token_age))
@@ -2397,16 +2408,6 @@ def trading_loop():
                     # Skip if we're at max concurrent tokens
                     if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
                         break
-                        
-                    # Skip tokens we're already monitoring
-                    if token_address in monitored_tokens:
-                        continue
-                    
-                    # Check if we've bought this token recently (cooldown period)
-                    if token_address in token_buy_timestamps:
-                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
-                            continue
                     
                     # Verify token is suitable for trading
                     if verify_token(token_address):
