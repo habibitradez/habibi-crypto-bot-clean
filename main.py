@@ -101,7 +101,7 @@ MEME_TOKEN_PATTERNS = [
 # --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
-api_call_delay = 1.5  # Start with 1.5 seconds between calls
+api_call_delay = 2.0  # Start with 1.5 seconds between calls
 
 # Track tokens we're monitoring
 monitored_tokens = {}
