@@ -1501,7 +1501,7 @@ def check_token_age(token_address):
         minutes_old = (time.time() - creation_time) / 60
         return minutes_old
     except Exception as e:
-        logging.error(f"Error checking token age: {str(e)}")
+        logging.debug(f"Error checking token age: {str(e)}")  # Use debug level to reduce log spam
         return None
 
 def check_token_tradability(token_address: str) -> bool:
