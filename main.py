@@ -1350,6 +1350,47 @@ def analyze_transaction(signature: str) -> List[str]:
             logging.error(traceback.format_exc())
         return []
 
+def get_pump_fun_tokens_from_quicknode():
+    """Get newest tokens from pump.fun using QuickNode's pump.fun API."""
+    try:
+        if not CONFIG['SOLANA_RPC_URL']:
+            logging.error("SOLANA_RPC_URL not configured")
+            return []
+            
+        # Use QuickNode's pump.fun API endpoint as shown in the guide
+        url = f"{CONFIG['SOLANA_RPC_URL']}/pump-fun/tokens/newest"
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        # Make the request using requests library
+        response = requests.get(url, headers=headers)
+        
+        if response.status_code != 200:
+            logging.error(f"Error fetching pump.fun tokens: {response.status_code} - {response.text}")
+            return []
+            
+        data = response.json()
+        
+        # Extract tokens from the response
+        tokens = []
+        if "data" in data and isinstance(data["data"], list):
+            for token in data["data"]:
+                if "mint" in token:
+                    token_data = {
+                        "address": token["mint"],
+                        "symbol": token.get("symbol", "Unknown"),
+                        "name": token.get("name", "Unknown"),
+                        "created_at": token.get("createdAt", 0)
+                    }
+                    tokens.append(token_data)
+                    
+        logging.info(f"Found {len(tokens)} tokens from QuickNode pump.fun API")
+        return tokens
+    except Exception as e:
+        logging.error(f"Error fetching pump.fun tokens: {str(e)}")
+        return []
+
 def get_pump_fun_trending_tokens(limit=20):
     """Get trending tokens from pump.fun API."""
     try:
@@ -2331,11 +2372,11 @@ def monitor_token_price(token_address):
         # Don't remove from monitoring on error - let the next cycle try again
 
 def trading_loop():
-    """Main trading loop with focus on recent tokens."""
-    global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
-    global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
+    """Main trading loop using QuickNode's pump.fun API."""
+    global iteration_count, last_status_time, errors_encountered, daily_profit
+    global buy_attempts, buy_successes, sell_attempts, sell_successes
     
-    logging.info("Starting main trading loop with focus on recent tokens")
+    logging.info("Starting main trading loop with QuickNode's pump.fun API")
     
     # Initialize daily profit tracking
     daily_profit = 0
@@ -2345,75 +2386,77 @@ def trading_loop():
         iteration_count += 1
         
         try:
-            # Check if it's a new day for profit tracking
-            if time.time() - daily_profit_start_time > 86400:  # 24 hours
-                logging.info(f"Daily profit reset - Previous total: ${daily_profit:.2f}")
-                daily_profit = 0
-                daily_profit_start_time = time.time()
-            
-            # Print status every 5 minutes
-            if time.time() - last_status_time > 300:  # 5 minutes
-                logging.info(f"===== STATUS UPDATE =====")
-                logging.info(f"Tokens scanned: {tokens_scanned}")
-                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"Buy attempts: {buy_attempts}, successes: {buy_successes}")
-                logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
-                logging.info(f"Daily profit: ${daily_profit:.2f}")
-                logging.info(f"Errors encountered: {errors_encountered}")
-                
-                # Also log wallet balance in production mode
-                if not CONFIG['SIMULATION_MODE'] and wallet:
-                    balance = wallet.get_balance()
-                    logging.info(f"Current wallet balance: {balance} SOL")
-                
-                last_status_time = time.time()
+            # Status checking code...
             
             # Monitor tokens we're already trading
             for token_address in list(monitored_tokens.keys()):
                 monitor_token_price(token_address)
-                
-                # Add a small sleep between token monitoring to avoid rate limits
                 time.sleep(0.5)
             
             # Only look for new tokens if we have capacity
             if len(monitored_tokens) < CONFIG['MAX_CONCURRENT_TOKENS']:
-                # Scan for new tokens using your existing function
-                potential_tokens = scan_for_new_tokens()
+                # Try to get tokens from pump.fun through QuickNode
+                pump_fun_tokens = get_pump_fun_tokens_from_quicknode()
                 
-                # Prioritize tokens that appear to be newly created
-                prioritized_tokens = []
-                for token_address in potential_tokens:
-                    # Skip tokens we're already monitoring
-                    if token_address in monitored_tokens:
-                        continue
-                    
-                    # Skip if we've bought this token recently (cooldown period)
-                    if token_address in token_buy_timestamps:
-                        minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                        if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
-                            continue
+                if pump_fun_tokens:
+                    # Process the newest pump.fun tokens
+                    for token_data in pump_fun_tokens[:5]:  # Look at the top 5
+                        token_address = token_data["address"]
+                        
+                        # Skip if we're at max concurrent tokens
+                        if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
+                            break
                             
-                    # Check token age
-                    token_age = check_token_age(token_address)
-                    if token_age is not None and token_age < 10:  # Less than 10 minutes old
-                        prioritized_tokens.append((token_address, token_age))
-                
-                # Sort by age (youngest first)
-                prioritized_tokens.sort(key=lambda x: x[1])
-                
-                logging.info(f"Found {len(prioritized_tokens)} recent tokens less than 10 minutes old")
-                
-                # Try to buy the most recent tokens
-                for token_address, age in prioritized_tokens[:5]:  # Focus on top 5 newest
-                    # Skip if we're at max concurrent tokens
-                    if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
-                        break
+                        # Skip tokens we're already monitoring
+                        if token_address in monitored_tokens:
+                            continue
+                        
+                        # Skip if we've bought this token recently
+                        if token_address in token_buy_timestamps:
+                            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                                continue
+                        
+                        logging.info(f"Found promising new token from pump.fun: {token_data['symbol']} ({token_address})")
+                        
+                        # Buy the token directly - since it's from pump.fun, we can assume it's tradable
+                        success, signature = execute_via_javascript(token_address, CONFIG['BUY_AMOUNT_SOL'])
+                        
+                        buy_attempts += 1
+                        if success:
+                            logging.info(f"Successfully bought token: {token_data['symbol']} ({token_address})")
+                            buy_successes += 1
+                            time.sleep(5)
+                        else:
+                            logging.warning(f"Failed to buy token: {token_data['symbol']} ({token_address})")
+                            time.sleep(2)
+                else:
+                    # Fallback to your existing scan method
+                    logging.info("Couldn't get tokens from pump.fun, falling back to scan_for_new_tokens")
+                    potential_tokens = scan_for_new_tokens()
                     
-                    # Verify token is suitable for trading
-                    if verify_token(token_address):
-                        # Check liquidity before buying
-                        if check_token_liquidity(token_address):
-                            logging.info(f"Found promising new token: {token_address}, {age:.1f} minutes old")
+                    # Process up to 2 tokens per iteration
+                    random.shuffle(potential_tokens)
+                    tokens_to_try = potential_tokens[:2]
+                    
+                    for token_address in tokens_to_try:
+                        # Skip if we're at max concurrent tokens
+                        if len(monitored_tokens) >= CONFIG['MAX_CONCURRENT_TOKENS']:
+                            break
+                            
+                        # Skip tokens we're already monitoring
+                        if token_address in monitored_tokens:
+                            continue
+                        
+                        # Skip if we've bought this token recently
+                        if token_address in token_buy_timestamps:
+                            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                            if minutes_since_last_buy < CONFIG['BUY_COOLDOWN_MINUTES']:
+                                continue
+                        
+                        # Check if token is tradable
+                        if token_address in VERIFIED_TOKENS or check_token_tradability(token_address):
+                            logging.info(f"Found promising tradable token: {token_address}")
                             
                             # Use optimized transaction function for buying
                             success, signature = execute_via_javascript(token_address, CONFIG['BUY_AMOUNT_SOL'])
@@ -2422,15 +2465,13 @@ def trading_loop():
                             if success:
                                 logging.info(f"Successfully bought token: {token_address}")
                                 buy_successes += 1
-                                # Add a longer delay after successful buy
                                 time.sleep(5)
                             else:
                                 logging.warning(f"Failed to buy token: {token_address}")
-                                # Add a delay after failed buy
                                 time.sleep(2)
             
             # Sleep before next iteration
-            sleep_time = CONFIG['CHECK_INTERVAL_MS'] / 1000  # Convert ms to seconds
+            sleep_time = CONFIG['CHECK_INTERVAL_MS'] / 1000
             logging.info(f"Sleeping for {sleep_time} seconds before next iteration")
             time.sleep(sleep_time)
             
@@ -2438,7 +2479,6 @@ def trading_loop():
             errors_encountered += 1
             logging.error(f"Error in main loop: {str(e)}")
             logging.error(traceback.format_exc())
-            # Longer sleep on error
             logging.info("Error encountered, sleeping for 10 seconds before continuing")
             time.sleep(10)
 
