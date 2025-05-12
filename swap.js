@@ -6,6 +6,10 @@ const axios = require('axios');
 const MAX_RETRIES = 5;
 const INITIAL_RETRY_DELAY = 2000; // 2 seconds
 
+// Global rate limiting
+let lastRequestTimestamps = [];
+const MAX_REQUESTS_PER_MINUTE = 55; // Set lower than the actual limit of 60
+
 // Print Node.js version for debugging
 console.log(`Node.js version: ${process.version}`);
 console.log(`Running in directory: ${process.cwd()}`);
@@ -29,11 +33,39 @@ if (IS_SMALL_TOKEN_SELL) {
   console.log('Small token sell mode activated - using higher slippage and priority fees');
 }
 
-// Retry function with exponential backoff
+// Rate limiting function
+function canMakeRequest() {
+  const now = Date.now();
+  // Remove timestamps older than 1 minute
+  lastRequestTimestamps = lastRequestTimestamps.filter(time => now - time < 60000);
+  
+  // Check if we're under the limit
+  if (lastRequestTimestamps.length < MAX_REQUESTS_PER_MINUTE) {
+    // We can make a request
+    lastRequestTimestamps.push(now);
+    return true;
+  }
+  
+  // Calculate wait time until we can make another request
+  const oldestTimestamp = lastRequestTimestamps[0];
+  const timeToWait = 60000 - (now - oldestTimestamp) + 100; // Add 100ms buffer
+  return timeToWait; // Return wait time instead of false
+}
+
+// Retry function with enhanced rate limiting
 async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INITIAL_RETRY_DELAY) {
   let retries = 0;
   while (true) {
     try {
+      // Check if we can make a request based on our rate limiting
+      const canProceed = canMakeRequest();
+      if (canProceed !== true) {
+        // We need to wait
+        console.log(`Proactive rate limiting: Waiting ${canProceed}ms before attempting request`);
+        await new Promise(resolve => setTimeout(resolve, canProceed));
+        continue; // Try again after waiting
+      }
+      
       return await fn();
     } catch (error) {
       if (error.response && error.response.status === 429) {
@@ -59,7 +91,13 @@ async function executeSwap() {
     console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL`);
     
     // Create connection to Solana with higher timeout
-    const connection = new Connection(RPC_URL, 'confirmed');
+    const connection = new Connection(RPC_URL, {
+      commitment: 'confirmed',
+      disableRetryOnRateLimit: false,
+      httpHeaders: {
+        'Content-Type': 'application/json',
+      }
+    });
     
     // Create keypair from private key
     const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
@@ -87,6 +125,9 @@ async function executeSwap() {
       console.log("Getting token accounts to determine available balance...");
       
       try {
+        // Add delay before RPC calls to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         // CRITICAL: Since we're finding zero balances, let's try a direct token supply query first
         // to check if the token even exists on the blockchain
         try {
@@ -102,6 +143,9 @@ async function executeSwap() {
           }
         }
         
+        // Add delay before next RPC call
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         // Continue with the token account lookup
         const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
           keypair.publicKey,
@@ -114,6 +158,9 @@ async function executeSwap() {
           // Try to look for the token with getTokenAccountsByOwner instead
           console.log("Trying alternative method to find token...");
           try {
+            // Add delay before RPC call
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
             const allTokens = await connection.getTokenAccountsByOwner(
               keypair.publicKey,
               { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
@@ -124,8 +171,11 @@ async function executeSwap() {
             // Log all tokens for debugging
             if (allTokens.value.length > 0) {
               console.log("Listing all token accounts:");
-              for (let i = 0; i < Math.min(allTokens.value.length, 10); i++) {
+              for (let i = 0; i < Math.min(allTokens.value.length, 5); i++) { // Reduced from 10 to 5 to limit RPC calls
                 try {
+                  // Add delay between account checks
+                  if (i > 0) await new Promise(resolve => setTimeout(resolve, 100));
+                  
                   const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
                   const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
                   const tokenAmount = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount || "0";
@@ -141,6 +191,9 @@ async function executeSwap() {
             // Loop through all tokens to find our target token
             for (const tokenAccount of allTokens.value) {
               try {
+                // Add delay between account checks
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
                 const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
                 const parsedInfo = accountInfo.value?.data?.parsed?.info;
                 
@@ -268,7 +321,13 @@ async function executeSwap() {
     // Use retryWithBackoff for quote request
     const quoteResponse = await retryWithBackoff(async () => {
       console.log('Attempting to get Jupiter quote...');
-      return await axios.get(quoteUrl, { params: quoteParams });
+      return await axios.get(quoteUrl, { 
+        params: quoteParams,
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+      });
     });
     
     if (!quoteResponse.data) {
@@ -281,6 +340,9 @@ async function executeSwap() {
     }
     
     console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
+    
+    // Add a small delay between API calls
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Step 2: Get swap instructions with retry logic for rate limiting
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
@@ -313,7 +375,10 @@ async function executeSwap() {
     const swapResponse = await retryWithBackoff(async () => {
       console.log('Attempting to prepare swap...');
       return await axios.post(swapUrl, swapRequest, {
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
       });
     }, maxRetries);
     
@@ -339,6 +404,9 @@ async function executeSwap() {
     
     // Submit the transaction
     console.log('Submitting transaction...');
+    
+    // Add a delay before submitting transaction
+    await new Promise(resolve => setTimeout(resolve, 500));
     
     // Determine transaction parameters based on token type
     const txParams = {
