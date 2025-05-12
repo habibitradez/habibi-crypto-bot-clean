@@ -1,14 +1,16 @@
 const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
+const fs = require('fs');
 
 // Rate limiting constants
-const MAX_RETRIES = 5;
-const INITIAL_RETRY_DELAY = 2000; // 2 seconds
+const MAX_RETRIES = 7; // Increased from 5
+const INITIAL_RETRY_DELAY = 3000; // Increased from 2000 ms
 
 // Global rate limiting
 let lastRequestTimestamps = [];
-const MAX_REQUESTS_PER_MINUTE = 55; // Set lower than the actual limit of 60
+const MAX_REQUESTS_PER_MINUTE = 50; // More conservative than before
+let jupiterRateLimitResetTime = 0;
 
 // Print Node.js version for debugging
 console.log(`Node.js version: ${process.version}`);
@@ -18,6 +20,7 @@ console.log(`Running in directory: ${process.cwd()}`);
 const TOKEN_ADDRESS = process.argv[2] || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'; // Default to BONK
 const AMOUNT_SOL = parseFloat(process.argv[3] || '0.005');
 const IS_SELL = process.argv[4] === 'true'; // Third argument for sell operation
+const IS_FORCE_SELL = process.argv[5] === 'true'; // Fourth argument for force sell
 
 // Get environment variables
 const RPC_URL = process.env.SOLANA_RPC_URL || process.env.solana_rpc_url || '';
@@ -29,13 +32,22 @@ const IS_SMALL_TOKEN_SELL = process.env.SMALL_TOKEN_SELL === 'true' && IS_SELL;
 console.log(`RPC_URL available: ${!!RPC_URL}`);
 console.log(`PRIVATE_KEY available: ${!!PRIVATE_KEY}`);
 console.log(`Operation: ${IS_SELL ? 'SELL' : 'BUY'}`);
+console.log(`Force sell: ${IS_FORCE_SELL ? 'YES' : 'NO'}`);
 if (IS_SMALL_TOKEN_SELL) {
   console.log('Small token sell mode activated - using higher slippage and priority fees');
 }
 
-// Rate limiting function
+// Rate limiting function with dynamic adjustment
 function canMakeRequest() {
   const now = Date.now();
+  
+  // Check if we're in a rate limit cooldown period
+  if (jupiterRateLimitResetTime > now) {
+    const waitTime = jupiterRateLimitResetTime - now;
+    console.log(`In Jupiter cooldown period. Waiting ${waitTime}ms`);
+    return waitTime;
+  }
+  
   // Remove timestamps older than 1 minute
   lastRequestTimestamps = lastRequestTimestamps.filter(time => now - time < 60000);
   
@@ -48,8 +60,19 @@ function canMakeRequest() {
   
   // Calculate wait time until we can make another request
   const oldestTimestamp = lastRequestTimestamps[0];
-  const timeToWait = 60000 - (now - oldestTimestamp) + 100; // Add 100ms buffer
+  const timeToWait = 60000 - (now - oldestTimestamp) + 500; // Add 500ms buffer
   return timeToWait; // Return wait time instead of false
+}
+
+// Helper to log stats about our rate limiting
+function logRateLimitStats() {
+  const now = Date.now();
+  // Clean up old timestamps
+  lastRequestTimestamps = lastRequestTimestamps.filter(time => now - time < 60000);
+  console.log(`Rate limit stats: ${lastRequestTimestamps.length}/${MAX_REQUESTS_PER_MINUTE} requests used in last minute`);
+  if (jupiterRateLimitResetTime > now) {
+    console.log(`Jupiter cooldown remaining: ${(jupiterRateLimitResetTime - now) / 1000}s`);
+  }
 }
 
 // Retry function with enhanced rate limiting
@@ -57,6 +80,9 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
   let retries = 0;
   while (true) {
     try {
+      // Log rate limit stats before attempting
+      logRateLimitStats();
+      
       // Check if we can make a request based on our rate limiting
       const canProceed = canMakeRequest();
       if (canProceed !== true) {
@@ -66,9 +92,28 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
         continue; // Try again after waiting
       }
       
+      // Execute the function
       return await fn();
+      
     } catch (error) {
+      // Handle rate limit errors
       if (error.response && error.response.status === 429) {
+        console.error('Rate limited (429):', error.response.data);
+        
+        // Try to extract rate limit reset time from headers if available
+        const resetHeader = error.response.headers['x-ratelimit-reset'] || 
+                            error.response.headers['ratelimit-reset'];
+        
+        if (resetHeader) {
+          const resetTime = parseInt(resetHeader) * 1000; // Convert to ms
+          jupiterRateLimitResetTime = Math.max(jupiterRateLimitResetTime, resetTime);
+          console.log(`Rate limit will reset at: ${new Date(jupiterRateLimitResetTime).toISOString()}`);
+        } else {
+          // If no reset header, set a cooldown for 30 seconds
+          jupiterRateLimitResetTime = Date.now() + 30000;
+          console.log(`Setting cooldown for 30 seconds (until ${new Date(jupiterRateLimitResetTime).toISOString()})`);
+        }
+        
         retries++;
         if (retries > maxRetries) {
           console.error(`Failed after ${maxRetries} retries due to rate limiting`);
@@ -81,6 +126,16 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
+      
+      // For other errors, retry a few times
+      if (retries < maxRetries) {
+        retries++;
+        const delay = initialDelay * Math.pow(1.5, retries - 1); // Less aggressive for non-rate-limit errors
+        console.log(`Error: ${error.message}. Retry ${retries}/${maxRetries} after ${Math.round(delay)}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        continue;
+      }
+      
       throw error;
     }
   }
@@ -88,14 +143,16 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
 
 async function executeSwap() {
   try {
-    console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL`);
+    console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL${IS_FORCE_SELL ? ' (FORCE SELL MODE)' : ''}`);
     
-    // Create connection to Solana with higher timeout
+    // Create connection to Solana with better error handling
     const connection = new Connection(RPC_URL, {
       commitment: 'confirmed',
       disableRetryOnRateLimit: false,
+      confirmTransactionInitialTimeout: 60000, // 60 seconds
       httpHeaders: {
         'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
       }
     });
     
@@ -126,7 +183,7 @@ async function executeSwap() {
       
       try {
         // Add delay before RPC calls to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         // CRITICAL: Since we're finding zero balances, let's try a direct token supply query first
         // to check if the token even exists on the blockchain
@@ -144,22 +201,41 @@ async function executeSwap() {
         }
         
         // Add delay before next RPC call
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 200));
         
         // Continue with the token account lookup
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
-          keypair.publicKey,
-          { mint: new PublicKey(TOKEN_ADDRESS) }
-        );
+        let tokenAccounts;
+        try {
+          tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+            keypair.publicKey,
+            { mint: new PublicKey(TOKEN_ADDRESS) }
+          );
+        } catch (tokenError) {
+          console.error(`Error getting token accounts: ${tokenError.message}`);
+          
+          // If in force sell mode and we encounter errors, we should still mark as "sold"
+          if (IS_FORCE_SELL) {
+            console.log("Force sell mode: Marking token as sold despite errors");
+            process.exit(0);
+          }
+          
+          throw tokenError;
+        }
         
-        if (tokenAccounts.value.length === 0) {
+        if (!tokenAccounts || tokenAccounts.value.length === 0) {
           console.error(`No token accounts found for ${TOKEN_ADDRESS}`);
+          
+          // If in force sell mode, we can exit successfully
+          if (IS_FORCE_SELL) {
+            console.log("Force sell mode: No token accounts found, marking as sold");
+            process.exit(0);
+          }
           
           // Try to look for the token with getTokenAccountsByOwner instead
           console.log("Trying alternative method to find token...");
           try {
             // Add delay before RPC call
-            await new Promise(resolve => setTimeout(resolve, 100));
+            await new Promise(resolve => setTimeout(resolve, 200));
             
             const allTokens = await connection.getTokenAccountsByOwner(
               keypair.publicKey,
@@ -171,10 +247,10 @@ async function executeSwap() {
             // Log all tokens for debugging
             if (allTokens.value.length > 0) {
               console.log("Listing all token accounts:");
-              for (let i = 0; i < Math.min(allTokens.value.length, 5); i++) { // Reduced from 10 to 5 to limit RPC calls
+              for (let i = 0; i < Math.min(allTokens.value.length, 3); i++) { // Reduced to 3 to limit RPC calls
                 try {
                   // Add delay between account checks
-                  if (i > 0) await new Promise(resolve => setTimeout(resolve, 100));
+                  if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
                   
                   const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
                   const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
@@ -192,7 +268,7 @@ async function executeSwap() {
             for (const tokenAccount of allTokens.value) {
               try {
                 // Add delay between account checks
-                await new Promise(resolve => setTimeout(resolve, 100));
+                await new Promise(resolve => setTimeout(resolve, 200));
                 
                 const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
                 const parsedInfo = accountInfo.value?.data?.parsed?.info;
@@ -300,9 +376,9 @@ async function executeSwap() {
     
     // Determine slippage based on operation type and token size
     let slippageBps;
-    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance) {
-      slippageBps = "1000";  // 10% slippage for small tokens
-      console.log("Using 10% slippage for small token sell");
+    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
+      slippageBps = "1500";  // 15% slippage for small tokens or force sell (increased)
+      console.log(`Using 15% slippage for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
     } else if (IS_SELL) {
       slippageBps = "500";   // 5% slippage for normal sells
     } else {
@@ -325,14 +401,15 @@ async function executeSwap() {
         params: quoteParams,
         headers: {
           'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+        },
+        timeout: 30000 // 30 second timeout
       });
     });
     
     if (!quoteResponse.data) {
       console.error('Failed to get quote', quoteResponse);
-      if (IS_SELL) {
+      if (IS_SELL || IS_FORCE_SELL) {
         console.error("Marking as sold anyway to remove from monitoring.");
         process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
       }
@@ -342,7 +419,7 @@ async function executeSwap() {
     console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
     
     // Add a small delay between API calls
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Step 2: Get swap instructions with retry logic for rate limiting
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
@@ -350,13 +427,13 @@ async function executeSwap() {
     
     // Determine priority fee based on operation type and token size
     let priorityFee;
-    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance) {
-      priorityFee = 1000000;  // 0.001 SOL priority fee for small tokens (very high)
-      console.log("Using high priority fee for small token sell");
+    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
+      priorityFee = 2000000;  // 0.002 SOL priority fee for small tokens or force sell (increased)
+      console.log(`Using very high priority fee for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
     } else if (IS_SELL) {
-      priorityFee = 500000;   // 0.0005 SOL for normal sells
+      priorityFee = 1000000;   // 0.001 SOL for normal sells (increased)
     } else {
-      priorityFee = 100000;   // 0.0001 SOL for buys
+      priorityFee = 250000;   // 0.00025 SOL for buys (increased)
     }
     
     // Fixed parameter conflict - use only prioritizationFeeLamports
@@ -371,20 +448,21 @@ async function executeSwap() {
     console.log('Swap request prepared');
     
     // Use retryWithBackoff for swap request with more retries for small tokens
-    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? 10 : 5;
+    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
     const swapResponse = await retryWithBackoff(async () => {
       console.log('Attempting to prepare swap...');
       return await axios.post(swapUrl, swapRequest, {
         headers: { 
           'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+        },
+        timeout: 30000 // 30 second timeout
       });
     }, maxRetries);
     
     if (!swapResponse.data || !swapResponse.data.swapTransaction) {
       console.error('Failed to get swap transaction', swapResponse.data);
-      if (IS_SELL) {
+      if (IS_SELL || IS_FORCE_SELL) {
         console.error("Marking as sold anyway to remove from monitoring.");
         process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
       }
@@ -406,12 +484,12 @@ async function executeSwap() {
     console.log('Submitting transaction...');
     
     // Add a delay before submitting transaction
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Determine transaction parameters based on token type
     const txParams = {
-      skipPreflight: (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? true : false,
-      maxRetries: (IS_SMALL_TOKEN_SELL || isVerySmallBalance) ? 10 : 5,
+      skipPreflight: (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? true : false,
+      maxRetries: (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 10,
       preflightCommitment: 'processed'
     };
     
@@ -438,8 +516,8 @@ async function executeSwap() {
     }
     
     // For sell operations, if there's an error, mark as sold to avoid infinite sell attempts
-    if (IS_SELL) {
-      console.error("Error during sell operation. Marking as sold anyway to remove from monitoring.");
+    if (IS_SELL || IS_FORCE_SELL) {
+      console.error(`Error during ${IS_FORCE_SELL ? 'force sell' : 'sell'} operation. Marking as sold anyway to remove from monitoring.`);
       process.exit(0);  // Exit with 0 to treat as success for monitoring purposes
     }
     
