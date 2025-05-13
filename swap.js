@@ -7,10 +7,21 @@ const fs = require('fs');
 const MAX_RETRIES = 7; // Increased from 5
 const INITIAL_RETRY_DELAY = 3000; // Increased from 2000 ms
 
-// Global rate limiting
+// Global rate limiting for Jupiter API
 let lastRequestTimestamps = [];
 const MAX_REQUESTS_PER_MINUTE = 50; // More conservative than before
 let jupiterRateLimitResetTime = 0;
+
+// RPC call rate limiting
+let lastRpcCallTimestamps = {};
+const RPC_RATE_LIMITS = {
+  'default': { max: 40, windowMs: 60000 }, // 40 calls per minute for most methods
+  'getTokenLargestAccounts': { max: 5, windowMs: 60000 }, // Only 5 calls per minute for this heavy method
+  'getTokenSupply': { max: 10, windowMs: 60000 }, // 10 calls per minute for token supply
+  'getParsedTokenAccountsByOwner': { max: 15, windowMs: 60000 }, // 15 calls per minute
+  'getTokenAccountsByOwner': { max: 15, windowMs: 60000 }, // 15 calls per minute
+  'getParsedAccountInfo': { max: 20, windowMs: 60000 } // 20 calls per minute
+};
 
 // Print Node.js version for debugging
 console.log(`Node.js version: ${process.version}`);
@@ -37,7 +48,58 @@ if (IS_SMALL_TOKEN_SELL) {
   console.log('Small token sell mode activated - using higher slippage and priority fees');
 }
 
-// Rate limiting function with dynamic adjustment
+// RPC throttling function
+async function throttledRpcCall(connection, method, params) {
+  const rateLimit = RPC_RATE_LIMITS[method] || RPC_RATE_LIMITS['default'];
+  const now = Date.now();
+  
+  // Initialize call history for this method if not exists
+  if (!lastRpcCallTimestamps[method]) {
+    lastRpcCallTimestamps[method] = [];
+  }
+  
+  // Filter out old timestamps
+  lastRpcCallTimestamps[method] = lastRpcCallTimestamps[method].filter(
+    timestamp => now - timestamp < rateLimit.windowMs
+  );
+  
+  // Check if we've hit the rate limit
+  if (lastRpcCallTimestamps[method].length >= rateLimit.max) {
+    const oldestCall = lastRpcCallTimestamps[method][0];
+    const timeToWait = rateLimit.windowMs - (now - oldestCall) + 100;
+    console.log(`Rate limiting ${method} RPC call. Waiting ${timeToWait}ms before proceeding.`);
+    await new Promise(resolve => setTimeout(resolve, timeToWait));
+    // Recursive call after waiting (will re-check rate limit)
+    return throttledRpcCall(connection, method, params);
+  }
+  
+  // Add current timestamp to the history
+  lastRpcCallTimestamps[method].push(now);
+  
+  // Add a small delay before all RPC calls to spread them out
+  await new Promise(resolve => setTimeout(resolve, 200));
+  
+  try {
+    console.log(`Making throttled RPC call: ${method} (${lastRpcCallTimestamps[method].length}/${rateLimit.max})`);
+    
+    // Make the actual RPC call using the connection
+    return await connection[method](...params);
+  } catch (error) {
+    if (error.message && error.message.includes('429')) {
+      console.error(`RPC rate limit hit for ${method} despite throttling. Increasing backoff.`);
+      // Increase the backoff for this method
+      if (rateLimit.max > 2) rateLimit.max--; // Reduce max calls
+      
+      // Wait longer
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Try again
+      return throttledRpcCall(connection, method, params);
+    }
+    throw error;
+  }
+}
+
+// Rate limiting function with dynamic adjustment for Jupiter API
 function canMakeRequest() {
   const now = Date.now();
   
@@ -182,13 +244,10 @@ async function executeSwap() {
       console.log("Getting token accounts to determine available balance...");
       
       try {
-        // Add delay before RPC calls to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
         // CRITICAL: Since we're finding zero balances, let's try a direct token supply query first
         // to check if the token even exists on the blockchain
         try {
-          const tokenInfoResponse = await connection.getTokenSupply(new PublicKey(TOKEN_ADDRESS));
+          const tokenInfoResponse = await throttledRpcCall(connection, 'getTokenSupply', [new PublicKey(TOKEN_ADDRESS)]);
           console.log(`Token supply info:`, JSON.stringify(tokenInfoResponse.value, null, 2));
           // The decimals will be important for properly formatting the amount
         } catch (tokenInfoError) {
@@ -200,16 +259,13 @@ async function executeSwap() {
           }
         }
         
-        // Add delay before next RPC call
-        await new Promise(resolve => setTimeout(resolve, 200));
-        
         // Continue with the token account lookup
         let tokenAccounts;
         try {
-          tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+          tokenAccounts = await throttledRpcCall(connection, 'getParsedTokenAccountsByOwner', [
             keypair.publicKey,
             { mint: new PublicKey(TOKEN_ADDRESS) }
-          );
+          ]);
         } catch (tokenError) {
           console.error(`Error getting token accounts: ${tokenError.message}`);
           
@@ -234,13 +290,10 @@ async function executeSwap() {
           // Try to look for the token with getTokenAccountsByOwner instead
           console.log("Trying alternative method to find token...");
           try {
-            // Add delay before RPC call
-            await new Promise(resolve => setTimeout(resolve, 200));
-            
-            const allTokens = await connection.getTokenAccountsByOwner(
+            const allTokens = await throttledRpcCall(connection, 'getTokenAccountsByOwner', [
               keypair.publicKey,
               { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') }
-            );
+            ]);
             
             console.log(`Found ${allTokens.value.length} total token accounts`);
             
@@ -249,10 +302,7 @@ async function executeSwap() {
               console.log("Listing all token accounts:");
               for (let i = 0; i < Math.min(allTokens.value.length, 3); i++) { // Reduced to 3 to limit RPC calls
                 try {
-                  // Add delay between account checks
-                  if (i > 0) await new Promise(resolve => setTimeout(resolve, 200));
-                  
-                  const accountInfo = await connection.getParsedAccountInfo(allTokens.value[i].pubkey);
+                  const accountInfo = await throttledRpcCall(connection, 'getParsedAccountInfo', [allTokens.value[i].pubkey]);
                   const mint = accountInfo.value?.data?.parsed?.info?.mint || "Unknown";
                   const tokenAmount = accountInfo.value?.data?.parsed?.info?.tokenAmount?.amount || "0";
                   console.log(`Token ${i+1}: Mint=${mint}, Amount=${tokenAmount}`);
@@ -267,10 +317,7 @@ async function executeSwap() {
             // Loop through all tokens to find our target token
             for (const tokenAccount of allTokens.value) {
               try {
-                // Add delay between account checks
-                await new Promise(resolve => setTimeout(resolve, 200));
-                
-                const accountInfo = await connection.getParsedAccountInfo(tokenAccount.pubkey);
+                const accountInfo = await throttledRpcCall(connection, 'getParsedAccountInfo', [tokenAccount.pubkey]);
                 const parsedInfo = accountInfo.value?.data?.parsed?.info;
                 
                 if (parsedInfo && parsedInfo.mint === TOKEN_ADDRESS) {
