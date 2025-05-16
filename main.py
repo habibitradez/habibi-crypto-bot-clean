@@ -884,6 +884,30 @@ def is_recent_token(token_address):
         logging.error(f"Error checking token age: {str(e)}")
         return False
 
+def get_token_supply(token_address):
+    """Get the total supply of a token."""
+    try:
+        if not wallet:
+            return None
+        
+        # Make RPC call to get token supply information
+        response = wallet._rpc_call("getTokenSupply", [token_address])
+        
+        if 'result' not in response or 'value' not in response['result']:
+            logging.warning(f"Could not get token supply for {token_address}")
+            return None
+            
+        supply_info = response['result']['value']
+        return {
+            'amount': supply_info.get('amount'),
+            'decimals': supply_info.get('decimals'),
+            'uiAmount': supply_info.get('uiAmount'),
+            'uiAmountString': supply_info.get('uiAmountString')
+        }
+    except Exception as e:
+        logging.error(f"Error getting token supply: {str(e)}")
+        return None
+
 def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = "") -> bool:
     """Determine if a token is likely a meme token based on patterns."""
     token_address_lower = token_address.lower()
