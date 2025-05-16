@@ -884,6 +884,26 @@ def is_recent_token(token_address):
         logging.error(f"Error checking token age: {str(e)}")
         return False
 
+def check_token_socials(token_address):
+    """Check if a token has verified social profiles or website.
+    This is a basic implementation that always returns True since we're focusing on trading.
+    """
+    try:
+        # In a more comprehensive implementation, you might check for:
+        # - Token website
+        # - Twitter/X profile
+        # - Telegram group
+        # - Discord server
+        
+        # For now, return True to avoid blocking trades due to missing socials
+        # You can enhance this function later if needed
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error checking token socials: {str(e)}")
+        # In case of error, return True to not block trading
+        return True
+
 def get_token_supply(token_address):
     """Get the total supply of a token."""
     try:
