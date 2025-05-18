@@ -4303,22 +4303,48 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try using the JavaScript implementation
-        test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-        test_amount = 0.005  # Small test amount
-        
-        logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
-        success, signature = execute_via_javascript(test_token, test_amount)
-        
-        if success:
-            logging.info(f"JavaScript transaction successful with signature: {signature}!")
-            logging.info("Starting trading loop...")
+        logging.info("Initialization successful - trying to start trading loop directly...")
+        try:
+            # Skip JavaScript test and go straight to trading loop
+            logging.info("==================== TRADING LOOP STARTING ====================")
+            logging.info("Bot ready to scan for tokens and execute trades")
+            logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
+            logging.info("=============================================================")
+            
+            # Initialize trading variables explicitly
+            global daily_profit, daily_profit_start_time, last_performance_report_time
+            daily_profit = 0
+            daily_profit_start_time = time.time()
+            last_performance_report_time = time.time()
+            
+            # Start the first iteration of the trading loop manually to see where it fails
+            logging.info("Starting iteration 1 of trading loop...")
+            
+            # Check circuit breaker
+            if circuit_breaker_check():
+                logging.info("Circuit breaker is active - would pause operations")
+            else:
+                logging.info("Circuit breaker is inactive - proceeding with operations")
+                
+            # Try force selling stale tokens to see if that function works
+            logging.info("Attempting to force sell stale tokens...")
+            try:
+                force_sell_stale_tokens()
+                logging.info("Force sell stale tokens completed successfully")
+            except Exception as e:
+                logging.error(f"Error in force_sell_stale_tokens: {str(e)}")
+                logging.error(traceback.format_exc())
+            
+            # Now start the actual trading loop
+            logging.info("Starting full trading loop...")
             trading_loop()
-        else:
-            logging.error("JavaScript transaction test failed. Cannot start trading.")
-            logging.error("Please verify RPC endpoint and wallet configuration.")
+            
+        except Exception as e:
+            logging.error(f"Error starting trading loop: {str(e)}")
+            logging.error(traceback.format_exc())
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
+
 # Add this at the end of your file
 if __name__ == "__main__":
     main()
