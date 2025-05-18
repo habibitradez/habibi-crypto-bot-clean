@@ -98,12 +98,19 @@ MEME_TOKEN_PATTERNS = [
 ]
 
 # Global Variables Section
+circuit_breaker_active = False
+error_count_window = []
+last_circuit_reset_time = time.time()
+MAX_ERRORS_BEFORE_PAUSE = 10
+ERROR_WINDOW_SECONDS = 300  # 5 minutes
+CIRCUIT_BREAKER_COOLDOWN = 600  # 10 minutes
 # --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
 api_call_delay = 2.0  # Start with 1.5 seconds between calls
 
 # Track tokens we're monitoring
+daily_profit = 0
 monitored_tokens = {}
 token_buy_timestamps = {}
 price_cache = {}
@@ -553,7 +560,41 @@ class SolanaWallet:
 wallet = None
 
 def get_token_price(token_address: str) -> Optional[float]:
-    """Get token price in SOL using Jupiter API with fallback methods."""
+    """Get token price in SOL using Jupiter API with multiple fallback methods."""
+    # Implement multiple attempts with different strategies
+    for attempt in range(3):
+        try:
+            # ATTEMPT 1: Try the standard method first
+            if attempt == 0:
+                price = get_token_price_standard(token_address)
+                if price and price > 0:
+                    return price
+                    
+            # ATTEMPT 2: Try with a different amount and approach
+            elif attempt == 1:
+                price = get_token_price_alternative(token_address)
+                if price and price > 0:
+                    return price
+                    
+            # ATTEMPT 3: Try with a more aggressive method
+            elif attempt == 2:
+                price = get_token_price_aggressive(token_address)
+                if price and price > 0:
+                    return price
+                    
+            # Add delay between attempts
+            time.sleep(1)
+        except Exception as e:
+            logging.error(f"Error in price check attempt {attempt+1}: {str(e)}")
+            time.sleep(1)
+    
+    # If all methods fail, log error and try one last fallback
+    logging.error(f"All price retrieval methods failed for {token_address}")
+    return get_token_price_fallback(token_address)
+
+
+def get_token_price_standard(token_address: str) -> Optional[float]:
+    """Standard method for getting token price - your original implementation."""
     # Check cache first if it's recent (less than 30 seconds old)
     if token_address in price_cache and token_address in price_cache_time:
         if time.time() - price_cache_time[token_address] < 30:  # 30 second cache
@@ -717,30 +758,488 @@ def get_token_price(token_address: str) -> Optional[float]:
                         break
                 
                 return token_price
+                
+    except Exception as e:
+        logging.error(f"Error in standard price retrieval: {str(e)}")
+    
+    return None
+
+
+def get_token_price_alternative(token_address: str) -> Optional[float]:
+    """Alternative method to get token price from Jupiter API."""
+    try:
+        # Check basic cases
+        if token_address == SOL_TOKEN_ADDRESS:
+            return 1.0
+            
+        # Use a different amount and slippage
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": "100000000",  # 0.1 SOL in lamports
+            "slippageBps": "1000"   # Higher slippage
+        }
         
-        # Use fallbacks
+        logging.info(f"Getting alternative price for {token_address} using Jupiter API...")
+        
+        # Rate limiting
+        global last_api_call_time, api_call_delay
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            time.sleep(sleep_time)
+        
+        # Make API call with different User-Agent
+        last_api_call_time = time.time()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        response = requests.get(quote_url, params=params, headers=headers, timeout=15)
+        
+        # Handle rate limiting
+        if response.status_code == 429:
+            logging.warning(f"Rate limited by Jupiter API (429). Waiting and retrying...")
+            time.sleep(5)  # Longer delay
+            last_api_call_time = time.time()
+            response = requests.get(quote_url, params=params, headers=headers, timeout=15)
+        
+        # Process successful response
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                out_amount = int(data["outAmount"])
+                token_price = 0.1 / (out_amount / 1000000000)  # Adjusted for 0.1 SOL
+                
+                logging.info(f"Got alternative price for {token_address}: {token_price} SOL")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                return token_price
+        
+        # Try Jupiter price endpoint as another alternative
+        try:
+            price_url = f"{CONFIG['JUPITER_API_URL']}/v6/price"
+            price_params = {
+                "ids": token_address,
+                "vsToken": SOL_TOKEN_ADDRESS
+            }
+            
+            response = requests.get(price_url, params=price_params, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and token_address in data:
+                    price = float(data[token_address].get("price", 0))
+                    if price > 0:
+                        # Update cache
+                        price_cache[token_address] = price
+                        price_cache_time[token_address] = time.time()
+                        return price
+        except Exception as e:
+            logging.error(f"Error in price endpoint: {str(e)}")
+                
+    except Exception as e:
+        logging.error(f"Error in alternative price retrieval: {str(e)}")
+    
+    return None
+
+
+def get_token_price_aggressive(token_address: str) -> Optional[float]:
+    """More aggressive method to get token price."""
+    try:
+        # Check basic cases
+        if token_address == SOL_TOKEN_ADDRESS:
+            return 1.0
+            
+        # Try to get token from Raydium API
+        try:
+            raydium_url = "https://api.raydium.io/v2/main/pairs"
+            response = requests.get(raydium_url, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                for pair in data:
+                    if pair.get("base_mint") == token_address or pair.get("quote_mint") == token_address:
+                        if pair.get("base_mint") == token_address and pair.get("quote_mint") == SOL_TOKEN_ADDRESS:
+                            price = float(pair.get("price", 0))
+                            if price > 0:
+                                price_cache[token_address] = price
+                                price_cache_time[token_address] = time.time()
+                                return price
+                        elif pair.get("quote_mint") == token_address and pair.get("base_mint") == SOL_TOKEN_ADDRESS:
+                            price = 1.0 / float(pair.get("price", 0))
+                            if price > 0:
+                                price_cache[token_address] = price
+                                price_cache_time[token_address] = time.time()
+                                return price
+        except Exception as e:
+            logging.error(f"Error with Raydium API: {str(e)}")
+            
+        # Try with minimum amount (useful for very low liquidity tokens)
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": "10000000",  # 0.01 SOL
+            "slippageBps": "2000"  # Very high slippage (20%)
+        }
+        
+        logging.info(f"Getting aggressive price for {token_address} using Jupiter API...")
+        
+        # Rate limiting
+        global last_api_call_time, api_call_delay
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            time.sleep(sleep_time)
+        
+        # Make API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=params, timeout=15)
+        
+        # Process successful response
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                out_amount = int(data["outAmount"])
+                token_price = 0.01 / (out_amount / 1000000000)  # Adjusted for 0.01 SOL
+                
+                logging.info(f"Got aggressive price for {token_address}: {token_price} SOL")
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                return token_price
+                
+    except Exception as e:
+        logging.error(f"Error in aggressive price retrieval: {str(e)}")
+    
+    return None
+
+
+def get_token_price_fallback(token_address: str) -> Optional[float]:
+    """Last resort fallback for token price."""
+    try:
+        # Try to use cached value even if older
         if token_address in price_cache:
-            logging.warning(f"Using cached price for {token_address} due to API issue: {price_cache[token_address]} SOL")
+            logging.warning(f"Using cached price for {token_address} as fallback: {price_cache[token_address]} SOL")
             return price_cache[token_address]
             
+        # Check if we have a predefined price
         for token in KNOWN_TOKENS:
             if token["address"] == token_address and "price_estimate" in token:
                 logging.warning(f"Using predefined price estimate for {token_address}: {token['price_estimate']} SOL")
                 return token["price_estimate"]
                 
+        # In simulation mode, generate a random price
         if CONFIG['SIMULATION_MODE']:
             random_price = random.uniform(0.00000001, 0.001)
             price_cache[token_address] = random_price
             price_cache_time[token_address] = time.time()
             logging.warning(f"Using randomly generated price for {token_address} (simulation only): {random_price} SOL")
             return random_price
+                
+    except Exception as e:
+        logging.error(f"Error in fallback price retrieval: {str(e)}")
+    
+    return None
+
+def get_raydium_price(token_address: str) -> Optional[float]:
+    """Get token price from Raydium pools."""
+    try:
+        # Raydium API has a list of all their pools
+        raydium_url = "https://api.raydium.io/v2/main/pairs"
+        
+        # Add header to prevent rate limiting
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        logging.info(f"Getting Raydium price for {token_address}...")
+        
+        # Make API call with retries
+        for retry in range(3):
+            try:
+                response = requests.get(raydium_url, headers=headers, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Look for direct token/SOL pairs
+                    for pair in data:
+                        # Check for token/SOL pairs in both directions
+                        if (pair.get("base_mint") == token_address and 
+                            pair.get("quote_mint") == SOL_TOKEN_ADDRESS):
+                            
+                            # Base is our token, quote is SOL
+                            price = 1.0 / float(pair.get("price", 0))
+                            if price > 0:
+                                logging.info(f"Found Raydium base/quote pair for {token_address}, price: {price} SOL")
+                                return price
+                                
+                        elif (pair.get("quote_mint") == token_address and 
+                               pair.get("base_mint") == SOL_TOKEN_ADDRESS):
+                            
+                            # Base is SOL, quote is our token
+                            price = float(pair.get("price", 0))
+                            if price > 0:
+                                logging.info(f"Found Raydium quote/base pair for {token_address}, price: {price} SOL")
+                                return price
+                    
+                    # If no direct SOL pair, try to find a USDC path and convert
+                    usdc_mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC mint address
+                    
+                    # First find token/USDC price if exists
+                    token_usdc_price = None
+                    for pair in data:
+                        if (pair.get("base_mint") == token_address and 
+                            pair.get("quote_mint") == usdc_mint):
+                            
+                            # Calculate token price in USDC
+                            token_usdc_price = 1.0 / float(pair.get("price", 0))
+                            break
+                            
+                        elif (pair.get("quote_mint") == token_address and 
+                               pair.get("base_mint") == usdc_mint):
+                            
+                            # Calculate token price in USDC
+                            token_usdc_price = float(pair.get("price", 0))
+                            break
+                    
+                    # Now find SOL/USDC price if we found a token/USDC price
+                    if token_usdc_price:
+                        sol_usdc_price = None
+                        for pair in data:
+                            if (pair.get("base_mint") == SOL_TOKEN_ADDRESS and 
+                                pair.get("quote_mint") == usdc_mint):
+                                
+                                # Calculate SOL price in USDC
+                                sol_usdc_price = 1.0 / float(pair.get("price", 0))
+                                break
+                                
+                            elif (pair.get("quote_mint") == SOL_TOKEN_ADDRESS and 
+                                   pair.get("base_mint") == usdc_mint):
+                                
+                                # Calculate SOL price in USDC
+                                sol_usdc_price = float(pair.get("price", 0))
+                                break
+                        
+                        # If we found both prices, calculate token price in SOL
+                        if sol_usdc_price and sol_usdc_price > 0:
+                            token_sol_price = token_usdc_price / sol_usdc_price
+                            logging.info(f"Calculated Raydium price via USDC for {token_address}: {token_sol_price} SOL")
+                            return token_sol_price
+                    
+                    logging.warning(f"No Raydium pairs found for {token_address}")
+                    break
+                    
+                elif response.status_code == 429:
+                    # Rate limited, wait longer
+                    wait_time = (retry + 1) * 2
+                    logging.warning(f"Rate limited when getting Raydium price. Waiting {wait_time}s.")
+                    time.sleep(wait_time)
+                else:
+                    logging.warning(f"Failed to get Raydium price: {response.status_code}")
+                    break
+            except Exception as e:
+                logging.error(f"Error getting Raydium price (attempt {retry+1}): {str(e)}")
+                time.sleep(1)
+                
+        return None
+    except Exception as e:
+        logging.error(f"Error in get_raydium_price: {str(e)}")
+        return None
+
+
+def calculate_price_from_liquidity(token_address: str) -> Optional[float]:
+    """Calculate token price from liquidity pools using RPC."""
+    try:
+        if not wallet:
+            return None
+            
+        # Step 1: Get token supply info for decimals
+        token_supply = get_token_supply(token_address)
+        if not token_supply:
+            logging.warning(f"Couldn't get token supply for {token_address}")
+            return None
+            
+        token_decimals = int(token_supply.get('decimals', 9))
+        
+        # Step 2: Try to find liquidity pools for this token
+        # We can do this by looking for token accounts with large balances
+        try:
+            # Find largest token accounts
+            largest_accounts_response = wallet._rpc_call("getTokenLargestAccounts", [token_address])
+            
+            if ('result' not in largest_accounts_response or 
+                'value' not in largest_accounts_response['result']):
+                logging.warning(f"Couldn't get largest accounts for {token_address}")
+                return None
+                
+            largest_accounts = largest_accounts_response['result']['value']
+            
+            # Look for liquidity pools among these largest accounts
+            for account in largest_accounts[:3]:  # Check top 3 accounts
+                account_address = account['address']
+                
+                # Get account info to check if it's a pool
+                account_info = wallet._rpc_call("getAccountInfo", [
+                    account_address, 
+                    {"encoding": "jsonParsed"}
+                ])
+                
+                if ('result' not in account_info or 
+                    'value' not in account_info['result']):
+                    continue
+                
+                # For Raydium pools, we'd analyze the account data
+                # This is a simplified approach - full implementation would be more complex
+                
+                # Instead, we'll try to determine if this is likely a pool account 
+                # by checking owner program
+                owner = account_info['result']['value'].get('owner')
+                
+                # Raydium pool programs
+                raydium_programs = [
+                    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM program
+                    "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1"   # Raydium pool program
+                ]
+                
+                if owner in raydium_programs:
+                    # This is likely a Raydium pool
+                    logging.info(f"Found potential Raydium pool for {token_address}")
+                    
+                    # For a real implementation, we would decode the account data
+                    # and extract the token reserves to calculate price
+                    
+                    # Since that's quite complex, let's use a simplification:
+                    # Check if we can get the price from Raydium API instead
+                    price = get_raydium_price(token_address)
+                    if price:
+                        return price
+                    
+                    # In an actual implementation, we would:
+                    # 1. Decode the pool data structure
+                    # 2. Extract token A and B reserves
+                    # 3. Calculate price based on the ratio
+            
+            logging.warning(f"Couldn't find liquidity pools for {token_address} through account analysis")
+            return None
+            
+        except Exception as e:
+            logging.error(f"Error analyzing liquidity pools: {str(e)}")
+            return None
             
     except Exception as e:
-        logging.error(f"Error getting price for {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-    
-    logging.error(f"All price retrieval methods failed for {token_address}")
-    return None
+        logging.error(f"Error in calculate_price_from_liquidity: {str(e)}")
+        return None
+
+
+def get_jupiter_price_alternative(token_address: str) -> Optional[float]:
+    """Alternative method to get token price from Jupiter API."""
+    try:
+        # Use a different Jupiter endpoint or parameters
+        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/price"
+        params = {
+            "ids": token_address,
+            "vsToken": SOL_TOKEN_ADDRESS
+        }
+        
+        logging.info(f"Getting Jupiter price (alternative method) for {token_address}...")
+        
+        # Add header to simulate browser request
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+            "Accept": "application/json"
+        }
+        
+        # Rate limiting
+        global last_api_call_time, api_call_delay
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
+            time.sleep(sleep_time)
+        
+        # Make the API request with retries
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=params, headers=headers, timeout=10)
+        
+        # Handle rate limiting
+        if response.status_code == 429:
+            logging.warning(f"Rate limited on alternative Jupiter endpoint (429). Waiting and retrying...")
+            time.sleep(3)
+            last_api_call_time = time.time()
+            response = requests.get(quote_url, params=params, headers=headers, timeout=10)
+            
+            if response.status_code == 429:
+                api_call_delay += 1.0
+                logging.warning(f"Still rate limited. Increased delay to {api_call_delay}s")
+                return None
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Process different response format
+            if data and token_address in data:
+                price_data = data[token_address]
+                if "price" in price_data:
+                    price = float(price_data["price"])
+                    
+                    # Update cache
+                    price_cache[token_address] = price
+                    price_cache_time[token_address] = time.time()
+                    
+                    logging.info(f"Got Jupiter alternative price for {token_address}: {price} SOL")
+                    return price
+            
+            logging.warning(f"Invalid response format from alternative Jupiter endpoint")
+        else:
+            logging.warning(f"Failed to get Jupiter alternative price: {response.status_code}")
+            
+        # Try a different amount if the first attempt failed
+        alternate_quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+        alternate_params = {
+            "inputMint": SOL_TOKEN_ADDRESS,
+            "outputMint": token_address,
+            "amount": "50000000",  # 0.05 SOL in lamports
+            "slippageBps": "1000"  # 10% slippage
+        }
+        
+        # Rate limiting
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            sleep_time = api_call_delay - time_since_last_call
+            if ULTRA_DIAGNOSTICS:
+                logging.info(f"Rate limiting: Sleeping for {sleep_time:.2f}s before Jupiter API call")
+            time.sleep(sleep_time)
+        
+        # Make alternate API call
+        last_api_call_time = time.time()
+        response = requests.get(alternate_quote_url, params=alternate_params, headers=headers, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "outAmount" in data:
+                out_amount = int(data["outAmount"])
+                token_price = 0.05 / (out_amount / 1000000000)  # Adjusted for 0.05 SOL
+                
+                # Update cache
+                price_cache[token_address] = token_price
+                price_cache_time[token_address] = time.time()
+                
+                logging.info(f"Got Jupiter alternate quote price for {token_address}: {token_price} SOL")
+                return token_price
+                
+        return None
+    except Exception as e:
+        logging.error(f"Error in get_jupiter_price_alternative: {str(e)}")
+        return None
 
 def initialize():
     """Initialize the bot and verify connectivity."""
@@ -936,6 +1435,34 @@ def get_token_supply(token_address):
     except Exception as e:
         logging.error(f"Error getting token supply: {str(e)}")
         return None
+
+def circuit_breaker_check(error=False):
+    """Check if we should pause trading due to too many errors."""
+    global circuit_breaker_active, error_count_window, last_circuit_reset_time
+    
+    current_time = time.time()
+    
+    # Add error to window if one occurred
+    if error:
+        error_count_window.append(current_time)
+    
+    # Remove old errors from window
+    error_count_window = [t for t in error_count_window if current_time - t < ERROR_WINDOW_SECONDS]
+    
+    # Check if we need to activate circuit breaker
+    if len(error_count_window) >= MAX_ERRORS_BEFORE_PAUSE and not circuit_breaker_active:
+        circuit_breaker_active = True
+        last_circuit_reset_time = current_time
+        logging.warning(f"🛑 CIRCUIT BREAKER ACTIVATED: Too many errors ({len(error_count_window)}) in last {ERROR_WINDOW_SECONDS/60} minutes")
+        return True
+        
+    # Check if we should reset circuit breaker
+    if circuit_breaker_active and current_time - last_circuit_reset_time > CIRCUIT_BREAKER_COOLDOWN:
+        circuit_breaker_active = False
+        error_count_window = []
+        logging.info("✅ CIRCUIT BREAKER RESET: Resuming normal operations")
+        
+    return circuit_breaker_active
 
 def is_meme_token(token_address: str, token_name: str = "", token_symbol: str = "") -> bool:
     """Determine if a token is likely a meme token based on patterns."""
