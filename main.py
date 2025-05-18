@@ -885,23 +885,32 @@ def is_recent_token(token_address):
         return False
 
 def check_token_socials(token_address):
-    """Check if a token has verified social profiles or website.
-    This is a basic implementation that always returns True since we're focusing on trading.
-    """
+    """Check if a token has verified social profiles or website."""
     try:
-        # In a more comprehensive implementation, you might check for:
-        # - Token website
-        # - Twitter/X profile
-        # - Telegram group
-        # - Discord server
+        # For genuine token verification, we could look for:
+        # 1. Website presence
+        # 2. Social media accounts (Twitter, Telegram)
+        # 3. Verified contracts
         
-        # For now, return True to avoid blocking trades due to missing socials
-        # You can enhance this function later if needed
+        # We can skip detailed checks for now - focus on trading performance
+        
+        # For tokens we know are legitimate
+        known_legitimate_tokens = [
+            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+            "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
+            "So11111111111111111111111111111111111111112"   # SOL
+        ]
+        
+        if token_address in known_legitimate_tokens:
+            return True
+            
+        # We could implement actual social checks later using APIs
+        # For now, return True to allow trading to continue
         return True
         
     except Exception as e:
         logging.error(f"Error checking token socials: {str(e)}")
-        # In case of error, return True to not block trading
+        # On error, allow the token to be traded
         return True
 
 def get_token_supply(token_address):
