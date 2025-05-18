@@ -3123,7 +3123,10 @@ def trading_loop():
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
     global circuit_breaker_active
     
-    logging.info("Starting main trading loop with improved consistency and circuit breaker")
+    logging.info("==================== TRADING LOOP STARTING ====================")
+    logging.info("Bot ready to scan for tokens and execute trades")
+    logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
+    logging.info("=============================================================")
     
     # Initialize tracking variables
     daily_profit = 0
