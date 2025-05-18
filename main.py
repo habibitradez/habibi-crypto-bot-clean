@@ -3118,12 +3118,12 @@ def monitor_token_price(token_address):
             monitor_token_price.failure_counts[token_address] = 0  # Reset failure count
 
 def trading_loop():
-    """Main trading loop with improved consistency."""
+    """Main trading loop with improved consistency and circuit breaker."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
     global circuit_breaker_active
     
-    logging.info("Starting main trading loop with improved consistency")
+    logging.info("Starting main trading loop with improved consistency and circuit breaker")
     
     # Initialize tracking variables
     daily_profit = 0
@@ -3191,11 +3191,17 @@ def trading_loop():
                     logging.error(f"Error updating token status: {str(e)}")
                     circuit_breaker_check(error=True)  # Register error with circuit breaker
                 
-                # Use our improved monitoring function
-                monitor_token_price(token_address)
+                try:
+                    # Use our improved monitoring function with aggressive selling
+                    monitor_token_price(token_address)
+                except Exception as e:
+                    logging.error(f"Error in monitor_token_price for {token_address}: {str(e)}")
+                    logging.error(traceback.format_exc())
+                    circuit_breaker_check(error=True)  # Register error with circuit breaker
+                
                 time.sleep(0.5)
             
-            # Only look for new tokens if circuit breaker is not active
+            # Only look for new tokens if circuit breaker is not active and we have capacity
             if not circuit_breaker_active and len(monitored_tokens) < min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)):
                 try:
                     # Scan for new tokens
@@ -3206,7 +3212,7 @@ def trading_loop():
                     tokens_to_try = potential_tokens[:2]
                     
                     for token_address in tokens_to_try:
-                        # Skip if we're at max concurrent tokens
+                        # Skip if we're at max concurrent tokens (strict limit of 2)
                         if len(monitored_tokens) >= min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)):
                             break
                             
@@ -3220,37 +3226,41 @@ def trading_loop():
                             if minutes_since_last_buy < CONFIG.get('BUY_COOLDOWN_MINUTES', 60):
                                 continue
                         
-                        # Verify token is suitable for trading
-                        if verify_token(token_address):
-                            # Check liquidity before buying
-                            if check_token_liquidity(token_address):
-                                logging.info(f"Found promising tradable token: {token_address}")
-                                
-                                # Use optimized transaction function for buying
-                                success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.1))
-                                
-                                buy_attempts += 1
-                                if success:
-                                    logging.info(f"Successfully bought token: {token_address}")
-                                    buy_successes += 1
+                        try:
+                            # Verify token is suitable for trading
+                            if verify_token(token_address):
+                                # Check liquidity before buying
+                                if check_token_liquidity(token_address):
+                                    logging.info(f"Found promising tradable token: {token_address}")
                                     
-                                    # Get actual token symbol for better logging
-                                    token_symbol = get_token_symbol(token_address) or token_address[:8]
-                                    logging.info(f"🎯 Bought {token_symbol} - Will target 2x profit or max 2min hold time")
+                                    # Use optimized transaction function for buying
+                                    success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.1))
                                     
-                                    # Add a longer delay after successful buy
-                                    time.sleep(5)
-                                else:
-                                    logging.warning(f"Failed to buy token: {token_address}")
-                                    # Add a delay after failed buy
-                                    time.sleep(2)
+                                    buy_attempts += 1
+                                    if success:
+                                        logging.info(f"Successfully bought token: {token_address}")
+                                        buy_successes += 1
+                                        
+                                        # Get actual token symbol for better logging
+                                        token_symbol = get_token_symbol(token_address) or token_address[:8]
+                                        logging.info(f"🎯 Bought {token_symbol} - Will target 2x profit or max 2min hold time")
+                                        
+                                        # Add a longer delay after successful buy
+                                        time.sleep(5)
+                                    else:
+                                        logging.warning(f"Failed to buy token: {token_address}")
+                                        # Add a delay after failed buy
+                                        time.sleep(2)
+                        except Exception as e:
+                            logging.error(f"Error verifying/buying token {token_address}: {str(e)}")
+                            circuit_breaker_check(error=True)  # Register error with circuit breaker
                 except Exception as e:
                     logging.error(f"Error in token scanning: {str(e)}")
                     logging.error(traceback.format_exc())
                     circuit_breaker_check(error=True)  # Register error with circuit breaker
             
             # Sleep before next iteration
-            sleep_time = CONFIG.get('CHECK_INTERVAL_MS', 2000) / 1000
+            sleep_time = CONFIG.get('CHECK_INTERVAL_MS', 2000) / 1000  # Convert ms to seconds
             logging.info(f"Sleeping for {sleep_time} seconds before next iteration")
             time.sleep(sleep_time)
             
