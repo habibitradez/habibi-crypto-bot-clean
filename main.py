@@ -1,3 +1,4 @@
+import gc
 import os
 import time
 import json
@@ -3117,39 +3118,111 @@ def monitor_token_price(token_address):
             execute_optimized_sell(token_address)
             monitor_token_price.failure_counts[token_address] = 0  # Reset failure count
 
+def cleanup_memory():
+    """Force garbage collection to free up memory."""
+    logging.info("Cleaning up memory...")
+    # Force garbage collection
+    gc.collect()
+    
+    # Clear some caches if they're getting too large
+    global price_cache, price_cache_time
+    if len(price_cache) > 50:  # Lower threshold to 50
+        logging.info(f"Clearing price cache (size: {len(price_cache)})")
+        old_keys = []
+        current_time = time.time()
+        # Keep only recent and essential token prices
+        for key, timestamp in price_cache_time.items():
+            if current_time - timestamp > 1800 and key not in [t["address"] for t in KNOWN_TOKENS]:  # 30 minutes instead of 1 hour
+                old_keys.append(key)
+        
+        # Remove old keys
+        for key in old_keys:
+            if key in price_cache:
+                del price_cache[key]
+            if key in price_cache_time:
+                del price_cache_time[key]
+        
+        logging.info(f"Price cache reduced to {len(price_cache)} items")
+    
+    # Clear other large dictionaries if needed
+    global monitored_tokens
+    if len(monitored_tokens) > 5:  # Should be less than your MAX_CONCURRENT_TOKENS
+        logging.warning(f"Monitored tokens ({len(monitored_tokens)}) exceeds expected count, cleaning up...")
+        monitored_tokens = {k: v for k, v in list(monitored_tokens.items())[:5]}
+    
+    # Log memory status (Linux only)
+    try:
+        import resource
+        usage = resource.getrusage(resource.RUSAGE_SELF)
+        logging.info(f"Memory usage: {usage.ru_maxrss / 1024} MB")
+    except (ImportError, AttributeError):
+        pass
+
 def trading_loop():
-    """Main trading loop with improved consistency and circuit breaker."""
+    """Memory-optimized trading loop with circuit breaker."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
     global circuit_breaker_active
     
     logging.info("==================== TRADING LOOP STARTING ====================")
-    logging.info("Bot ready to scan for tokens and execute trades")
+    logging.info("Bot ready to scan for tokens and execute trades with memory optimization")
     logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
     logging.info("=============================================================")
     
-    # Initialize tracking variables
+    # Initialize tracking variables (use smaller data structures)
     daily_profit = 0
     daily_profit_start_time = time.time()
     last_performance_report_time = time.time()
+    last_memory_cleanup_time = time.time()
+    memory_cleanup_interval = 300  # Clean up every 5 minutes
+    iteration_count = 0
+    
+    # Set a maximum runtime to automatically restart (prevent memory leaks)
+    max_runtime = 6 * 3600  # 6 hours
+    start_time = time.time()
     
     while True:
+        # Check if we've been running too long (prevent memory bloat)
+        if time.time() - start_time > max_runtime:
+            logging.info(f"Maximum runtime of {max_runtime/3600} hours reached, exiting for clean restart")
+            # Exit with success code so the service restarts clean
+            return
+            
         iteration_count += 1
         
         try:
+            # Perform memory cleanup periodically
+            if time.time() - last_memory_cleanup_time > memory_cleanup_interval:
+                cleanup_memory()
+                last_memory_cleanup_time = time.time()
+            
             # Check circuit breaker before starting operations
             if circuit_breaker_check():
                 logging.warning("Circuit breaker active - pausing operations")
                 time.sleep(60)  # Check every minute if we can resume
                 continue
                 
-            # Force sell stale tokens at the beginning of each iteration
-            force_sell_stale_tokens()
+            # Force sell stale tokens but limit frequency (avoid too many RPC calls)
+            if iteration_count % 5 == 0:  # Only check every 5 iterations
+                # Limit the number of tokens to check per iteration
+                token_list = list(monitored_tokens.keys())[:3]  # Check max 3 tokens per iteration
+                for token_address in token_list:
+                    try:
+                        if token_address in monitored_tokens:  # Double-check it's still there
+                            monitor_token_price(token_address)
+                    except Exception as e:
+                        logging.error(f"Error monitoring token {token_address}: {str(e)}")
+                        # Don't log full traceback to save memory
+                        circuit_breaker_check(error=True)
+                    # Add delay between token checks
+                    time.sleep(0.5)
             
             # Check if it's time for a performance report (every hour)
             if time.time() - last_performance_report_time > 3600:  # 1 hour
                 log_daily_performance()
                 last_performance_report_time = time.time()
+                # Force cleanup after reporting
+                cleanup_memory()
             
             # Check if it's a new day for profit tracking
             if time.time() - daily_profit_start_time > 86400:  # 24 hours
@@ -3157,127 +3230,104 @@ def trading_loop():
                 daily_profit = 0
                 daily_profit_start_time = time.time()
             
-            # Print status every 5 minutes
+            # Print status every 5 minutes (but with less detail to save logging space)
             if time.time() - last_status_time > 300:  # 5 minutes
                 logging.info(f"===== STATUS UPDATE =====")
-                logging.info(f"Tokens scanned: {tokens_scanned}")
                 logging.info(f"Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"Buy attempts: {buy_attempts}, successes: {buy_successes}")
-                logging.info(f"Sell attempts: {sell_attempts}, successes: {sell_successes}")
-                logging.info(f"Daily profit: ${daily_profit:.2f}")
-                logging.info(f"Errors encountered: {errors_encountered}")
+                logging.info(f"Buy/Sell: {buy_successes}/{sell_successes}, Profit: ${daily_profit:.2f}")
                 logging.info(f"Circuit breaker: {'ACTIVE' if circuit_breaker_active else 'INACTIVE'}")
                 
-                # Also log wallet balance in production mode
-                if not CONFIG['SIMULATION_MODE'] and wallet:
+                # Log wallet balance less frequently
+                if iteration_count % 6 == 0 and not CONFIG['SIMULATION_MODE'] and wallet:
                     try:
                         balance = wallet.get_balance()
                         logging.info(f"Current wallet balance: {balance} SOL")
                     except Exception as e:
                         logging.error(f"Error getting wallet balance: {str(e)}")
-                        circuit_breaker_check(error=True)  # Register error with circuit breaker
+                        # No need to log traceback for common errors
                 
                 last_status_time = time.time()
             
-            # Monitor tokens we're already trading
-            for token_address in list(monitored_tokens.keys()):
-                try:
-                    # Print more frequent updates for tokens we're monitoring
-                    current_price = get_token_price(token_address)
-                    if current_price and token_address in monitored_tokens:
-                        initial_price = monitored_tokens[token_address]['initial_price']
-                        price_change_pct = ((current_price / initial_price) - 1) * 100
-                        minutes_held = (time.time() - monitored_tokens[token_address]['buy_time']) / 60
-                        token_symbol = get_token_symbol(token_address) or token_address[:8]
-                        logging.info(f"Monitoring {token_symbol}: {price_change_pct:.2f}% change, Held: {minutes_held:.1f} min")
-                except Exception as e:
-                    logging.error(f"Error updating token status: {str(e)}")
-                    circuit_breaker_check(error=True)  # Register error with circuit breaker
-                
-                try:
-                    # Use our improved monitoring function with aggressive selling
-                    monitor_token_price(token_address)
-                except Exception as e:
-                    logging.error(f"Error in monitor_token_price for {token_address}: {str(e)}")
-                    logging.error(traceback.format_exc())
-                    circuit_breaker_check(error=True)  # Register error with circuit breaker
-                
-                time.sleep(0.5)
-            
             # Only look for new tokens if circuit breaker is not active and we have capacity
-            if not circuit_breaker_active and len(monitored_tokens) < min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)):
+            # and we don't already have tokens to monitor
+            if (not circuit_breaker_active and 
+                    len(monitored_tokens) < min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)) and
+                    iteration_count % 3 == 0):  # Only scan every 3 iterations
+                
                 try:
-                    # Scan for new tokens
+                    # Scan for new tokens - but limit the scope
                     potential_tokens = scan_for_new_tokens()
                     
-                    # Process up to 2 tokens per iteration
-                    random.shuffle(potential_tokens)
-                    tokens_to_try = potential_tokens[:2]
+                    # Limit the number to process
+                    max_tokens_to_try = min(2, len(potential_tokens))
+                    tokens_to_try = random.sample(potential_tokens, max_tokens_to_try) if max_tokens_to_try > 0 else []
                     
-                    for token_address in tokens_to_try:
-                        # Skip if we're at max concurrent tokens (strict limit of 2)
-                        if len(monitored_tokens) >= min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)):
-                            break
-                            
-                        # Skip tokens we're already monitoring
-                        if token_address in monitored_tokens:
-                            continue
-                        
-                        # Skip if we've bought this token recently
-                        if token_address in token_buy_timestamps:
-                            minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                            if minutes_since_last_buy < CONFIG.get('BUY_COOLDOWN_MINUTES', 60):
+                    # Only process if we have capacity for new tokens
+                    if len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 2):
+                        for token_address in tokens_to_try:
+                            # Skip if we're at max concurrent tokens
+                            if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 2):
+                                break
+                                
+                            # Skip tokens we're already monitoring
+                            if token_address in monitored_tokens:
                                 continue
-                        
-                        try:
-                            # Verify token is suitable for trading
-                            if verify_token(token_address):
-                                # Check liquidity before buying
-                                if check_token_liquidity(token_address):
-                                    logging.info(f"Found promising tradable token: {token_address}")
+                            
+                            # Skip if we've bought this token recently
+                            if token_address in token_buy_timestamps:
+                                minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                                if minutes_since_last_buy < CONFIG.get('BUY_COOLDOWN_MINUTES', 60):
+                                    continue
+                            
+                            try:
+                                # Verify token is suitable with minimal checks
+                                liquidity_ok = check_token_liquidity(token_address)
+                                
+                                if liquidity_ok:
+                                    logging.info(f"Found tradable token: {token_address}")
                                     
-                                    # Use optimized transaction function for buying
+                                    # Use JavaScript for buying
                                     success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.1))
                                     
                                     buy_attempts += 1
                                     if success:
                                         logging.info(f"Successfully bought token: {token_address}")
                                         buy_successes += 1
-                                        
-                                        # Get actual token symbol for better logging
-                                        token_symbol = get_token_symbol(token_address) or token_address[:8]
-                                        logging.info(f"🎯 Bought {token_symbol} - Will target 2x profit or max 2min hold time")
-                                        
-                                        # Add a longer delay after successful buy
-                                        time.sleep(5)
+                                        # Break after one successful buy per iteration
+                                        break
                                     else:
                                         logging.warning(f"Failed to buy token: {token_address}")
-                                        # Add a delay after failed buy
-                                        time.sleep(2)
-                        except Exception as e:
-                            logging.error(f"Error verifying/buying token {token_address}: {str(e)}")
-                            circuit_breaker_check(error=True)  # Register error with circuit breaker
+                            except Exception as e:
+                                logging.error(f"Error verifying/buying token {token_address}: {str(e)}")
+                                # Skip full traceback to save memory
+                    
+                    # Clear local variables to free memory
+                    potential_tokens = None
+                    tokens_to_try = None
+                    gc.collect()  # Explicit garbage collection
+                    
                 except Exception as e:
                     logging.error(f"Error in token scanning: {str(e)}")
-                    logging.error(traceback.format_exc())
-                    circuit_breaker_check(error=True)  # Register error with circuit breaker
+                    # Skip full traceback to save memory
+                    circuit_breaker_check(error=True)
             
             # Sleep before next iteration
             sleep_time = CONFIG.get('CHECK_INTERVAL_MS', 2000) / 1000  # Convert ms to seconds
-            logging.info(f"Sleeping for {sleep_time} seconds before next iteration")
             time.sleep(sleep_time)
             
         except Exception as e:
             errors_encountered += 1
             logging.error(f"Error in main loop: {str(e)}")
-            logging.error(traceback.format_exc())
+            # Skip full traceback to save memory
             
             # Register error with circuit breaker
             circuit_breaker_check(error=True)
             
             # Longer sleep on error
-            logging.info("Error encountered, sleeping for 10 seconds before continuing")
             time.sleep(10)
+            
+            # Force memory cleanup on error
+            cleanup_memory()
 
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
