@@ -4295,7 +4295,7 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point."""
+    """Main entry point with proper JavaScript testing."""
     logging.info("============ BOT STARTING ============")
     
     # Check Solders version at startup
@@ -4303,44 +4303,65 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        logging.info("Initialization successful - trying to start trading loop directly...")
+        # Try using the JavaScript implementation with better error handling
+        test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+        test_amount = 0.001  # Very small test amount
+        
+        logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
         try:
-            # Skip JavaScript test and go straight to trading loop
-            logging.info("==================== TRADING LOOP STARTING ====================")
-            logging.info("Bot ready to scan for tokens and execute trades")
-            logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
-            logging.info("=============================================================")
+            # Verify Node.js is installed
+            logging.info("Checking Node.js installation...")
+            node_check = subprocess.run(
+                ['node', '--version'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            logging.info(f"Node.js version: {node_check.stdout.strip()}")
             
-            # Initialize trading variables explicitly
-            global daily_profit, daily_profit_start_time, last_performance_report_time
-            daily_profit = 0
-            daily_profit_start_time = time.time()
-            last_performance_report_time = time.time()
-            
-            # Start the first iteration of the trading loop manually to see where it fails
-            logging.info("Starting iteration 1 of trading loop...")
-            
-            # Check circuit breaker
-            if circuit_breaker_check():
-                logging.info("Circuit breaker is active - would pause operations")
+            # Check if swap.js exists
+            import os
+            if os.path.exists('swap.js'):
+                logging.info("swap.js file found")
+                file_size = os.path.getsize('swap.js')
+                logging.info(f"swap.js file size: {file_size} bytes")
             else:
-                logging.info("Circuit breaker is inactive - proceeding with operations")
-                
-            # Try force selling stale tokens to see if that function works
-            logging.info("Attempting to force sell stale tokens...")
-            try:
-                force_sell_stale_tokens()
-                logging.info("Force sell stale tokens completed successfully")
-            except Exception as e:
-                logging.error(f"Error in force_sell_stale_tokens: {str(e)}")
-                logging.error(traceback.format_exc())
+                logging.error("swap.js file not found in current directory")
+                logging.info(f"Current directory: {os.getcwd()}")
+                logging.info(f"Directory contents: {os.listdir('.')}")
+                return
             
-            # Now start the actual trading loop
-            logging.info("Starting full trading loop...")
-            trading_loop()
+            # Try a JavaScript call with minimal parameters
+            logging.info("Executing test JavaScript call...")
+            command = ['node', 'swap.js', test_token, str(test_amount), 'false']
             
+            logging.info(f"Command: {' '.join(command)}")
+            test_result = subprocess.run(
+                command,
+                env=os.environ,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Log the output in detail
+            logging.info(f"JavaScript test STDOUT: {test_result.stdout}")
+            if test_result.stderr:
+                logging.error(f"JavaScript test STDERR: {test_result.stderr}")
+            
+            logging.info(f"JavaScript test return code: {test_result.returncode}")
+            
+            success = test_result.returncode == 0
+            
+            if success:
+                logging.info("JavaScript test successful!")
+                logging.info("Starting trading loop...")
+                trading_loop()
+            else:
+                logging.error("JavaScript test failed. Cannot start trading.")
+                logging.error("Please verify JavaScript setup and configuration.")
         except Exception as e:
-            logging.error(f"Error starting trading loop: {str(e)}")
+            logging.error(f"Error during JavaScript test: {str(e)}")
             logging.error(traceback.format_exc())
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
