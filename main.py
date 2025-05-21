@@ -40,21 +40,34 @@ CONFIG = {
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
-    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '100')),  # 2x return
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '20')),  # 2x return
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '50')),  # Adding this for backward compatibility
-    'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
+    'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Adding this for backward compatibility
-    'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '10')),
+    'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '5')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '15')),  # Adding this for backward compatibility
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
     'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '60')),
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '2000')),
-    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '2')),
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
+    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.10')),  # Reduced to 0.10 SOL
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.25')),  # Reduced to 0.10 SOL
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
-    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '20'))
+    'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50'))
+    'TOKENS_PER_DAY': int(os.environ.get('TOKENS_PER_DAY', '20')),        # Target 20 tokens per day
+    'PROFIT_PER_TOKEN': int(os.environ.get('PROFIT_PER_TOKEN', '50')),    # Target $50 profit per token
+    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '20')),        # Take profit at just 20% gain
+    'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '60')), # Only hold for 60 seconds max
+    'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
+    'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '5')),  # Only buy very new tokens
+    'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
+
+    # Memory optimization
+    'RPC_CALL_DELAY_MS': int(os.environ.get('RPC_CALL_DELAY_MS', '300')),
+    'SKIP_ZERO_BALANCE_TOKENS': os.environ.get('SKIP_ZERO_BALANCE_TOKENS', 'true').lower() == 'true',
+    'ZERO_BALANCE_TOKEN_CACHE': {},
+    'ZERO_BALANCE_CACHE_EXPIRY': int(os.environ.get('ZERO_BALANCE_CACHE_EXPIRY', '3600'))
 }
 
 
