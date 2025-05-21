@@ -4431,67 +4431,26 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point with proper JavaScript testing."""
-    logging.info("============ BOT STARTING ============")
+    """Main entry point with quick-flip strategy."""
+    logging.info("============ QUICK-FLIP BOT STARTING ============")
+    logging.info("Target: $1,000 daily profit with frequent 20% gains")
     
     # Check Solders version at startup
     solders_version = check_solders_version()
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Try using the JavaScript implementation with better error handling
+        # Quick test to verify JavaScript is working
         test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
         test_amount = 0.001  # Very small test amount
         
         logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
         try:
-            # Verify Node.js is installed
-            logging.info("Checking Node.js installation...")
-            node_check = subprocess.run(
-                ['node', '--version'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            logging.info(f"Node.js version: {node_check.stdout.strip()}")
-            
-            # Check if swap.js exists
-            import os
-            if os.path.exists('swap.js'):
-                logging.info("swap.js file found")
-                file_size = os.path.getsize('swap.js')
-                logging.info(f"swap.js file size: {file_size} bytes")
-            else:
-                logging.error("swap.js file not found in current directory")
-                logging.info(f"Current directory: {os.getcwd()}")
-                logging.info(f"Directory contents: {os.listdir('.')}")
-                return
-            
-            # Try a JavaScript call with minimal parameters
-            logging.info("Executing test JavaScript call...")
-            command = ['node', 'swap.js', test_token, str(test_amount), 'false']
-            
-            logging.info(f"Command: {' '.join(command)}")
-            test_result = subprocess.run(
-                command,
-                env=os.environ,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            
-            # Log the output in detail
-            logging.info(f"JavaScript test STDOUT: {test_result.stdout}")
-            if test_result.stderr:
-                logging.error(f"JavaScript test STDERR: {test_result.stderr}")
-            
-            logging.info(f"JavaScript test return code: {test_result.returncode}")
-            
-            success = test_result.returncode == 0
+            # Quick JS test
+            success, signature = execute_via_javascript(test_token, test_amount)
             
             if success:
-                logging.info("JavaScript test successful!")
-                logging.info("Starting trading loop...")
+                logging.info(f"JavaScript test successful! Starting Quick-Flip trading...")
                 trading_loop()
             else:
                 logging.error("JavaScript test failed. Cannot start trading.")
@@ -4502,6 +4461,5 @@ def main():
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 
-# Add this at the end of your file
 if __name__ == "__main__":
     main()
