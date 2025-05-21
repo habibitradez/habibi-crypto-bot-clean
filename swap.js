@@ -7,6 +7,14 @@ const fs = require('fs');
 const MAX_RETRIES = 7; // Increased from 5
 const INITIAL_RETRY_DELAY = 3000; // Increased from 2000 ms
 
+// New slippage and priority fee constants
+const MIN_SLIPPAGE_FOR_BUYS = 100;    // 1% for normal buys
+const MIN_SLIPPAGE_FOR_SELLS = 500;   // 5% for normal sells
+const MIN_SLIPPAGE_FOR_SMALL = 2000;  // 20% for small token sells (increased from 15%)
+const MIN_PRIORITY_FEE_BUYS = 250000;    // 0.00025 SOL for buys
+const MIN_PRIORITY_FEE_SELLS = 1500000;  // 0.0015 SOL for sells (increased)
+const MIN_PRIORITY_FEE_SMALL = 3000000;  // 0.003 SOL for small token sells (increased)
+
 // Global rate limiting for Jupiter API
 let lastRequestTimestamps = [];
 const MAX_REQUESTS_PER_MINUTE = 50; // More conservative than before
@@ -99,7 +107,7 @@ async function throttledRpcCall(connection, method, params) {
   }
 }
 
-// Rate limiting function with dynamic adjustment for Jupiter API
+// Improved rate limiting function with dynamic adjustment for Jupiter API
 function canMakeRequest() {
   const now = Date.now();
   
@@ -120,10 +128,22 @@ function canMakeRequest() {
     return true;
   }
   
-  // Calculate wait time until we can make another request
+  // More even distribution of requests over time (enhanced algorithm)
+  const timePerRequest = 60000 / MAX_REQUESTS_PER_MINUTE;
   const oldestTimestamp = lastRequestTimestamps[0];
-  const timeToWait = 60000 - (now - oldestTimestamp) + 500; // Add 500ms buffer
-  return timeToWait; // Return wait time instead of false
+  const idealNextTime = oldestTimestamp + timePerRequest;
+  
+  // Calculate wait time
+  let timeToWait;
+  if (idealNextTime > now) {
+    timeToWait = idealNextTime - now + 50; // Add small buffer
+  } else {
+    // If we're behind schedule, use a minimum delay
+    timeToWait = 1000; 
+  }
+  
+  console.log(`Distributing requests evenly. Waiting ${timeToWait}ms before next API call`);
+  return timeToWait;
 }
 
 // Helper to log stats about our rate limiting
@@ -421,15 +441,52 @@ async function executeSwap() {
     const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
     console.log(`Using quote URL: ${quoteUrl}`);
     
-    // Determine slippage based on operation type and token size
+    // Determine slippage based on operation type and token size with more aggressive values
     let slippageBps;
     if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
-      slippageBps = "1500";  // 15% slippage for small tokens or force sell (increased)
-      console.log(`Using 15% slippage for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
+      slippageBps = MIN_SLIPPAGE_FOR_SMALL.toString();  // 20% slippage (increased from 15%)
+      console.log(`Using ${parseInt(slippageBps)/100}% slippage for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
     } else if (IS_SELL) {
-      slippageBps = "500";   // 5% slippage for normal sells
+      // For sells, try to calculate potential gain if possible
+      try {
+        // Make a test quote to estimate output
+        const testQuoteParams = {
+          inputMint: TOKEN_ADDRESS,
+          outputMint: "So11111111111111111111111111111111111111112",
+          amount: amount.toString(),
+          slippageBps: "100"  // Low slippage just for estimation
+        };
+        
+        const testResponse = await axios.get(quoteUrl, { 
+          params: testQuoteParams,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+          },
+          timeout: 5000 // Short timeout
+        });
+        
+        if (testResponse.data && testResponse.data.outAmount) {
+          const expectedSOL = parseInt(testResponse.data.outAmount) / 1000000000; // Convert lamports to SOL
+          const potentialGain = expectedSOL / AMOUNT_SOL; // Estimate gain
+          
+          if (potentialGain > 2) {
+            // If we're making a good profit, use even higher slippage
+            slippageBps = "2500"; // 25% slippage for high-profit sells
+            console.log(`High profit detected (${potentialGain.toFixed(2)}x) - using 25% slippage to ensure sell executes`);
+          } else {
+            slippageBps = MIN_SLIPPAGE_FOR_SELLS.toString();   // 5% slippage for normal sells
+          }
+        } else {
+          slippageBps = MIN_SLIPPAGE_FOR_SELLS.toString();
+        }
+      } catch (e) {
+        // If the test quote fails, use default slippage
+        console.log("Failed to estimate potential gain, using default slippage");
+        slippageBps = MIN_SLIPPAGE_FOR_SELLS.toString();
+      }
     } else {
-      slippageBps = "100";   // 1% slippage for buys
+      slippageBps = MIN_SLIPPAGE_FOR_BUYS.toString();   // 1% slippage for buys
     }
     
     const quoteParams = {
@@ -450,7 +507,7 @@ async function executeSwap() {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
         },
-        timeout: 30000 // 30 second timeout
+        timeout: 20000 // Reduced from 30000 for faster error recovery
       });
     });
     
@@ -472,15 +529,15 @@ async function executeSwap() {
     const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
     console.log(`Using swap URL: ${swapUrl}`);
     
-    // Determine priority fee based on operation type and token size
+    // Determine priority fee based on operation type and token size - higher values
     let priorityFee;
     if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
-      priorityFee = 2000000;  // 0.002 SOL priority fee for small tokens or force sell (increased)
-      console.log(`Using very high priority fee for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
+      priorityFee = MIN_PRIORITY_FEE_SMALL;  // 0.003 SOL priority fee (increased)
+      console.log(`Using very high priority fee (${priorityFee/1000000} SOL) for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
     } else if (IS_SELL) {
-      priorityFee = 1000000;   // 0.001 SOL for normal sells (increased)
+      priorityFee = MIN_PRIORITY_FEE_SELLS;   // 0.0015 SOL for sells (increased)
     } else {
-      priorityFee = 250000;   // 0.00025 SOL for buys (increased)
+      priorityFee = MIN_PRIORITY_FEE_BUYS;   // 0.00025 SOL for buys
     }
     
     // Fixed parameter conflict - use only prioritizationFeeLamports
@@ -503,7 +560,7 @@ async function executeSwap() {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
         },
-        timeout: 30000 // 30 second timeout
+        timeout: 20000 // Reduced from 30000 for faster error recovery
       });
     }, maxRetries);
     
