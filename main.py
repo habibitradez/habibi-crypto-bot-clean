@@ -1743,95 +1743,70 @@ def check_transaction_status(signature: str, max_attempts: int = 5) -> bool:
     logging.warning(f"Could not confirm transaction status after {max_attempts} attempts")
     return False
 
-def check_token_liquidity(token_address: str) -> bool:
-    """Check if a token has sufficient liquidity."""
-    # For known tokens like BONK, assume they have liquidity
-    for token in KNOWN_TOKENS:
-        if token["address"] == token_address:
-            logging.info(f"Known token {token_address} ({token.get('symbol', '')}) - Assuming it has liquidity")
-            return True
-            
+def check_token_liquidity(token_address):
+    """Streamlined liquidity check optimized for quick-flip strategy."""
     try:
-        logging.info(f"Checking liquidity for {token_address}...")
+        # For known tokens, assume they have liquidity
+        for token in KNOWN_TOKENS:
+            if token["address"] == token_address and token.get("tradable", False):
+                return True
         
-        # Try to get a quote for a tiny amount to check liquidity
+        # Simple liquidity check using Jupiter API with a minimal SOL amount
         quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
         params = {
             "inputMint": SOL_TOKEN_ADDRESS,
             "outputMint": token_address,
-            "amount": "1000000",  # Only 0.001 SOL in lamports - extremely small amount
-            "slippageBps": "2000"  # 20% slippage - extremely lenient
+            "amount": "10000000",  # Only 0.01 SOL - minimal test
+            "slippageBps": "3000"  # 30% slippage - extremely lenient for newest tokens
         }
         
-        logging.info(f"Liquidity check 1: 0.001 SOL → {token_address} with 20% slippage")
-        response = requests.get(quote_url, params=params, timeout=10)
+        # Add header and delay to avoid rate limits
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
         
+        # Rate limiting
+        global last_api_call_time, api_call_delay
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            time.sleep(api_call_delay - time_since_last_call)
+        
+        # Make API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=params, headers=headers, timeout=5)
+        
+        # Process response
         if response.status_code == 200:
             data = response.json()
-            # If we got a valid quote, token has liquidity
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
                 return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
-                logging.info(f"Liquidity check PASSED for {token_address} - Found liquidity")
-                return True
-            else:
-                logging.info(f"First liquidity check failed - trying reverse direction")
-        else:
-            logging.info(f"First liquidity check failed with status {response.status_code} - trying reverse direction")
         
-        # Try reverse direction (token to SOL) as a backup
+        # Try reverse direction as backup
         reverse_params = {
             "inputMint": token_address,
             "outputMint": SOL_TOKEN_ADDRESS,
-            "amount": "1000000",  # Small amount of token
-            "slippageBps": "2000"  # 20% slippage
+            "amount": "1000000",  # Small token amount
+            "slippageBps": "3000"
         }
         
-        logging.info(f"Liquidity check 2: {token_address} → SOL with 20% slippage")
-        response = requests.get(quote_url, params=reverse_params, timeout=10)
+        # Rate limiting
+        time_since_last_call = time.time() - last_api_call_time
+        if time_since_last_call < api_call_delay:
+            time.sleep(api_call_delay - time_since_last_call)
+        
+        # Make reverse API call
+        last_api_call_time = time.time()
+        response = requests.get(quote_url, params=reverse_params, headers=headers, timeout=5)
+        
         if response.status_code == 200:
             data = response.json()
             if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Reverse liquidity check PASSED for {token_address}")
                 return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
-                logging.info(f"Reverse liquidity check PASSED for {token_address}")
-                return True
-            else:
-                logging.info(f"Second liquidity check failed - trying even smaller amount")
-        else:
-            logging.info(f"Second liquidity check failed with status {response.status_code} - trying even smaller amount")
-                
-        # Third attempt - try with even smaller amount
-        ultra_small_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": "500000",  # Only 0.0005 SOL - extremely tiny
-            "slippageBps": "3000"  # 30% slippage - super lenient
-        }
         
-        logging.info(f"Liquidity check 3: 0.0005 SOL → {token_address} with 30% slippage")
-        response = requests.get(quote_url, params=ultra_small_params, timeout=10)
-        if response.status_code == 200:
-            data = response.json()
-            if "outAmount" in data and int(data["outAmount"]) > 0:
-                logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
-                return True
-            elif "data" in data and "outAmount" in data["data"] and int(data["data"]["outAmount"]) > 0:
-                logging.info(f"Ultra-small liquidity check PASSED for {token_address}")
-                return True
-            else:
-                logging.info(f"Ultra-small liquidity check failed - no quote data returned")
-        else:
-            logging.info(f"Ultra-small liquidity check failed with status {response.status_code}")
-        
-        logging.info(f"All liquidity checks FAILED for {token_address}")
         return False
         
     except Exception as e:
         logging.error(f"Error checking liquidity for {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
         return False
 
 def get_recent_transactions(limit: int = 100) -> List[Dict]:
@@ -3203,18 +3178,26 @@ def monitor_token_price(token_address):
 def cleanup_memory():
     """Force garbage collection to free up memory."""
     logging.info("Cleaning up memory...")
+    
     # Force garbage collection
     gc.collect()
     
-    # Clear some caches if they're getting too large
+    # Clear unnecessary memory
     global price_cache, price_cache_time
-    if len(price_cache) > 50:  # Lower threshold to 50
+    
+    # Only keep essential token prices
+    if len(price_cache) > 25:  # Reduced threshold
         logging.info(f"Clearing price cache (size: {len(price_cache)})")
-        old_keys = []
+        
+        # Keep only recent and currently monitored tokens
         current_time = time.time()
-        # Keep only recent and essential token prices
+        keep_tokens = set(monitored_tokens.keys())
+        keep_tokens.update([t["address"] for t in KNOWN_TOKENS])
+        
+        # Find old cache entries to remove
+        old_keys = []
         for key, timestamp in price_cache_time.items():
-            if current_time - timestamp > 1800 and key not in [t["address"] for t in KNOWN_TOKENS]:  # 30 minutes instead of 1 hour
+            if key not in keep_tokens and current_time - timestamp > 600:  # 10 minutes
                 old_keys.append(key)
         
         # Remove old keys
@@ -3226,11 +3209,20 @@ def cleanup_memory():
         
         logging.info(f"Price cache reduced to {len(price_cache)} items")
     
-    # Clear other large dictionaries if needed
-    global monitored_tokens
-    if len(monitored_tokens) > 5:  # Should be less than your MAX_CONCURRENT_TOKENS
-        logging.warning(f"Monitored tokens ({len(monitored_tokens)}) exceeds expected count, cleaning up...")
-        monitored_tokens = {k: v for k, v in list(monitored_tokens.items())[:5]}
+    # Clear other large dictionaries
+    global token_buy_timestamps
+    
+    # Keep only recent token timestamps (last 4 hours)
+    if len(token_buy_timestamps) > 50:
+        current_time = time.time()
+        old_timestamps = [
+            addr for addr, timestamp in token_buy_timestamps.items()
+            if current_time - timestamp > 14400  # 4 hours
+        ]
+        
+        for addr in old_timestamps:
+            if addr in token_buy_timestamps:
+                del token_buy_timestamps[addr]
     
     # Log memory status (Linux only)
     try:
