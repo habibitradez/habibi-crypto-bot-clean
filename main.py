@@ -2130,6 +2130,85 @@ def get_newest_pump_fun_tokens(limit=20):
         logging.error(f"Error in pump.fun API: {str(e)}")
         return []
 
+def get_newest_pump_fun_tokens(limit=20):
+    """Get newest tokens from pump.fun API with improved error handling."""
+    try:
+        # Updated URL based on network inspection of pump.fun website
+        url = "https://backend.pump.fun/tokens/newest"
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
+        
+        # Implement retries with backoff
+        max_retries = 3
+        base_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.get(url, headers=headers, params={"limit": limit}, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if not data:
+                        logging.warning("Empty response from pump.fun API")
+                        return []
+                    
+                    tokens = []
+                    for token in data:
+                        # Extract token address and other details
+                        if "mint" in token:
+                            # Calculate precise age in minutes
+                            created_at = token.get("createdAt", 0) / 1000  # Convert ms to seconds
+                            minutes_ago = (time.time() - created_at) / 60
+                            
+                            token_data = {
+                                "address": token["mint"],
+                                "symbol": token.get("symbol", "Unknown"),
+                                "name": token.get("name", "Unknown"),
+                                "price": token.get("price", 0),
+                                "minutes_old": minutes_ago,
+                                "createdAt": created_at
+                            }
+                            
+                            # Log very new tokens
+                            if minutes_ago <= 5:
+                                logging.info(f"Found very fresh token: {token_data['symbol']} - {minutes_ago:.1f} minutes old")
+                            
+                            tokens.append(token_data)
+                    
+                    # Sort by age (newest first)
+                    tokens.sort(key=lambda x: x.get('minutes_old', 999))
+                    
+                    logging.info(f"Retrieved {len(tokens)} tokens from pump.fun API")
+                    return tokens
+                
+                elif response.status_code == 429:
+                    wait_time = base_delay * (2 ** attempt)
+                    logging.warning(f"Rate limited by pump.fun API. Waiting {wait_time}s before retry.")
+                    time.sleep(wait_time)
+                
+                else:
+                    logging.error(f"Error from pump.fun API: {response.status_code} - {response.text}")
+                    return []
+                    
+            except requests.exceptions.Timeout:
+                wait_time = base_delay * (2 ** attempt)
+                logging.warning(f"Timeout connecting to pump.fun. Waiting {wait_time}s before retry.")
+                time.sleep(wait_time)
+                
+            except requests.exceptions.RequestException as e:
+                logging.error(f"Request error for pump.fun: {str(e)}")
+                return []
+        
+        logging.error(f"Failed to get data from pump.fun after {max_retries} attempts")
+        return []
+            
+    except Exception as e:
+        logging.error(f"Error in pump.fun API: {str(e)}")
+        return []
+
 def scan_for_new_tokens() -> List[str]:
     """Scan blockchain for new token addresses with enhanced detection for promising meme tokens."""
     global tokens_scanned
@@ -2954,6 +3033,44 @@ def is_recent_token(token_address):
         logging.error(f"Error checking token age: {str(e)}")
         return False
 
+def find_newest_tokens():
+    """Find the absolute newest tokens for quick flips."""
+    try:
+        # Try to get newest tokens from pump.fun API
+        newest_tokens = get_newest_pump_fun_tokens(limit=20)
+        
+        if not newest_tokens:
+            logging.warning("Failed to get tokens from pump.fun API")
+            return []
+            
+        # Filter for VERY new tokens (under 5 minutes old)
+        very_new_tokens = []
+        for token in newest_tokens:
+            if token.get('minutes_old', 999) <= CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5):
+                # Only add if it has a mint address
+                if 'address' in token:
+                    very_new_tokens.append({
+                        'address': token['address'],
+                        'age_minutes': token.get('minutes_old', 999),
+                        'name': token.get('name', 'Unknown'),
+                        'symbol': token.get('symbol', 'Unknown')
+                    })
+        
+        if very_new_tokens:
+            # Sort by age, newest first
+            very_new_tokens.sort(key=lambda x: x['age_minutes'])
+            logging.info(f"Found {len(very_new_tokens)} brand new tokens under {CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5)} minutes old")
+            
+            # Extract just the addresses
+            return [t['address'] for t in very_new_tokens]
+        else:
+            logging.info(f"No tokens found under {CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5)} minutes old")
+            return []
+            
+    except Exception as e:
+        logging.error(f"Error finding newest tokens: {str(e)}")
+        return []
+
 def monitor_token_peak_price(token_address):
     """Track token peak price and sell if it drops significantly after gains."""
     global daily_profit
@@ -3124,23 +3241,26 @@ def cleanup_memory():
         pass
 
 def trading_loop():
-    """Memory-optimized trading loop with circuit breaker."""
+    """Trading loop optimized for Quick-Flip Strategy."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
     global circuit_breaker_active
     
-    logging.info("==================== TRADING LOOP STARTING ====================")
-    logging.info("Bot ready to scan for tokens and execute trades with memory optimization")
+    logging.info("==================== QUICK-FLIP TRADING LOOP STARTING ====================")
+    logging.info("Bot ready for rapid meme token trading with quick-flip strategy")
+    logging.info("Target: $1,000 daily profit with small, frequent gains")
+    logging.info("Strategy: Buy newest tokens, sell quickly at 20% profit")
     logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
-    logging.info("=============================================================")
+    logging.info("=======================================================================")
     
-    # Initialize tracking variables (use smaller data structures)
+    # Initialize tracking variables
     daily_profit = 0
     daily_profit_start_time = time.time()
     last_performance_report_time = time.time()
     last_memory_cleanup_time = time.time()
     memory_cleanup_interval = 300  # Clean up every 5 minutes
-    iteration_count = 0
+    last_token_search_time = 0
+    token_search_interval = 60  # Search for new tokens every 60 seconds
     
     # Set a maximum runtime to automatically restart (prevent memory leaks)
     max_runtime = 6 * 3600  # 6 hours
@@ -3166,72 +3286,44 @@ def trading_loop():
                 logging.warning("Circuit breaker active - pausing operations")
                 time.sleep(60)  # Check every minute if we can resume
                 continue
+            
+            # MONITORING EXISTING TOKENS - Check VERY frequently (every iteration)
+            for token_address in list(monitored_tokens.keys()):
+                try:
+                    # Use ultra-aggressive monitoring function for quick flips
+                    monitor_token_price(token_address)
+                except Exception as e:
+                    logging.error(f"Error monitoring token {token_address}: {str(e)}")
+                    circuit_breaker_check(error=True)
+                    
+                    # Force sell on any error in quick flip mode
+                    if CONFIG.get('QUICK_FLIP_MODE', True):
+                        try:
+                            execute_optimized_sell(token_address)
+                        except Exception as sell_error:
+                            logging.error(f"Error force selling after monitoring error: {str(sell_error)}")
+            
+            # LOOKING FOR NEW TOKENS - Check periodically
+            current_time = time.time()
+            if (current_time - last_token_search_time > token_search_interval and
+                    len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 3)):
                 
-            # Force sell stale tokens but limit frequency (avoid too many RPC calls)
-            if iteration_count % 5 == 0:  # Only check every 5 iterations
-                # Limit the number of tokens to check per iteration
-                token_list = list(monitored_tokens.keys())[:3]  # Check max 3 tokens per iteration
-                for token_address in token_list:
-                    try:
-                        if token_address in monitored_tokens:  # Double-check it's still there
-                            monitor_token_price(token_address)
-                    except Exception as e:
-                        logging.error(f"Error monitoring token {token_address}: {str(e)}")
-                        # Don't log full traceback to save memory
-                        circuit_breaker_check(error=True)
-                    # Add delay between token checks
-                    time.sleep(0.5)
-            
-            # Check if it's time for a performance report (every hour)
-            if time.time() - last_performance_report_time > 3600:  # 1 hour
-                log_daily_performance()
-                last_performance_report_time = time.time()
-                # Force cleanup after reporting
-                cleanup_memory()
-            
-            # Check if it's a new day for profit tracking
-            if time.time() - daily_profit_start_time > 86400:  # 24 hours
-                logging.info(f"Daily profit reset - Previous total: ${daily_profit:.2f}")
-                daily_profit = 0
-                daily_profit_start_time = time.time()
-            
-            # Print status every 5 minutes (but with less detail to save logging space)
-            if time.time() - last_status_time > 300:  # 5 minutes
-                logging.info(f"===== STATUS UPDATE =====")
-                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"Buy/Sell: {buy_successes}/{sell_successes}, Profit: ${daily_profit:.2f}")
-                logging.info(f"Circuit breaker: {'ACTIVE' if circuit_breaker_active else 'INACTIVE'}")
-                
-                # Log wallet balance less frequently
-                if iteration_count % 6 == 0 and not CONFIG['SIMULATION_MODE'] and wallet:
-                    try:
-                        balance = wallet.get_balance()
-                        logging.info(f"Current wallet balance: {balance} SOL")
-                    except Exception as e:
-                        logging.error(f"Error getting wallet balance: {str(e)}")
-                        # No need to log traceback for common errors
-                
-                last_status_time = time.time()
-            
-            # Only look for new tokens if circuit breaker is not active and we have capacity
-            # and we don't already have tokens to monitor
-            if (not circuit_breaker_active and 
-                    len(monitored_tokens) < min(2, CONFIG.get('MAX_CONCURRENT_TOKENS', 2)) and
-                    iteration_count % 3 == 0):  # Only scan every 3 iterations
+                logging.info("Searching for brand new tokens to trade...")
+                last_token_search_time = current_time
                 
                 try:
-                    # Scan for new tokens - but limit the scope
-                    potential_tokens = scan_for_new_tokens()
+                    # Use specialized function to find the absolute newest tokens
+                    newest_tokens = find_newest_tokens()
                     
-                    # Limit the number to process
-                    max_tokens_to_try = min(2, len(potential_tokens))
-                    tokens_to_try = random.sample(potential_tokens, max_tokens_to_try) if max_tokens_to_try > 0 else []
-                    
-                    # Only process if we have capacity for new tokens
-                    if len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 2):
+                    if newest_tokens:
+                        logging.info(f"Found {len(newest_tokens)} very new tokens")
+                        
+                        # Process up to 2 new tokens per search
+                        tokens_to_try = newest_tokens[:2]
+                        
                         for token_address in tokens_to_try:
                             # Skip if we're at max concurrent tokens
-                            if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 2):
+                            if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 3):
                                 break
                                 
                             # Skip tokens we're already monitoring
@@ -3240,59 +3332,96 @@ def trading_loop():
                             
                             # Skip if we've bought this token recently
                             if token_address in token_buy_timestamps:
-                                minutes_since_last_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                                if minutes_since_last_buy < CONFIG.get('BUY_COOLDOWN_MINUTES', 60):
+                                minutes_since_last_buy = (current_time - token_buy_timestamps[token_address]) / 60
+                                if minutes_since_last_buy < 30:  # Only 30 min cooldown
                                     continue
                             
                             try:
-                                # Verify token is suitable with minimal checks
-                                liquidity_ok = check_token_liquidity(token_address)
+                                # Quick liquidity check before buying
+                                has_liquidity = check_token_liquidity(token_address)
                                 
-                                if liquidity_ok:
-                                    logging.info(f"Found tradable token: {token_address}")
+                                if has_liquidity:
+                                    logging.info(f"Found very new token with liquidity: {token_address}")
                                     
-                                    # Use JavaScript for buying
-                                    success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.1))
+                                    # Use JavaScript for buying with higher amount
+                                    success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.25))
                                     
                                     buy_attempts += 1
                                     if success:
-                                        logging.info(f"Successfully bought token: {token_address}")
+                                        logging.info(f"Successfully bought new token: {token_address}")
                                         buy_successes += 1
-                                        # Break after one successful buy per iteration
+                                        
+                                        # Log potential profit target
+                                        target_pct = CONFIG.get('MIN_PROFIT_PCT', 20)
+                                        logging.info(f"🎯 Target: {target_pct}% profit or max {CONFIG.get('MAX_HOLD_TIME_SECONDS', 60)} seconds")
+                                        
+                                        # Break after one successful buy per search
                                         break
                                     else:
                                         logging.warning(f"Failed to buy token: {token_address}")
                             except Exception as e:
-                                logging.error(f"Error verifying/buying token {token_address}: {str(e)}")
-                                # Skip full traceback to save memory
-                    
-                    # Clear local variables to free memory
-                    potential_tokens = None
-                    tokens_to_try = None
-                    gc.collect()  # Explicit garbage collection
-                    
+                                logging.error(f"Error buying token {token_address}: {str(e)}")
+                                circuit_breaker_check(error=True)
                 except Exception as e:
-                    logging.error(f"Error in token scanning: {str(e)}")
-                    # Skip full traceback to save memory
+                    logging.error(f"Error searching for new tokens: {str(e)}")
                     circuit_breaker_check(error=True)
             
-            # Sleep before next iteration
-            sleep_time = CONFIG.get('CHECK_INTERVAL_MS', 2000) / 1000  # Convert ms to seconds
-            time.sleep(sleep_time)
+            # Check if it's time for a performance report (every hour)
+            if current_time - last_performance_report_time > 3600:  # 1 hour
+                log_daily_performance()
+                last_performance_report_time = current_time
+                
+                # Calculate daily projection based on current profit
+                hours_running = (current_time - daily_profit_start_time) / 3600
+                if hours_running > 0:
+                    projected_daily = (daily_profit / hours_running) * 24
+                    logging.info(f"Current daily profit projection: ${projected_daily:.2f}")
+                    
+                    # Calculate needed profit per hour to reach $1k
+                    if projected_daily < 1000:
+                        hours_left = 24 - hours_running
+                        profit_needed = 1000 - daily_profit
+                        hourly_needed = profit_needed / hours_left if hours_left > 0 else 0
+                        logging.info(f"Need ${hourly_needed:.2f}/hour for remaining {hours_left:.1f} hours to reach $1k daily target")
+            
+            # Check if it's a new day for profit tracking
+            if current_time - daily_profit_start_time > 86400:  # 24 hours
+                logging.info(f"Daily profit reset - Previous total: ${daily_profit:.2f}")
+                daily_profit = 0
+                daily_profit_start_time = current_time
+            
+            # Print status update (every 5 minutes)
+            if current_time - last_status_time > 300:  # 5 minutes
+                logging.info(f"===== QUICK-FLIP STATUS UPDATE =====")
+                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
+                logging.info(f"Buy/Sell: {buy_successes}/{sell_successes}")
+                logging.info(f"Daily profit: ${daily_profit:.2f}")
+                logging.info(f"Circuit breaker: {'ACTIVE' if circuit_breaker_active else 'INACTIVE'}")
+                
+                # Report on token ages in monitoring
+                if monitored_tokens:
+                    logging.info(f"Currently monitored tokens:")
+                    for addr, data in monitored_tokens.items():
+                        symbol = get_token_symbol(addr) or addr[:8]
+                        seconds_held = current_time - data['buy_time']
+                        pct_change = ((get_token_price(addr) or 0) / data['initial_price'] - 1) * 100
+                        logging.info(f"  - {symbol}: Held for {seconds_held:.1f}s, Change: {pct_change:.2f}%")
+                
+                last_status_time = current_time
+            
+            # Sleep very briefly between iterations to prevent CPU thrashing
+            # We want to check very frequently with quick-flip strategy
+            time.sleep(0.5)
             
         except Exception as e:
             errors_encountered += 1
             logging.error(f"Error in main loop: {str(e)}")
-            # Skip full traceback to save memory
             
             # Register error with circuit breaker
             circuit_breaker_check(error=True)
             
             # Longer sleep on error
-            time.sleep(10)
-            
-            # Force memory cleanup on error
-            cleanup_memory()
+            time.sleep(5)
 
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
