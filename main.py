@@ -3004,57 +3004,25 @@ def monitor_token_peak_price(token_address):
     monitored_tokens[token_address] = token_data
 
 def monitor_token_price(token_address):
-    """Monitor token price with aggressive selling strategy."""
+    """Ultra-aggressive token monitoring for quick flips."""
     global daily_profit
-    
-    # Track failures to handle persistent issues
-    if not hasattr(monitor_token_price, 'failure_counts'):
-        monitor_token_price.failure_counts = {}
     
     try:
         if token_address not in monitored_tokens:
-            logging.warning(f"Tried to monitor {token_address} but it's not in monitored_tokens dict")
             return
             
         token_data = monitored_tokens[token_address]
+        current_time = time.time()
         
-        # Get current price with multiple attempts
-        current_price = None
-        for attempt in range(3):  # Try up to 3 times to get price
-            try:
-                current_price = get_token_price(token_address)
-                if current_price:
-                    break
-                logging.warning(f"Failed to get price for {token_address} - attempt {attempt+1}/3")
-                time.sleep(1)  # Short delay between attempts
-            except Exception as e:
-                logging.error(f"Error getting price on attempt {attempt+1}: {str(e)}")
-                time.sleep(1)
-        
+        # Get current price 
+        current_price = get_token_price(token_address)
         if not current_price:
-            # If we can't get price after multiple attempts, track this failure
-            token_data['price_check_failures'] = token_data.get('price_check_failures', 0) + 1
-            if token_data['price_check_failures'] >= 3:
-                logging.warning(f"Forcing sell after {token_data['price_check_failures']} failed price checks for {token_address}")
+            # Force sell after just 1 failed price check in quick flip mode
+            if CONFIG.get('QUICK_FLIP_MODE', False):
+                logging.warning(f"Quick flip mode: Can't get price - forcing immediate sell for {token_address}")
                 execute_optimized_sell(token_address)
-                monitor_token_price.failure_counts[token_address] = 0  # Reset failure count
-                return
-            
-            monitored_tokens[token_address] = token_data
-            # Track this token in our global failure tracking
-            monitor_token_price.failure_counts[token_address] = monitor_token_price.failure_counts.get(token_address, 0) + 1
-            
-            # If we have persistent failures across multiple cycles, force sell
-            if monitor_token_price.failure_counts.get(token_address, 0) >= 5:
-                logging.warning(f"Persistent monitoring failures for {token_address}. Forcing sell after 5 cycles.")
-                execute_optimized_sell(token_address)
-                monitor_token_price.failure_counts[token_address] = 0  # Reset failure count
             return
             
-        # Reset failure counters on successful price check
-        token_data['price_check_failures'] = 0
-        monitor_token_price.failure_counts[token_address] = 0
-        
         # Update highest price if current is higher
         if current_price > token_data.get('highest_price', 0):
             token_data['highest_price'] = current_price
@@ -3063,100 +3031,57 @@ def monitor_token_price(token_address):
         initial_price = token_data['initial_price']
         price_change_pct = ((current_price / initial_price) - 1) * 100
         
-        # Calculate time elapsed since buy
-        minutes_since_buy = (time.time() - token_data['buy_time']) / 60
+        # Calculate time elapsed since buy (in seconds for more precision)
+        seconds_since_buy = current_time - token_data['buy_time']
         
         # Log current status
         token_symbol = get_token_symbol(token_address) or token_address[:8]
-        logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {minutes_since_buy:.1f} min")
+        logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {seconds_since_buy:.1f} sec")
         
-        # AGGRESSIVE SELLING STRATEGY #1:
-        # Sell immediately at 80% gain rather than waiting for 100%
-        if price_change_pct >= 80:
-            logging.info(f"🔥 Taking 80% profit for {token_symbol} - close enough to 2x target")
+        # EXTREME QUICK FLIP STRATEGY:
+        
+        # 1. Take any profit after 20 seconds
+        if seconds_since_buy >= 20 and price_change_pct > 0:
+            logging.info(f"⏱️ Taking {price_change_pct:.2f}% profit after 20 seconds for {token_symbol}")
+            execute_optimized_sell(token_address)
+            return
+            
+        # 2. Take tiny profits (just 20%)
+        if price_change_pct >= CONFIG.get('MIN_PROFIT_PCT', 20):
+            logging.info(f"🔥 Taking {price_change_pct:.2f}% profit for {token_symbol} - quick flip!")
             execute_optimized_sell(token_address)
             return
         
-        # AGGRESSIVE SELLING STRATEGY #2:
-        # Take any profit after 1 minute regardless of percentage
-        if price_change_pct > 0 and minutes_since_buy >= 1:
-            logging.info(f"⏱️ Taking {price_change_pct:.2f}% profit after 1 minute for {token_symbol}")
-            execute_optimized_sell(token_address)
-            return
-        
-        # AGGRESSIVE SELLING STRATEGY #3:
-        # Detect stall or reversal pattern - sell if price was rising but now stalled or dropping
-        if 'last_price' in token_data and 'second_last_price' in token_data:
-            last_price = token_data['last_price']
-            second_last_price = token_data['second_last_price']
-            
-            was_rising = last_price > second_last_price
-            now_falling = current_price < last_price
-            
-            if was_rising and now_falling and price_change_pct > 20:
-                # Only trigger if we have at least 20% gain and price trend reversal
-                logging.info(f"📉 Trend reversal detected for {token_symbol} at {price_change_pct:.2f}% - selling before further drop")
-                execute_optimized_sell(token_address)
-                return
-        
-        # Track price history
-        token_data['second_last_price'] = token_data.get('last_price')
-        token_data['last_price'] = current_price
-        
-        # AGGRESSIVE SELLING STRATEGY #4:
-        # More aggressive drop-from-peak selling - only 3% drop (instead of 5%)
+        # 3. Ultra-quick drop detection - just 3% from peak
         peak_price = token_data.get('highest_price', initial_price)
         drop_from_peak_pct = ((peak_price - current_price) / peak_price) * 100
         
-        if price_change_pct > 10 and drop_from_peak_pct > 3:
-            logging.info(f"🔻 Selling {token_symbol} due to 3% drop from peak after initial 10% gain")
+        if price_change_pct > 5 and drop_from_peak_pct > 3:
+            logging.info(f"📉 Quick flip: Selling {token_symbol} due to 3% drop from peak after initial 5% gain")
+            execute_optimized_sell(token_address)
+            return
+                
+        # 4. Very quick stop loss at 5%
+        if price_change_pct <= -CONFIG.get('STOP_LOSS_PCT', 5):
+            logging.info(f"🛑 Quick stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
+            execute_optimized_sell(token_address)
+            return
+                
+        # 5. Ultra-short hold time - sell after just 60 seconds regardless
+        if seconds_since_buy >= CONFIG.get('MAX_HOLD_TIME_SECONDS', 60):
+            logging.info(f"⏰ Maximum hold time reached for {token_symbol}: {seconds_since_buy:.1f} seconds")
             execute_optimized_sell(token_address)
             return
         
-        # AGGRESSIVE SELLING STRATEGY #5: 
-        # Take profits in stages (sell 50% at 50% gain)
-        if not token_data.get('partial_profit_taken', False) and price_change_pct >= 50:
-            logging.info(f"💰 Taking partial profits (50%) for {token_symbol} at {price_change_pct:.2f}%")
-            token_data['partial_profit_taken'] = True
-            execute_optimized_sell(token_address, 50)  # Sell 50% of tokens
-            monitored_tokens[token_address] = token_data  # Update token data
-            return
-                
-        # ORIGINAL STRATEGY: Profit target
-        if price_change_pct >= CONFIG.get('PROFIT_TARGET_PCT', 100):
-            logging.info(f"🎯 Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
-            execute_optimized_sell(token_address)
-            return
-                
-        # AGGRESSIVE SELLING STRATEGY #6:
-        # More aggressive stop loss - 8% instead of 10%
-        if price_change_pct <= -8:
-            logging.info(f"🛑 Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
-            execute_optimized_sell(token_address)
-            return
-                
-        # AGGRESSIVE SELLING STRATEGY #7:
-        # Shorter hold time - sell after 90 seconds instead of 2 minutes
-        if minutes_since_buy >= 1.5:
-            logging.info(f"⏰ Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
-            execute_optimized_sell(token_address)
-            return
-            
         # Update token data with latest info
         monitored_tokens[token_address] = token_data
         
     except Exception as e:
         logging.error(f"Error monitoring token {token_address}: {str(e)}")
-        logging.error(traceback.format_exc())
-        
-        # Increment failure count for this token
-        monitor_token_price.failure_counts[token_address] = monitor_token_price.failure_counts.get(token_address, 0) + 1
-        
-        # If we have many consecutive errors for this token, force sell it
-        if monitor_token_price.failure_counts.get(token_address, 0) >= 5:
-            logging.warning(f"Persistent monitoring errors for {token_address}. Forcing sell after 5 error cycles.")
+        # Force sell on any error in quick flip mode
+        if CONFIG.get('QUICK_FLIP_MODE', False):
+            logging.warning(f"Quick flip mode: Error during monitoring - forcing sell for {token_address}")
             execute_optimized_sell(token_address)
-            monitor_token_price.failure_counts[token_address] = 0  # Reset failure count
 
 def cleanup_memory():
     """Force garbage collection to free up memory."""
