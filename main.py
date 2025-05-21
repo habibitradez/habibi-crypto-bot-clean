@@ -2991,7 +2991,7 @@ def monitor_token_peak_price(token_address):
     monitored_tokens[token_address] = token_data
 
 def monitor_token_price(token_address):
-    """Monitor token price and execute sell when conditions are met with enhanced error handling."""
+    """Monitor token price with aggressive selling strategy."""
     global daily_profit
     
     # Track failures to handle persistent issues
@@ -3057,48 +3057,75 @@ def monitor_token_price(token_address):
         token_symbol = get_token_symbol(token_address) or token_address[:8]
         logging.info(f"Token {token_symbol} - Current: {price_change_pct:.2f}% change, Time: {minutes_since_buy:.1f} min")
         
-        # Early profit taking (95% instead of 100% to increase success rate)
-        if price_change_pct >= 95:
-            logging.info(f"Taking profit at 95% gain for {token_symbol} - close enough to 2x target")
+        # AGGRESSIVE SELLING STRATEGY #1:
+        # Sell immediately at 80% gain rather than waiting for 100%
+        if price_change_pct >= 80:
+            logging.info(f"🔥 Taking 80% profit for {token_symbol} - close enough to 2x target")
             execute_optimized_sell(token_address)
             return
         
-        # More aggressive early profit taking at 50% after 1 minute
-        if price_change_pct >= 50 and minutes_since_buy >= 1:
-            logging.info(f"Taking early profit for {token_symbol} at {price_change_pct:.2f}% after {minutes_since_buy:.1f} minutes")
+        # AGGRESSIVE SELLING STRATEGY #2:
+        # Take any profit after 1 minute regardless of percentage
+        if price_change_pct > 0 and minutes_since_buy >= 1:
+            logging.info(f"⏱️ Taking {price_change_pct:.2f}% profit after 1 minute for {token_symbol}")
             execute_optimized_sell(token_address)
             return
         
-        # Aggressive price drop check - sell faster if dropping
+        # AGGRESSIVE SELLING STRATEGY #3:
+        # Detect stall or reversal pattern - sell if price was rising but now stalled or dropping
+        if 'last_price' in token_data and 'second_last_price' in token_data:
+            last_price = token_data['last_price']
+            second_last_price = token_data['second_last_price']
+            
+            was_rising = last_price > second_last_price
+            now_falling = current_price < last_price
+            
+            if was_rising and now_falling and price_change_pct > 20:
+                # Only trigger if we have at least 20% gain and price trend reversal
+                logging.info(f"📉 Trend reversal detected for {token_symbol} at {price_change_pct:.2f}% - selling before further drop")
+                execute_optimized_sell(token_address)
+                return
+        
+        # Track price history
+        token_data['second_last_price'] = token_data.get('last_price')
+        token_data['last_price'] = current_price
+        
+        # AGGRESSIVE SELLING STRATEGY #4:
+        # More aggressive drop-from-peak selling - only 3% drop (instead of 5%)
         peak_price = token_data.get('highest_price', initial_price)
         drop_from_peak_pct = ((peak_price - current_price) / peak_price) * 100
         
-        if price_change_pct > 10 and drop_from_peak_pct > 5:
-            logging.info(f"Selling {token_symbol} due to 5% drop from peak after initial 10% gain")
+        if price_change_pct > 10 and drop_from_peak_pct > 3:
+            logging.info(f"🔻 Selling {token_symbol} due to 3% drop from peak after initial 10% gain")
             execute_optimized_sell(token_address)
             return
         
-        # Check if we should take partial profits
-        if not token_data.get('partial_profit_taken', False) and price_change_pct >= CONFIG.get('PARTIAL_PROFIT_TARGET_PCT', 50):
-            logging.info(f"Taking partial profits for {token_symbol} at {price_change_pct:.2f}%")
-            execute_optimized_sell(token_address, CONFIG.get('PARTIAL_PROFIT_PERCENTAGE', 50))
+        # AGGRESSIVE SELLING STRATEGY #5: 
+        # Take profits in stages (sell 50% at 50% gain)
+        if not token_data.get('partial_profit_taken', False) and price_change_pct >= 50:
+            logging.info(f"💰 Taking partial profits (50%) for {token_symbol} at {price_change_pct:.2f}%")
+            token_data['partial_profit_taken'] = True
+            execute_optimized_sell(token_address, 50)  # Sell 50% of tokens
+            monitored_tokens[token_address] = token_data  # Update token data
             return
                 
-        # Check if we should sell due to profit target
+        # ORIGINAL STRATEGY: Profit target
         if price_change_pct >= CONFIG.get('PROFIT_TARGET_PCT', 100):
-            logging.info(f"Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
+            logging.info(f"🎯 Profit target reached for {token_symbol} with {price_change_pct:.2f}% gain")
             execute_optimized_sell(token_address)
             return
                 
-        # Check if we should sell due to stop loss - more aggressive
-        if price_change_pct <= -CONFIG.get('STOP_LOSS_PCT', 10):
-            logging.info(f"Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
+        # AGGRESSIVE SELLING STRATEGY #6:
+        # More aggressive stop loss - 8% instead of 10%
+        if price_change_pct <= -8:
+            logging.info(f"🛑 Stop loss triggered for {token_symbol} with {price_change_pct:.2f}% loss")
             execute_optimized_sell(token_address)
             return
                 
-        # Check if we should sell due to time limit
-        if minutes_since_buy >= CONFIG.get('MAX_HOLD_TIME_MINUTES', 2):
-            logging.info(f"Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
+        # AGGRESSIVE SELLING STRATEGY #7:
+        # Shorter hold time - sell after 90 seconds instead of 2 minutes
+        if minutes_since_buy >= 1.5:
+            logging.info(f"⏰ Time limit reached for {token_symbol} with {price_change_pct:.2f}% {price_change_pct >= 0 and 'gain' or 'loss'}")
             execute_optimized_sell(token_address)
             return
             
