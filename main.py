@@ -3233,187 +3233,263 @@ def cleanup_memory():
         pass
 
 def trading_loop():
-    """Trading loop optimized for Quick-Flip Strategy."""
+    """Ultra-optimized trading loop for consistent $1k daily profits."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
     global circuit_breaker_active
     
-    logging.info("==================== QUICK-FLIP TRADING LOOP STARTING ====================")
-    logging.info("Bot ready for rapid meme token trading with quick-flip strategy")
-    logging.info("Target: $1,000 daily profit with small, frequent gains")
-    logging.info("Strategy: Buy newest tokens, sell quickly at 20% profit")
+    logging.info("==================== ULTRA-OPTIMIZED TRADING LOOP STARTING ====================")
+    logging.info("🎯 Target: $1,000 daily profit through rapid token flips")
+    logging.info("⚡ Strategy: 15-30% quick gains on newest tokens")
+    logging.info("🔄 Max hold time: 45 seconds to avoid rug pulls")
     logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
-    logging.info("=======================================================================")
+    logging.info("================================================================================")
     
     # Initialize tracking variables
     daily_profit = 0
     daily_profit_start_time = time.time()
     last_performance_report_time = time.time()
     last_memory_cleanup_time = time.time()
-    memory_cleanup_interval = 300  # Clean up every 5 minutes
     last_token_search_time = 0
-    token_search_interval = 60  # Search for new tokens every 60 seconds
     
-    # Set a maximum runtime to automatically restart (prevent memory leaks)
-    max_runtime = 6 * 3600  # 6 hours
+    # Ultra-aggressive timing
+    memory_cleanup_interval = 180  # Clean up every 3 minutes
+    token_search_interval = 30     # Search for new tokens every 30 seconds
+    max_runtime = 4 * 3600        # Restart every 4 hours for freshness
+    
     start_time = time.time()
+    successful_trades_today = 0
+    target_trades_per_hour = 3    # Aim for 3 successful trades per hour
     
     while True:
-        # Check if we've been running too long (prevent memory bloat)
+        # Check runtime limit
         if time.time() - start_time > max_runtime:
-            logging.info(f"Maximum runtime of {max_runtime/3600} hours reached, exiting for clean restart")
-            # Exit with success code so the service restarts clean
+            logging.info(f"🔄 Maximum runtime reached, restarting for optimal performance")
             return
             
         iteration_count += 1
+        current_time = time.time()
         
         try:
-            # Perform memory cleanup periodically
-            if time.time() - last_memory_cleanup_time > memory_cleanup_interval:
+            # Memory cleanup
+            if current_time - last_memory_cleanup_time > memory_cleanup_interval:
                 cleanup_memory()
-                last_memory_cleanup_time = time.time()
+                last_memory_cleanup_time = current_time
             
-            # Check circuit breaker before starting operations
+            # Circuit breaker check
             if circuit_breaker_check():
-                logging.warning("Circuit breaker active - pausing operations")
-                time.sleep(60)  # Check every minute if we can resume
+                logging.warning("⛔ Circuit breaker active - pausing operations")
+                time.sleep(30)  # Shorter pause for faster recovery
                 continue
             
-            # MONITORING EXISTING TOKENS - Check VERY frequently (every iteration)
+            # ULTRA-AGGRESSIVE TOKEN MONITORING
+            tokens_to_remove = []
             for token_address in list(monitored_tokens.keys()):
                 try:
-                    # Use ultra-aggressive monitoring function for quick flips
-                    monitor_token_price(token_address)
-                except Exception as e:
-                    logging.error(f"Error monitoring token {token_address}: {str(e)}")
-                    circuit_breaker_check(error=True)
+                    token_data = monitored_tokens[token_address]
+                    seconds_held = current_time - token_data['buy_time']
                     
-                    # Force sell on any error in quick flip mode
-                    if CONFIG.get('QUICK_FLIP_MODE', True):
-                        try:
-                            execute_optimized_sell(token_address)
-                        except Exception as sell_error:
-                            logging.error(f"Error force selling after monitoring error: {str(sell_error)}")
+                    # FORCE SELL after 45 seconds regardless of price
+                    if seconds_held >= 45:
+                        logging.warning(f"⏰ FORCE SELLING {token_address[:8]} after {seconds_held:.1f}s")
+                        success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                        if success or not success:  # Remove either way
+                            tokens_to_remove.append(token_address)
+                        continue
+                    
+                    # Check price and execute ultra-aggressive selling
+                    current_price = get_token_price(token_address)
+                    if current_price:
+                        initial_price = token_data['initial_price']
+                        price_change_pct = ((current_price / initial_price) - 1) * 100
+                        
+                        # Update peak price
+                        if current_price > token_data.get('highest_price', 0):
+                            token_data['highest_price'] = current_price
+                        
+                        # ULTRA-AGGRESSIVE SELLING CONDITIONS:
+                        
+                        # 1. Take 15% profit immediately (lowered from 20%)
+                        if price_change_pct >= 15:
+                            logging.info(f"🔥 QUICK PROFIT: {price_change_pct:.1f}% on {token_address[:8]}")
+                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                            tokens_to_remove.append(token_address)
+                            if success:
+                                profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
+                                daily_profit += profit_amount
+                                successful_trades_today += 1
+                                logging.info(f"💰 Profit: ${profit_amount:.2f} | Daily total: ${daily_profit:.2f}")
+                            continue
+                        
+                        # 2. Take ANY profit after 15 seconds
+                        if seconds_held >= 15 and price_change_pct > 0:
+                            logging.info(f"⏱️ TIME PROFIT: {price_change_pct:.1f}% after {seconds_held:.1f}s")
+                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                            tokens_to_remove.append(token_address)
+                            continue
+                        
+                        # 3. Stop loss at 8% (tighter than before)
+                        if price_change_pct <= -8:
+                            logging.warning(f"🛑 STOP LOSS: {price_change_pct:.1f}% on {token_address[:8]}")
+                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                            tokens_to_remove.append(token_address)
+                            continue
+                        
+                        # 4. Trend reversal detection (2% drop from peak)
+                        peak_price = token_data.get('highest_price', initial_price)
+                        drop_from_peak = ((peak_price - current_price) / peak_price) * 100
+                        
+                        if price_change_pct > 5 and drop_from_peak > 2:
+                            logging.info(f"📉 TREND REVERSAL: Selling at {price_change_pct:.1f}% after 2% drop from peak")
+                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                            tokens_to_remove.append(token_address)
+                            continue
+                        
+                        # Update token data
+                        monitored_tokens[token_address] = token_data
+                    
+                    else:
+                        # Can't get price - force sell after 2 failed attempts
+                        if 'price_failures' not in token_data:
+                            token_data['price_failures'] = 0
+                        token_data['price_failures'] += 1
+                        
+                        if token_data['price_failures'] >= 2:
+                            logging.warning(f"🚨 PRICE FAILURE: Force selling {token_address[:8]}")
+                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+                            tokens_to_remove.append(token_address)
+                            continue
+                        
+                        monitored_tokens[token_address] = token_data
+                    
+                except Exception as e:
+                    logging.error(f"Error monitoring {token_address[:8]}: {str(e)}")
+                    # Force sell on any error
+                    try:
+                        execute_via_javascript(token_address, 0.001, is_sell=True)
+                    except:
+                        pass
+                    tokens_to_remove.append(token_address)
             
-            # LOOKING FOR NEW TOKENS - Check periodically
-            current_time = time.time()
+            # Remove sold tokens
+            for token_address in tokens_to_remove:
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
+            
+            # TOKEN ACQUISITION - Very aggressive
             if (current_time - last_token_search_time > token_search_interval and
                     len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 3)):
                 
-                logging.info("Searching for brand new tokens to trade...")
+                logging.info("🔍 Searching for ultra-fresh tokens...")
                 last_token_search_time = current_time
                 
                 try:
-                    # Use specialized function to find the absolute newest tokens
+                    # Get newest tokens
                     newest_tokens = find_newest_tokens()
                     
                     if newest_tokens:
-                        logging.info(f"Found {len(newest_tokens)} very new tokens")
-                        
-                        # Process up to 2 new tokens per search
-                        tokens_to_try = newest_tokens[:2]
-                        
-                        for token_address in tokens_to_try:
-                            # Skip if we're at max concurrent tokens
-                            if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 3):
-                                break
-                                
-                            # Skip tokens we're already monitoring
+                        # Try to buy the first available token
+                        for token_address in newest_tokens[:1]:  # Only try 1 at a time for speed
+                            
+                            # Skip if already monitoring or bought recently
                             if token_address in monitored_tokens:
                                 continue
-                            
-                            # Skip if we've bought this token recently
                             if token_address in token_buy_timestamps:
-                                minutes_since_last_buy = (current_time - token_buy_timestamps[token_address]) / 60
-                                if minutes_since_last_buy < 30:  # Only 30 min cooldown
+                                if (current_time - token_buy_timestamps[token_address]) / 60 < 15:  # 15 min cooldown
                                     continue
                             
+                            # Quick liquidity check
                             try:
-                                # Quick liquidity check before buying
                                 has_liquidity = check_token_liquidity(token_address)
+                                if not has_liquidity:
+                                    continue
                                 
-                                if has_liquidity:
-                                    logging.info(f"Found very new token with liquidity: {token_address}")
+                                logging.info(f"🎯 BUYING fresh token: {token_address[:8]}")
+                                
+                                # Execute buy with higher amount for better profits
+                                buy_amount = CONFIG.get('BUY_AMOUNT_SOL', 0.25)
+                                success, signature = execute_via_javascript(token_address, buy_amount)
+                                
+                                buy_attempts += 1
+                                if success:
+                                    buy_successes += 1
+                                    logging.info(f"✅ BUY SUCCESS: {token_address[:8]} with {buy_amount} SOL")
                                     
-                                    # Use JavaScript for buying with higher amount
-                                    success, signature = execute_via_javascript(token_address, CONFIG.get('BUY_AMOUNT_SOL', 0.25))
+                                    # Initialize aggressive monitoring
+                                    initial_price = get_token_price(token_address) or 0.0001
+                                    monitored_tokens[token_address] = {
+                                        'initial_price': initial_price,
+                                        'highest_price': initial_price,
+                                        'buy_time': current_time,
+                                        'price_failures': 0
+                                    }
+                                    token_buy_timestamps[token_address] = current_time
                                     
-                                    buy_attempts += 1
-                                    if success:
-                                        logging.info(f"Successfully bought new token: {token_address}")
-                                        buy_successes += 1
-                                        
-                                        # Log potential profit target
-                                        target_pct = CONFIG.get('MIN_PROFIT_PCT', 20)
-                                        logging.info(f"🎯 Target: {target_pct}% profit or max {CONFIG.get('MAX_HOLD_TIME_SECONDS', 60)} seconds")
-                                        
-                                        # Break after one successful buy per search
-                                        break
-                                    else:
-                                        logging.warning(f"Failed to buy token: {token_address}")
+                                    # Only buy one token per iteration for focus
+                                    break
+                                else:
+                                    logging.warning(f"❌ BUY FAILED: {token_address[:8]}")
+                                    
                             except Exception as e:
-                                logging.error(f"Error buying token {token_address}: {str(e)}")
-                                circuit_breaker_check(error=True)
+                                logging.error(f"Error buying {token_address[:8]}: {str(e)}")
+                                continue
+                    
                 except Exception as e:
-                    logging.error(f"Error searching for new tokens: {str(e)}")
+                    logging.error(f"Error in token acquisition: {str(e)}")
                     circuit_breaker_check(error=True)
             
-            # Check if it's time for a performance report (every hour)
-            if current_time - last_performance_report_time > 3600:  # 1 hour
-                log_daily_performance()
-                last_performance_report_time = current_time
-                
-                # Calculate daily projection based on current profit
+            # PERFORMANCE REPORTING
+            if current_time - last_performance_report_time > 1800:  # Every 30 minutes
                 hours_running = (current_time - daily_profit_start_time) / 3600
+                
+                logging.info("📊 ========== PERFORMANCE UPDATE ==========")
+                logging.info(f"💰 Daily profit: ${daily_profit:.2f}")
+                logging.info(f"🎯 Successful trades: {successful_trades_today}")
+                logging.info(f"📈 Buy/Sell ratio: {buy_successes}/{sell_successes}")
+                logging.info(f"🔄 Tokens monitored: {len(monitored_tokens)}")
+                
                 if hours_running > 0:
-                    projected_daily = (daily_profit / hours_running) * 24
-                    logging.info(f"Current daily profit projection: ${projected_daily:.2f}")
+                    hourly_rate = daily_profit / hours_running
+                    projected_daily = hourly_rate * 24
+                    trades_per_hour = successful_trades_today / hours_running
                     
-                    # Calculate needed profit per hour to reach $1k
-                    if projected_daily < 1000:
-                        hours_left = 24 - hours_running
-                        profit_needed = 1000 - daily_profit
-                        hourly_needed = profit_needed / hours_left if hours_left > 0 else 0
-                        logging.info(f"Need ${hourly_needed:.2f}/hour for remaining {hours_left:.1f} hours to reach $1k daily target")
+                    logging.info(f"⚡ Hourly rate: ${hourly_rate:.2f}/hour")
+                    logging.info(f"📊 Projected daily: ${projected_daily:.2f}")
+                    logging.info(f"🔄 Trade rate: {trades_per_hour:.1f} trades/hour")
+                    
+                    # Check if we need to be more aggressive
+                    if projected_daily < 1000 and hours_running > 2:
+                        needed_hourly = (1000 - daily_profit) / (24 - hours_running)
+                        logging.warning(f"⚠️  Need ${needed_hourly:.2f}/hour to reach $1k target")
+                        
+                        # Increase buy amount if we're behind target
+                        if needed_hourly > hourly_rate * 1.5:
+                            CONFIG['BUY_AMOUNT_SOL'] = min(0.5, CONFIG['BUY_AMOUNT_SOL'] * 1.2)
+                            logging.info(f"🚀 Increasing buy amount to {CONFIG['BUY_AMOUNT_SOL']:.3f} SOL")
+                
+                logging.info("==========================================")
+                last_performance_report_time = current_time
             
-            # Check if it's a new day for profit tracking
-            if current_time - daily_profit_start_time > 86400:  # 24 hours
-                logging.info(f"Daily profit reset - Previous total: ${daily_profit:.2f}")
+            # Daily reset
+            if current_time - daily_profit_start_time > 86400:
+                logging.info(f"🌅 Daily reset - Previous total: ${daily_profit:.2f}")
                 daily_profit = 0
+                successful_trades_today = 0
                 daily_profit_start_time = current_time
             
-            # Print status update (every 5 minutes)
-            if current_time - last_status_time > 300:  # 5 minutes
-                logging.info(f"===== QUICK-FLIP STATUS UPDATE =====")
-                logging.info(f"Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"Buy/Sell: {buy_successes}/{sell_successes}")
-                logging.info(f"Daily profit: ${daily_profit:.2f}")
-                logging.info(f"Circuit breaker: {'ACTIVE' if circuit_breaker_active else 'INACTIVE'}")
-                
-                # Report on token ages in monitoring
-                if monitored_tokens:
-                    logging.info(f"Currently monitored tokens:")
-                    for addr, data in monitored_tokens.items():
-                        symbol = get_token_symbol(addr) or addr[:8]
-                        seconds_held = current_time - data['buy_time']
-                        pct_change = ((get_token_price(addr) or 0) / data['initial_price'] - 1) * 100
-                        logging.info(f"  - {symbol}: Held for {seconds_held:.1f}s, Change: {pct_change:.2f}%")
-                
+            # Brief status update every 2 minutes
+            if current_time - last_status_time > 120:
+                logging.info(f"🔄 Active tokens: {len(monitored_tokens)} | Daily profit: ${daily_profit:.2f} | Trades: {successful_trades_today}")
                 last_status_time = current_time
             
-            # Sleep very briefly between iterations to prevent CPU thrashing
-            # We want to check very frequently with quick-flip strategy
-            time.sleep(0.5)
+            # Ultra-short sleep for maximum responsiveness
+            time.sleep(0.2)  # 200ms sleep for ultra-fast monitoring
             
         except Exception as e:
             errors_encountered += 1
             logging.error(f"Error in main loop: {str(e)}")
-            
-            # Register error with circuit breaker
             circuit_breaker_check(error=True)
-            
-            # Longer sleep on error
-            time.sleep(5)
+            time.sleep(2)  # Short error recovery time
 
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
