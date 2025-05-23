@@ -3240,41 +3240,72 @@ def is_recent_token(token_address):
         return False
 
 def find_newest_tokens():
-    """Find the absolute newest tokens for quick flips."""
+    """Enhanced token finder with multiple fallback methods."""
     try:
-        # Try to get newest tokens from pump.fun API
-        newest_tokens = get_newest_pump_fun_tokens(limit=20)
+        # Method 1: Try pump.fun API first
+        tokens_from_pumpfun = get_newest_pump_fun_tokens(limit=20)
         
-        if not newest_tokens:
-            logging.warning("Failed to get tokens from pump.fun API")
-            return []
+        if tokens_from_pumpfun:
+            # Filter for very new tokens (under configured age limit)
+            very_new_tokens = []
+            for token in tokens_from_pumpfun:
+                if isinstance(token, dict) and token.get('minutes_old', 999) <= CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5):
+                    if 'address' in token:
+                        very_new_tokens.append(token['address'])
             
-        # Filter for VERY new tokens (under 5 minutes old)
-        very_new_tokens = []
-        for token in newest_tokens:
-            if token.get('minutes_old', 999) <= CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5):
-                # Only add if it has a mint address
-                if 'address' in token:
-                    very_new_tokens.append({
-                        'address': token['address'],
-                        'age_minutes': token.get('minutes_old', 999),
-                        'name': token.get('name', 'Unknown'),
-                        'symbol': token.get('symbol', 'Unknown')
-                    })
+            if very_new_tokens:
+                logging.info(f"Found {len(very_new_tokens)} very new tokens from pump.fun API")
+                return very_new_tokens
         
-        if very_new_tokens:
-            # Sort by age, newest first
-            very_new_tokens.sort(key=lambda x: x['age_minutes'])
-            logging.info(f"Found {len(very_new_tokens)} brand new tokens under {CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5)} minutes old")
+        # Method 2: Use transaction scanning as fallback
+        logging.info("Pump.fun API unavailable, trying transaction scanning...")
+        tokens_from_scanning = scan_recent_solana_transactions()
+        
+        if tokens_from_scanning:
+            logging.info(f"Found {len(tokens_from_scanning)} tokens from transaction scanning")
+            return tokens_from_scanning
+        
+        # Method 3: Use known fallback tokens
+        logging.info("Transaction scanning failed, using fallback tokens...")
+        fallback_tokens = get_fallback_newest_tokens()
+        
+        if fallback_tokens:
+            logging.info(f"Using {len(fallback_tokens)} fallback tokens")
+            return fallback_tokens
+        
+        # Method 4: Return known tradable tokens as absolute last resort
+        logging.warning("All token discovery methods failed, using known tradable tokens")
+        known_tradable = [
+            t["address"] for t in KNOWN_TOKENS 
+            if t.get("tradable", False) and t["address"] != "So11111111111111111111111111111111111111112"
+        ]
+        
+        # Filter out tokens we're already monitoring or bought recently
+        current_time = time.time()
+        available_tokens = []
+        
+        for token_address in known_tradable:
+            # Skip if currently monitoring
+            if token_address in monitored_tokens:
+                continue
+                
+            # Skip if bought recently
+            if token_address in token_buy_timestamps:
+                minutes_since_buy = (current_time - token_buy_timestamps[token_address]) / 60
+                if minutes_since_buy < 60:  # 1 hour cooldown for known tokens
+                    continue
             
-            # Extract just the addresses
-            return [t['address'] for t in very_new_tokens]
-        else:
-            logging.info(f"No tokens found under {CONFIG.get('MAX_TOKEN_AGE_MINUTES', 5)} minutes old")
-            return []
-            
+            available_tokens.append(token_address)
+        
+        if available_tokens:
+            logging.info(f"Using {len(available_tokens)} known tradable tokens as last resort")
+            return available_tokens[:3]  # Limit to 3
+        
+        logging.warning("No tokens available from any method")
+        return []
+        
     except Exception as e:
-        logging.error(f"Error finding newest tokens: {str(e)}")
+        logging.error(f"Error in find_newest_tokens: {str(e)}")
         return []
 
 def monitor_token_peak_price(token_address):
