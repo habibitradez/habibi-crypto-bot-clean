@@ -779,6 +779,255 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     return None
 
 
+def get_verified_tradable_tokens():
+    """Get a list of verified tradable tokens for fallback."""
+    verified_tokens = [
+        {
+            "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            "symbol": "BONK",
+            "verified": True
+        },
+        {
+            "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
+            "symbol": "WIF",
+            "verified": True
+        },
+        {
+            "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+            "symbol": "JUP",
+            "verified": True
+        },
+        {
+            "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+            "symbol": "ORCA", 
+            "verified": True
+        },
+        {
+            "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+            "symbol": "SAMO",
+            "verified": True
+        }
+    ]
+    
+    # Filter out tokens we're already monitoring or bought recently
+    current_time = time.time()
+    available_tokens = []
+    
+    for token in verified_tokens:
+        token_address = token["address"]
+        
+        # Skip if currently monitoring
+        if token_address in monitored_tokens:
+            continue
+            
+        # Skip if bought recently (reduced cooldown for verified tokens)
+        if token_address in token_buy_timestamps:
+            minutes_since_buy = (current_time - token_buy_timestamps[token_address]) / 60
+            if minutes_since_buy < 20:  # Only 20 min cooldown for verified tokens
+                continue
+        
+        available_tokens.append(token_address)
+    
+    return available_tokens
+    
+def enhanced_find_newest_tokens():
+    """Enhanced token finder with better validation."""
+    try:
+        logging.info("🔍 Starting enhanced token search...")
+        
+        # Method 1: Try pump.fun API with validation
+        try:
+            newest_tokens = get_newest_pump_fun_tokens(limit=10)  # Reduced limit for speed
+            
+            if newest_tokens:
+                validated_tokens = []
+                
+                for token in newest_tokens:
+                    if isinstance(token, dict) and token.get('minutes_old', 999) <= 3:  # Even newer - 3 minutes
+                        token_address = token.get('address')
+                        if token_address:
+                            # Validate before adding
+                            if validate_token_before_trading(token_address):
+                                validated_tokens.append(token_address)
+                                logging.info(f"✅ Validated new token: {token.get('symbol', 'Unknown')} ({token_address[:8]})")
+                            else:
+                                logging.warning(f"❌ Failed validation: {token.get('symbol', 'Unknown')} ({token_address[:8]})")
+                
+                if validated_tokens:
+                    logging.info(f"🎯 Found {len(validated_tokens)} validated fresh tokens")
+                    return validated_tokens[:2]  # Return max 2 for focus
+        
+        except Exception as e:
+            logging.error(f"Error in pump.fun token search: {str(e)}")
+        
+        # Method 2: Use verified tradable tokens as fallback
+        logging.info("🔄 Using verified tradable tokens as fallback...")
+        verified_tokens = get_verified_tradable_tokens()
+        
+        if verified_tokens:
+            logging.info(f"📋 Found {len(verified_tokens)} verified tradable tokens")
+            return verified_tokens[:2]  # Return max 2
+        
+        # Method 3: Scan recent transactions (if we have time)
+        try:
+            logging.info("🔍 Scanning recent transactions for tokens...")
+            scanned_tokens = scan_recent_solana_transactions()
+            
+            if scanned_tokens:
+                validated_scanned = []
+                for token_address in scanned_tokens[:3]:  # Check only first 3
+                    if validate_token_before_trading(token_address):
+                        validated_scanned.append(token_address)
+                
+                if validated_scanned:
+                    logging.info(f"✅ Found {len(validated_scanned)} validated tokens from transaction scan")
+                    return validated_scanned[:1]  # Return only 1 from scanning
+        
+        except Exception as e:
+            logging.error(f"Error in transaction scanning: {str(e)}")
+        
+        logging.warning("❌ No suitable tokens found from any method")
+        return []
+        
+    except Exception as e:
+        logging.error(f"Error in enhanced_find_newest_tokens: {str(e)}")
+        return []
+
+def smart_token_selection(potential_tokens):
+    """Intelligently select the best token to trade."""
+    if not potential_tokens:
+        return None
+    
+    try:
+        # Score tokens based on various factors
+        scored_tokens = []
+        
+        for token_address in potential_tokens:
+            score = 0
+            
+            # Factor 1: Not recently bought (higher score for longer gap)
+            if token_address in token_buy_timestamps:
+                minutes_since_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                if minutes_since_buy > 60:
+                    score += 3
+                elif minutes_since_buy > 30:
+                    score += 2
+                elif minutes_since_buy > 15:
+                    score += 1
+            else:
+                score += 5  # Never bought before gets highest score
+            
+            # Factor 2: Known good tokens get bonus
+            known_good = [
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
+            ]
+            if token_address in known_good:
+                score += 2
+            
+            # Factor 3: Quick price check bonus
+            try:
+                price = get_token_price(token_address)
+                if price and price > 0:
+                    score += 2
+            except:
+                pass
+            
+            scored_tokens.append((token_address, score))
+        
+        # Sort by score (highest first)
+        scored_tokens.sort(key=lambda x: x[1], reverse=True)
+        
+        if scored_tokens:
+            best_token = scored_tokens[0][0]
+            best_score = scored_tokens[0][1]
+            logging.info(f"🎯 Selected best token: {best_token[:8]} (score: {best_score})")
+            return best_token
+        
+        return potential_tokens[0] if potential_tokens else None
+        
+    except Exception as e:
+        logging.error(f"Error in smart token selection: {str(e)}")
+        return potential_tokens[0] if potential_tokens else None
+
+def validate_token_before_trading(token_address: str) -> bool:
+    """Comprehensive token validation before attempting to trade."""
+    try:
+        logging.info(f"🔍 Validating token: {token_address[:8]}...")
+        
+        # 1. Basic address validation
+        if len(token_address) != 44:
+            logging.warning(f"❌ Invalid address length: {token_address}")
+            return False
+        
+        # 2. Check if token is in known non-tradable list
+        known_non_tradable = [
+            "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi",  # HADES
+            "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA",  # PENGU
+            "4HjJphebQ7ogUjRnch39s8Pk5DBmHePAwZrUHW1Ka6UT",  # GIGA
+            "PNUtFk6iQhs2VXiCMQpzGM81PdE7yGL5Y4fo9mFfb7o",   # PNUT
+            "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW",  # SLERF
+        ]
+        
+        if token_address in known_non_tradable:
+            logging.warning(f"❌ Token in known non-tradable list: {token_address[:8]}")
+            return False
+        
+        # 3. Quick Jupiter tradability check with minimal amount
+        try:
+            quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
+            params = {
+                "inputMint": "So11111111111111111111111111111111111111112",  # SOL
+                "outputMint": token_address,
+                "amount": "1000000",  # 0.001 SOL - very small amount
+                "slippageBps": "5000"  # 50% slippage - very lenient
+            }
+            
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            }
+            
+            response = requests.get(quote_url, params=params, headers=headers, timeout=5)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "outAmount" in data and int(data["outAmount"]) > 0:
+                    logging.info(f"✅ Token is tradable: {token_address[:8]}")
+                    return True
+                else:
+                    logging.warning(f"❌ No valid quote for token: {token_address[:8]}")
+                    return False
+            
+            elif response.status_code == 400:
+                # Check for specific error
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data["error"]
+                        if "not tradable" in error_msg.lower() or "TOKEN_NOT_TRADABLE" in error_msg:
+                            logging.warning(f"❌ Jupiter says not tradable: {token_address[:8]}")
+                            return False
+                except:
+                    pass
+                
+                logging.warning(f"❌ Bad request for token: {token_address[:8]}")
+                return False
+            
+            else:
+                logging.warning(f"❌ HTTP {response.status_code} for token: {token_address[:8]}")
+                return False
+                
+        except requests.exceptions.Timeout:
+            logging.warning(f"⏰ Timeout validating token: {token_address[:8]}")
+            return False
+        except Exception as e:
+            logging.error(f"❌ Error validating token {token_address[:8]}: {str(e)}")
+            return False
+        
+    except Exception as e:
+        logging.error(f"❌ Error in token validation: {str(e)}")
+        return False
+
 def get_token_price_alternative(token_address: str) -> Optional[float]:
     """Alternative method to get token price from Jupiter API."""
     try:
