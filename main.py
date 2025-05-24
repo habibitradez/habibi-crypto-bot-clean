@@ -4101,6 +4101,7 @@ def trading_loop():
             circuit_breaker_check(error=True)
             time.sleep(2)  # Short error recovery time
 
+
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
     try:
