@@ -17,6 +17,7 @@ const MIN_PRIORITY_FEE_SMALL = 3000000;
 
 // QuickNode Metis configuration
 const USE_QUICKNODE_METIS = process.env.USE_QUICKNODE_METIS === 'true';
+const QUICKNODE_ENDPOINT = process.env.SOLANA_RPC_URL; // Your QuickNode RPC URL
 const QUICKNODE_RATE_LIMIT = 50; // 50 RPS for Launch plan
 const QUICKNODE_API_DELAY = Math.floor(1000 / QUICKNODE_RATE_LIMIT); // 20ms between calls
 
@@ -178,7 +179,7 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
   console.log(`🔍 Getting quote via QuickNode Metis: ${amount} ${inputMint.slice(0,8)}... -> ${outputMint.slice(0,8)}...`);
   
   // QuickNode Metis Jupiter Swap API endpoint
-  const quoteUrl = `${RPC_URL}/quote`;
+  const quoteUrl = `${QUICKNODE_ENDPOINT}/quote`;
   
   const params = {
     inputMint: inputMint,
@@ -212,7 +213,7 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   
   console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
   
-  const swapUrl = `${RPC_URL}/swap`;
+  const swapUrl = `${QUICKNODE_ENDPOINT}/swap`;
   
   const swapRequest = {
     quoteResponse: quoteResponse.data,
@@ -331,7 +332,7 @@ async function executeSwap() {
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
     // Use QuickNode Metis or public Jupiter API
-    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? RPC_URL : 'https://quote-api.jup.ag';
+    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? QUICKNODE_ENDPOINT : 'https://quote-api.jup.ag';
     
     // Set input and output mints based on operation
     const inputMint = IS_SELL 
@@ -561,9 +562,7 @@ async function executeSwap() {
       // Use QuickNode Metis Jupiter API
       const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
       swapResponse = await retryWithBackoff(async () => {
-        return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priority
-
-Fee, slippageBps);
+        return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
       }, maxRetries);
     } else {
       // Use public Jupiter API
