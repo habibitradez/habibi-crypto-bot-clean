@@ -15,9 +15,10 @@ const MIN_PRIORITY_FEE_BUYS = 250000;
 const MIN_PRIORITY_FEE_SELLS = 1500000;
 const MIN_PRIORITY_FEE_SMALL = 3000000;
 
-// QuickNode Metis configuration
+// QuickNode Metis configuration - UPDATED TO USE CORRECT ENVIRONMENT VARIABLES
 const USE_QUICKNODE_METIS = process.env.USE_QUICKNODE_METIS === 'true';
-const QUICKNODE_ENDPOINT = process.env.SOLANA_RPC_URL; // Your QuickNode RPC URL
+const QUICKNODE_JUPITER_ENDPOINT = process.env.QUICKNODE_JUPITER_URL; // Your Jupiter API endpoint
+const SOLANA_RPC_ENDPOINT = process.env.SOLANA_RPC_URL; // Your regular RPC endpoint
 const QUICKNODE_RATE_LIMIT = 50; // 50 RPS for Launch plan
 const QUICKNODE_API_DELAY = Math.floor(1000 / QUICKNODE_RATE_LIMIT); // 20ms between calls
 
@@ -42,6 +43,8 @@ const RPC_RATE_LIMITS = {
 console.log(`Node.js version: ${process.version}`);
 console.log(`Running in directory: ${process.cwd()}`);
 console.log(`QuickNode Metis enabled: ${USE_QUICKNODE_METIS}`);
+console.log(`QuickNode Jupiter URL: ${QUICKNODE_JUPITER_ENDPOINT ? 'Available' : 'Not set'}`);
+console.log(`Solana RPC URL: ${SOLANA_RPC_ENDPOINT ? 'Available' : 'Not set'}`);
 
 // Get arguments from command line
 const TOKEN_ADDRESS = process.argv[2] || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
@@ -50,7 +53,7 @@ const IS_SELL = process.argv[4] === 'true';
 const IS_FORCE_SELL = process.argv[5] === 'true';
 
 // Get environment variables
-const RPC_URL = process.env.SOLANA_RPC_URL || process.env.solana_rpc_url || '';
+const RPC_URL = SOLANA_RPC_ENDPOINT || process.env.solana_rpc_url || '';
 const PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || '';
 const IS_SMALL_TOKEN_SELL = process.env.SMALL_TOKEN_SELL === 'true' && IS_SELL;
 
@@ -172,14 +175,14 @@ function logRateLimitStats() {
   }
 }
 
-// QuickNode Metis Jupiter API functions
+// QuickNode Metis Jupiter API functions - UPDATED TO USE CORRECT ENDPOINT
 async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) {
   await quickNodeRateLimit();
   
   console.log(`🔍 Getting quote via QuickNode Metis: ${amount} ${inputMint.slice(0,8)}... -> ${outputMint.slice(0,8)}...`);
   
-  // QuickNode Metis Jupiter Swap API endpoint - correct format with v6
-  const quoteUrl = `${QUICKNODE_ENDPOINT}/v6/quote`;
+  // Use the dedicated QuickNode Jupiter endpoint
+  const quoteUrl = `${QUICKNODE_JUPITER_ENDPOINT}/v6/quote`;
   
   const params = {
     inputMint: inputMint,
@@ -190,6 +193,8 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
     onlyDirectRoutes: false,
     asLegacyTransaction: false
   };
+  
+  console.log(`QuickNode Jupiter Quote URL: ${quoteUrl}`);
   
   const response = await axios.get(quoteUrl, {
     params: params,
@@ -213,8 +218,8 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   
   console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
   
-  // QuickNode Metis Jupiter Swap API endpoint - correct format with v6
-  const swapUrl = `${QUICKNODE_ENDPOINT}/v6/swap`;
+  // Use the dedicated QuickNode Jupiter endpoint
+  const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/v6/swap`;
   
   const swapRequest = {
     quoteResponse: quoteResponse.data,
@@ -226,6 +231,8 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
       maxBps: parseInt(slippageBps) 
     }
   };
+  
+  console.log(`QuickNode Jupiter Swap URL: ${swapUrl}`);
   
   const response = await axios.post(swapUrl, swapRequest, {
     timeout: 20000,
@@ -307,7 +314,12 @@ async function executeSwap() {
     console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL${IS_FORCE_SELL ? ' (FORCE SELL MODE)' : ''}`);
     console.log(`Using ${USE_QUICKNODE_METIS ? 'QuickNode Metis Jupiter API' : 'Public Jupiter API'}`);
     
-    // Create connection to Solana with better error handling
+    if (USE_QUICKNODE_METIS && !QUICKNODE_JUPITER_ENDPOINT) {
+      console.error('QuickNode Metis enabled but QUICKNODE_JUPITER_URL not set!');
+      process.exit(1);
+    }
+    
+    // Create connection to Solana with better error handling - USES REGULAR RPC
     const connection = new Connection(RPC_URL, {
       commitment: 'confirmed',
       disableRetryOnRateLimit: false,
@@ -332,8 +344,8 @@ async function executeSwap() {
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
-    // Use QuickNode Metis or public Jupiter API
-    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? QUICKNODE_ENDPOINT : 'https://quote-api.jup.ag';
+    // Use QuickNode Metis Jupiter or public Jupiter API
+    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? QUICKNODE_JUPITER_ENDPOINT : 'https://quote-api.jup.ag';
     
     // Set input and output mints based on operation
     const inputMint = IS_SELL 
@@ -513,13 +525,14 @@ async function executeSwap() {
     
     if (USE_QUICKNODE_METIS) {
       // Use QuickNode Metis Jupiter API
+      console.log(`💎 Using QuickNode Metis Jupiter API for quotes`);
       quoteResponse = await retryWithBackoff(async () => {
         return await getQuoteViaQuickNode(inputMint, outputMint, amount, parseInt(slippageBps));
       });
     } else {
       // Use public Jupiter API
       const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
-      console.log(`Using quote URL: ${quoteUrl}`);
+      console.log(`Using public Jupiter quote URL: ${quoteUrl}`);
       
       const quoteParams = {
         inputMint: inputMint,
@@ -561,6 +574,7 @@ async function executeSwap() {
     
     if (USE_QUICKNODE_METIS) {
       // Use QuickNode Metis Jupiter API
+      console.log(`💎 Using QuickNode Metis Jupiter API for swaps`);
       const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
       swapResponse = await retryWithBackoff(async () => {
         return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
@@ -568,7 +582,7 @@ async function executeSwap() {
     } else {
       // Use public Jupiter API
       const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
-      console.log(`Using swap URL: ${swapUrl}`);
+      console.log(`Using public Jupiter swap URL: ${swapUrl}`);
       
       const swapRequest = {
         quoteResponse: quoteResponse.data,
