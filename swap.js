@@ -261,25 +261,29 @@ async function getSwapInstructionsViaQuickNode(quoteResponse, userPublicKey, pri
   }
 }
 
-// Fallback: Traditional swap endpoint for compatibility
+// Fixed QuickNode Metis swap request format based on official documentation
 async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, priorityFee, slippageBps) {
   await quickNodeRateLimit();
   
-  console.log(`🔄 Getting swap transaction via QuickNode Metis (traditional method)...`);
+  console.log(`🔄 Getting swap transaction via QuickNode Metis (correct format)...`);
   
-  // Try the traditional /swap endpoint
   const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/swap`;
   
+  // FIXED: Use exact format from QuickNode documentation
   const swapRequest = {
     userPublicKey: userPublicKey,
-    quoteResponse: quoteResponse.data,
     wrapAndUnwrapSol: true,
     prioritizationFeeLamports: priorityFee,
     dynamicComputeUnitLimit: true,
-    asLegacyTransaction: false
+    asLegacyTransaction: false,
+    skipUserAccountsRpcCalls: false,
+    useSharedAccounts: true,
+    // CRITICAL: Pass the complete quoteResponse object as received from /quote
+    quoteResponse: quoteResponse.data
   };
   
   console.log(`QuickNode Jupiter Swap URL: ${swapUrl}`);
+  console.log(`Request format matches QuickNode documentation`);
   
   const response = await axios.post(swapUrl, swapRequest, {
     timeout: 20000,
@@ -287,7 +291,7 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   });
   
   if (response.data && response.data.swapTransaction) {
-    console.log(`✅ QuickNode swap transaction received`);
+    console.log(`✅ QuickNode swap transaction received successfully`);
     return response;
   } else {
     throw new Error('Invalid swap transaction response from QuickNode Metis');
@@ -616,68 +620,106 @@ async function executeSwap() {
     
     await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 500 : 1000));
     
-    // Step 2: Get swap instructions (Use public Jupiter API for now due to QuickNode 405 errors)
+    // Step 2: Get swap transaction (Try QuickNode with corrected format first)
     let swapResponse;
+    let transaction;
     
-    // Always use public Jupiter API for swaps until QuickNode 405 errors are resolved
-    console.log(`🔄 Using PUBLIC Jupiter API for swaps (QuickNode has 405 errors on swap endpoints)`);
-    const swapUrl = `https://quote-api.jup.ag/v6/swap`;
-    console.log(`Using public Jupiter swap URL: ${swapUrl}`);
-    
-    const swapRequest = {
-      quoteResponse: quoteResponse.data,
-      userPublicKey: keypair.publicKey.toBase58(),
-      wrapAndUnwrapSol: true,
-      prioritizationFeeLamports: priorityFee,
-      dynamicComputeUnitLimit: true,
-      dynamicSlippage: { maxBps: parseInt(slippageBps) }
-    };
-    
-    console.log('Swap request prepared for public Jupiter API');
-    
-    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
-    swapResponse = await retryWithBackoff(async () => {
-      console.log('Attempting to prepare swap via public Jupiter API...');
-      return await axios.post(swapUrl, swapRequest, {
-        headers: { 
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-        },
-        timeout: 20000
-      });
-    }, maxRetries);
-    
-    // Handle public Jupiter API or if QuickNode didn't create a transaction above
-    if (!transaction) {
-      if (!swapResponse || !swapResponse.data || !swapResponse.data.swapTransaction) {
-        console.error('No swap transaction available from any method');
-        if (IS_SELL || IS_FORCE_SELL) {
-          console.error("Marking as sold anyway to remove from monitoring.");
-          process.exit(0);
-        }
-        process.exit(1);
-      }
-      
-      // Handle traditional serialized transaction
-      const serializedTx = swapResponse.data.swapTransaction;
-      console.log('Received transaction data (length):', serializedTx.length);
+    if (USE_QUICKNODE_METIS) {
+      // Try QuickNode Metis with corrected request format
+      console.log(`💎 Trying QuickNode Metis Jupiter API with correct request format...`);
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
       
       try {
-        const buffer = Buffer.from(serializedTx, 'base64');
-        transaction = VersionedTransaction.deserialize(buffer);
-        console.log('Successfully deserialized VersionedTransaction');
+        swapResponse = await retryWithBackoff(async () => {
+          return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
+        }, maxRetries);
         
-        // Sign the transaction
-        transaction.sign([keypair]);
-        console.log('Transaction signed successfully');
-      } catch (deserializeError) {
-        console.error('Error deserializing/signing transaction:', deserializeError.message);
-        if (IS_SELL || IS_FORCE_SELL) {
-          console.error("Marking as sold anyway due to transaction error.");
-          process.exit(0);
+        if (swapResponse.data && swapResponse.data.swapTransaction) {
+          console.log(`✅ QuickNode swap successful! Using premium Jupiter API.`);
+          // Transaction will be handled in the common section below
         }
-        process.exit(1);
+        
+      } catch (quickNodeError) {
+        console.log(`⚠️ QuickNode failed: ${quickNodeError.message}`);
+        console.log(`🔄 Falling back to public Jupiter API...`);
+        
+        // Fallback to public Jupiter API
+        const swapUrl = `https://quote-api.jup.ag/v6/swap`;
+        const swapRequest = {
+          quoteResponse: quoteResponse.data,
+          userPublicKey: keypair.publicKey.toBase58(),
+          wrapAndUnwrapSol: true,
+          prioritizationFeeLamports: priorityFee,
+          dynamicComputeUnitLimit: true,
+          dynamicSlippage: { maxBps: parseInt(slippageBps) }
+        };
+        
+        swapResponse = await retryWithBackoff(async () => {
+          return await axios.post(swapUrl, swapRequest, {
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+            },
+            timeout: 20000
+          });
+        }, maxRetries);
+        
+        console.log(`✅ Public Jupiter API fallback successful`);
       }
+    } else {
+      // Use public Jupiter API directly
+      console.log(`🔄 Using public Jupiter API for swaps`);
+      const swapUrl = `https://quote-api.jup.ag/v6/swap`;
+      const swapRequest = {
+        quoteResponse: quoteResponse.data,
+        userPublicKey: keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol: true,
+        prioritizationFeeLamports: priorityFee,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: { maxBps: parseInt(slippageBps) }
+      };
+      
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+      swapResponse = await retryWithBackoff(async () => {
+        return await axios.post(swapUrl, swapRequest, {
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+          },
+          timeout: 20000
+        });
+      }, maxRetries);
+    }
+    
+    // Handle transaction processing (common for both QuickNode and public API)
+    if (!swapResponse || !swapResponse.data || !swapResponse.data.swapTransaction) {
+      console.error('No swap transaction available from any method');
+      if (IS_SELL || IS_FORCE_SELL) {
+        console.error("Marking as sold anyway to remove from monitoring.");
+        process.exit(0);
+      }
+      process.exit(1);
+    }
+    
+    // Deserialize and sign transaction
+    const serializedTx = swapResponse.data.swapTransaction;
+    console.log('Received transaction data (length):', serializedTx.length);
+    
+    try {
+      const buffer = Buffer.from(serializedTx, 'base64');
+      transaction = VersionedTransaction.deserialize(buffer);
+      console.log('Successfully deserialized VersionedTransaction');
+      
+      // Sign the transaction
+      transaction.sign([keypair]);
+      console.log('Transaction signed successfully');
+    } catch (deserializeError) {
+      console.error('Error deserializing/signing transaction:', deserializeError.message);
+      if (IS_SELL || IS_FORCE_SELL) {
+        console.error("Marking as sold anyway due to transaction error.");
+        process.exit(0);
+      }
+      process.exit(1);
     }
     
     // Submit the transaction
