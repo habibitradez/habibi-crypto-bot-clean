@@ -4530,6 +4530,7 @@ def trading_loop():
     logging.info("⚡ Strategy: 15-30% quick gains on validated tokens only")
     logging.info("🔄 Max hold time: 45 seconds to avoid rug pulls")
     logging.info("🛡️ Enhanced validation to prevent TOKEN_NOT_TRADABLE errors")
+    logging.info("💰 QuickNode Metis Integration: " + ("ENABLED" if CONFIG.get('USE_QUICKNODE_METIS') else "DISABLED"))
     logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
     logging.info("================================================================================")
     
@@ -4578,7 +4579,7 @@ def trading_loop():
                     seconds_held = current_time - token_data['buy_time']
                     
                     # FORCE SELL after 45 seconds regardless of price
-                    if seconds_held >= 45:
+                    if seconds_held >= CONFIG.get('MAX_HOLD_TIME_SECONDS', 45):
                         logging.warning(f"⏰ FORCE SELLING {token_address[:8]} after {seconds_held:.1f}s")
                         try:
                             success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
@@ -4606,8 +4607,8 @@ def trading_loop():
                         
                         # ULTRA-AGGRESSIVE SELLING CONDITIONS:
                         
-                        # 1. Take 15% profit immediately (lowered from 20%)
-                        if price_change_pct >= 15:
+                        # 1. Take MIN_PROFIT_PCT profit immediately (default 15%)
+                        if price_change_pct >= CONFIG.get('MIN_PROFIT_PCT', 15):
                             logging.info(f"🔥 QUICK PROFIT: {price_change_pct:.1f}% on {token_symbol}")
                             try:
                                 success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
@@ -4643,7 +4644,7 @@ def trading_loop():
                             continue
                         
                         # 3. Stop loss at 8% (tighter than before)
-                        if price_change_pct <= -8:
+                        if price_change_pct <= -CONFIG.get('STOP_LOSS_PERCENT', 8):
                             logging.warning(f"🛑 STOP LOSS: {price_change_pct:.1f}% on {token_symbol}")
                             try:
                                 success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
@@ -4718,15 +4719,18 @@ def trading_loop():
                     del monitored_tokens[token_address]
                     logging.info(f"🗑️ Removed {token_address[:8]} from monitoring")
             
-           # TOKEN ACQUISITION - Enhanced with QuickNode pump.fun API
+            # TOKEN ACQUISITION - Enhanced with QuickNode Metis pump.fun API
             if (current_time - last_token_search_time > token_search_interval and
                     len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 3)):
                 
-                logging.info("🚀 Searching for validated tradable tokens with QuickNode pump.fun API...")
+                logging.info("🚀 Searching for validated tradable tokens...")
+                if CONFIG.get('USE_QUICKNODE_METIS'):
+                    logging.info("💰 Using QuickNode Metis Jupiter Swap API ($250/month premium service)")
+                
                 last_token_search_time = current_time
                 
                 try:
-                    # Use QuickNode-powered token discovery (your $250/month service!)
+                    # Use enhanced token discovery with QuickNode integration
                     potential_tokens = enhanced_find_newest_tokens_with_quicknode()
                     
                     if potential_tokens:
@@ -4734,98 +4738,108 @@ def trading_loop():
                         selected_token = smart_token_selection(potential_tokens)
                         
                         if selected_token:
+                            # Handle both dict and string formats
+                            if isinstance(selected_token, dict):
+                                token_address = selected_token.get('address')
+                                token_symbol = selected_token.get('symbol', 'UNKNOWN')
+                                token_source = selected_token.get('source', 'unknown')
+                            else:
+                                token_address = selected_token
+                                token_symbol = get_token_symbol(token_address) or token_address[:8]
+                                token_source = 'fallback'
+                            
                             # Double-check it's not already being monitored
-                            if selected_token not in monitored_tokens:
+                            if token_address and token_address not in monitored_tokens:
                                 
                                 # Final validation before buying
-                                logging.info(f"🎯 Final validation for QuickNode token: {selected_token[:8]}")
+                                logging.info(f"🎯 Final validation for token: {token_address[:8]}")
                                 
-                                if validate_token_before_trading(selected_token):
-                                    # Get additional QuickNode info before buying
-                                    try:
-                                        token_info = get_pump_fun_token_info_quicknode(selected_token)
-                                        if token_info:
-                                            logging.info(f"📊 QuickNode Token Info: {token_info['symbol']} | MC: ${token_info['market_cap']} | Vol: ${token_info['volume_24h']}")
-                                    except:
-                                        pass
+                                if validate_token_before_trading(token_address):
                                     
-                                    logging.info(f"🚀 BUYING QuickNode-discovered token: {selected_token[:8]}")
+                                    # Get additional QuickNode info if available
+                                    if CONFIG.get('USE_QUICKNODE_METIS') and 'quicknode' in token_source:
+                                        try:
+                                            token_info = get_pump_fun_token_info_quicknode(token_address)
+                                            if token_info:
+                                                logging.info(f"📊 QuickNode Token Info: {token_info['symbol']} | MC: ${token_info['market_cap']} | Vol: ${token_info['volume_24h']}")
+                                        except:
+                                            pass
+                                    
+                                    logging.info(f"🚀 BUYING validated token: {token_symbol} ({token_address[:8]})")
+                                    if CONFIG.get('USE_QUICKNODE_METIS'):
+                                        logging.info(f"💎 Premium QuickNode discovery source: {token_source}")
                                     
                                     # Execute buy with configured amount
                                     buy_amount = CONFIG.get('BUY_AMOUNT_SOL', 0.25)
-                                    success, signature = execute_via_javascript(selected_token, buy_amount)
+                                    success, signature = execute_via_javascript(token_address, buy_amount)
                                     
                                     buy_attempts += 1
                                     if success:
                                         buy_successes += 1
-                                        logging.info(f"✅ QUICKNODE BUY SUCCESS: {selected_token[:8]} with {buy_amount} SOL")
+                                        logging.info(f"✅ BUY SUCCESS: {token_symbol} ({token_address[:8]}) with {buy_amount} SOL")
                                         logging.info(f"📋 Transaction: {signature}")
-                                        logging.info(f"💰 Using premium QuickNode pump.fun data ($250/month service)")
+                                        
+                                        if CONFIG.get('USE_QUICKNODE_METIS'):
+                                            logging.info(f"🚀 Premium QuickNode Metis discovery successful!")
                                         
                                         # Initialize ultra-aggressive monitoring
                                         try:
-                                            initial_price = get_token_price(selected_token)
+                                            initial_price = get_token_price(token_address)
                                             if initial_price and initial_price > 0:
-                                                monitored_tokens[selected_token] = {
+                                                monitored_tokens[token_address] = {
                                                     'initial_price': initial_price,
                                                     'highest_price': initial_price,
                                                     'buy_time': current_time,
                                                     'price_failures': 0,
-                                                    'source': 'quicknode_pumpfun'  # Track source
+                                                    'source': token_source
                                                 }
-                                                logging.info(f"📊 Initial price: {initial_price} SOL (QuickNode pump.fun source)")
+                                                logging.info(f"📊 Initial price: {initial_price} SOL ({token_source} source)")
                                             else:
                                                 # Use very small fallback price
-                                                monitored_tokens[selected_token] = {
+                                                monitored_tokens[token_address] = {
                                                     'initial_price': 0.00001,
                                                     'highest_price': 0.00001,
                                                     'buy_time': current_time,
                                                     'price_failures': 0,
-                                                    'source': 'quicknode_pumpfun'
+                                                    'source': token_source
                                                 }
-                                                logging.warning(f"⚠️ Using fallback price for QuickNode token {selected_token[:8]}")
+                                                logging.warning(f"⚠️ Using fallback price for token {token_address[:8]}")
                                         except Exception as e:
                                             logging.error(f"Error getting initial price: {str(e)}")
                                             # Use fallback
-                                            monitored_tokens[selected_token] = {
+                                            monitored_tokens[token_address] = {
                                                 'initial_price': 0.00001,
                                                 'highest_price': 0.00001,
                                                 'buy_time': current_time,
                                                 'price_failures': 0,
-                                                'source': 'quicknode_pumpfun'
+                                                'source': token_source
                                             }
                                         
-                                        token_buy_timestamps[selected_token] = current_time
+                                        token_buy_timestamps[token_address] = current_time
                                         
                                         # Log target for this token
-                                        logging.info(f"🎯 QuickNode Token Target: 15% profit or 45-second exit")
+                                        logging.info(f"🎯 Token Target: {CONFIG.get('MIN_PROFIT_PCT', 15)}% profit or {CONFIG.get('MAX_HOLD_TIME_SECONDS', 45)}-second exit")
                                         
                                     else:
-                                        logging.warning(f"❌ QUICKNODE BUY FAILED: {selected_token[:8]} - will retry later")
+                                        logging.warning(f"❌ BUY FAILED: {token_symbol} ({token_address[:8]}) - will retry later")
                                         
                                 else:
-                                    logging.warning(f"❌ Final validation failed for QuickNode token: {selected_token[:8]}")
+                                    logging.warning(f"❌ Final validation failed for token: {token_address[:8]}")
                             else:
-                                logging.info(f"⏭️ QuickNode token {selected_token[:8]} already being monitored")
+                                if token_address:
+                                    logging.info(f"⏭️ Token {token_address[:8]} already being monitored")
+                                else:
+                                    logging.warning(f"❌ No valid token address from selection")
                         else:
-                            logging.warning(f"❌ Smart selection returned no token from QuickNode results")
+                            logging.warning(f"❌ Smart selection returned no token")
                     else:
-                        logging.warning(f"❌ No validated tokens found from QuickNode this round")
+                        logging.warning(f"❌ No validated tokens found this round")
                         
                         # If we can't find any tokens, reduce search interval temporarily
                         token_search_interval = 20  # Search more frequently when tokens are scarce
                         logging.info(f"🔄 Reduced search interval to {token_search_interval}s due to token scarcity")
                         
                 except Exception as e:
-                    logging.error(f"❌ Error in QuickNode token acquisition: {str(e)}")
-                    circuit_breaker_check(error=True)
-                    
-            else:
-                # Reset search interval to normal when we have tokens
-                if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 3):
-                    token_search_interval = 30
-                        
-            except Exception as e:
                     logging.error(f"❌ Error in token acquisition: {str(e)}")
                     circuit_breaker_check(error=True)
                     
@@ -4844,6 +4858,9 @@ def trading_loop():
                 logging.info(f"📈 Buy/Sell ratio: {buy_successes}/{sell_successes}")
                 logging.info(f"🔄 Tokens monitored: {len(monitored_tokens)}")
                 logging.info(f"🔥 Buy attempts: {buy_attempts} | Success rate: {(buy_successes/buy_attempts*100) if buy_attempts > 0 else 0:.1f}%")
+                
+                if CONFIG.get('USE_QUICKNODE_METIS'):
+                    logging.info(f"💎 QuickNode Metis: ACTIVE (Premium $250/month service)")
                 
                 if hours_running > 0:
                     hourly_rate = daily_profit / hours_running
@@ -4886,7 +4903,8 @@ def trading_loop():
                     active_tokens_info.append(f"{symbol}({seconds_held:.0f}s)")
                 
                 active_tokens_str = ", ".join(active_tokens_info) if active_tokens_info else "None"
-                logging.info(f"🔄 Active: [{active_tokens_str}] | Daily: ${daily_profit:.2f} | Trades: {successful_trades_today}")
+                qn_status = "QN✓" if CONFIG.get('USE_QUICKNODE_METIS') else "QN✗"
+                logging.info(f"🔄 Active: [{active_tokens_str}] | Daily: ${daily_profit:.2f} | Trades: {successful_trades_today} | {qn_status}")
                 last_status_time = current_time
             
             # Ultra-short sleep for maximum responsiveness
