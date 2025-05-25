@@ -175,14 +175,14 @@ function logRateLimitStats() {
   }
 }
 
-// QuickNode Metis Jupiter API functions - UPDATED TO USE CORRECT ENDPOINT
+// QuickNode Metis Jupiter API functions - FIXED TO USE CORRECT ENDPOINTS (NO /v6)
 async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) {
   await quickNodeRateLimit();
   
   console.log(`🔍 Getting quote via QuickNode Metis: ${amount} ${inputMint.slice(0,8)}... -> ${outputMint.slice(0,8)}...`);
   
-  // Use the dedicated QuickNode Jupiter endpoint
-  const quoteUrl = `${QUICKNODE_JUPITER_ENDPOINT}/v6/quote`;
+  // FIXED: Use correct QuickNode Metis endpoint WITHOUT /v6 prefix
+  const quoteUrl = `${QUICKNODE_JUPITER_ENDPOINT}/quote`;
   
   const params = {
     inputMint: inputMint,
@@ -218,8 +218,8 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   
   console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
   
-  // Use the dedicated QuickNode Jupiter endpoint
-  const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/v6/swap`;
+  // FIXED: Use correct QuickNode Metis endpoint WITHOUT /v6 prefix
+  const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/swap`;
   
   const swapRequest = {
     quoteResponse: quoteResponse.data,
