@@ -18,6 +18,7 @@ const MIN_PRIORITY_FEE_SMALL = 3000000;
 // QuickNode Metis configuration - UPDATED TO USE CORRECT ENVIRONMENT VARIABLES
 const USE_QUICKNODE_METIS = process.env.USE_QUICKNODE_METIS === 'true';
 const QUICKNODE_JUPITER_ENDPOINT = process.env.QUICKNODE_JUPITER_URL; // Your Jupiter API endpoint
+const QUICKNODE_AUTH_TOKEN = process.env.QUICKNODE_AUTH_TOKEN; // Add this for authentication
 const SOLANA_RPC_ENDPOINT = process.env.SOLANA_RPC_URL; // Your regular RPC endpoint
 const QUICKNODE_RATE_LIMIT = 50; // 50 RPS for Launch plan
 const QUICKNODE_API_DELAY = Math.floor(1000 / QUICKNODE_RATE_LIMIT); // 20ms between calls
@@ -44,9 +45,26 @@ console.log(`Node.js version: ${process.version}`);
 console.log(`Running in directory: ${process.cwd()}`);
 console.log(`QuickNode Metis enabled: ${USE_QUICKNODE_METIS}`);
 console.log(`QuickNode Jupiter URL: ${QUICKNODE_JUPITER_ENDPOINT ? 'Available' : 'Not set'}`);
-console.log(`Solana RPC URL: ${SOLANA_RPC_ENDPOINT ? 'Available' : 'Not set'}`);
+console.log(`QuickNode Auth Token: ${QUICKNODE_AUTH_TOKEN ? 'Available' : 'Not set'}`);
 
-// Get arguments from command line
+// Helper function to get QuickNode headers with authentication
+function getQuickNodeHeaders() {
+  const headers = {
+    'Content-Type': 'application/json',
+    'User-Agent': 'SolanaBot/1.0',
+    'Accept': 'application/json'
+  };
+  
+  // Add authentication if token is available
+  if (QUICKNODE_AUTH_TOKEN) {
+    // Try common authentication header formats
+    headers['Authorization'] = `Bearer ${QUICKNODE_AUTH_TOKEN}`;
+    // Uncomment the line below if QuickNode uses x-api-key instead:
+    // headers['x-api-key'] = QUICKNODE_AUTH_TOKEN;
+  }
+  
+  return headers;
+}
 const TOKEN_ADDRESS = process.argv[2] || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
 const AMOUNT_SOL = parseFloat(process.argv[3] || '0.005');
 const IS_SELL = process.argv[4] === 'true';
@@ -199,10 +217,7 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
   const response = await axios.get(quoteUrl, {
     params: params,
     timeout: 15000,
-    headers: {
-      'User-Agent': 'SolanaBot/1.0',
-      'Content-Type': 'application/json'
-    }
+    headers: getQuickNodeHeaders()
   });
   
   if (response.data && response.data.outAmount) {
@@ -235,11 +250,7 @@ async function getSwapInstructionsViaQuickNode(quoteResponse, userPublicKey, pri
   
   const response = await axios.post(swapInstructionsUrl, swapRequest, {
     timeout: 20000,
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'SolanaBot/1.0',
-      'Accept': 'application/json'
-    }
+    headers: getQuickNodeHeaders()
   });
   
   if (response.data) {
@@ -272,11 +283,7 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   
   const response = await axios.post(swapUrl, swapRequest, {
     timeout: 20000,
-    headers: {
-      'Content-Type': 'application/json',
-      'User-Agent': 'SolanaBot/1.0',
-      'Accept': 'application/json'
-    }
+    headers: getQuickNodeHeaders()
   });
   
   if (response.data && response.data.swapTransaction) {
@@ -561,11 +568,14 @@ async function executeSwap() {
     let quoteResponse;
     
     if (USE_QUICKNODE_METIS) {
-      // Use QuickNode Metis Jupiter API
-      console.log(`💎 Using QuickNode Metis Jupiter API for quotes`);
+      // Use QuickNode Metis Jupiter API for quotes only (since quotes work)
+      console.log(`💎 Using QuickNode Metis Jupiter API for quotes (working)`);
       quoteResponse = await retryWithBackoff(async () => {
         return await getQuoteViaQuickNode(inputMint, outputMint, amount, parseInt(slippageBps));
       });
+      
+      console.log(`⚠️ Using public Jupiter API for swaps (QuickNode swap endpoints have 405 errors)`);
+      // Fall through to use public Jupiter API for swaps
     } else {
       // Use public Jupiter API
       const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
@@ -606,143 +616,36 @@ async function executeSwap() {
     
     await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 500 : 1000));
     
-    // Step 2: Get swap instructions (QuickNode Metis or public Jupiter)
+    // Step 2: Get swap instructions (Use public Jupiter API for now due to QuickNode 405 errors)
     let swapResponse;
     
-    if (USE_QUICKNODE_METIS) {
-      // Use QuickNode Metis Jupiter API - Try swap-instructions first (QuickNode guide approach)
-      console.log(`💎 Using QuickNode Metis Jupiter API for swaps (QuickNode guide method)`);
-      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
-      
-      try {
-        // First try: Use /swap-instructions endpoint (recommended by QuickNode guide)
-        console.log(`Trying QuickNode /swap-instructions endpoint first...`);
-        const instructionsResponse = await retryWithBackoff(async () => {
-          return await getSwapInstructionsViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee);
-        }, maxRetries);
-        
-        // If we get instructions, we need to build the transaction manually
-        if (instructionsResponse.data) {
-          console.log(`✅ Got swap instructions from QuickNode, building transaction...`);
-          
-          // Extract instructions from the response
-          const {
-            computeBudgetInstructions,
-            setupInstructions,
-            swapInstruction,
-            cleanupInstruction,
-            addressLookupTableAddresses,
-          } = instructionsResponse.data;
-          
-          // Helper function to convert instruction data to transaction instructions
-          const instructionDataToTransactionInstruction = (instruction) => {
-            if (!instruction) return null;
-            const { TransactionInstruction } = require('@solana/web3.js');
-            return new TransactionInstruction({
-              programId: new PublicKey(instruction.programId),
-              keys: instruction.accounts.map((key) => ({
-                pubkey: new PublicKey(key.pubkey),
-                isSigner: key.isSigner,
-                isWritable: key.isWritable,
-              })),
-              data: Buffer.from(instruction.data, 'base64'),
-            });
-          };
-          
-          // Build instruction array
-          const instructions = [
-            ...computeBudgetInstructions.map(instructionDataToTransactionInstruction),
-            ...setupInstructions.map(instructionDataToTransactionInstruction),
-            instructionDataToTransactionInstruction(swapInstruction),
-            instructionDataToTransactionInstruction(cleanupInstruction),
-          ].filter((ix) => ix !== null);
-          
-          // Get address lookup table accounts if needed
-          let addressLookupTableAccounts = [];
-          if (addressLookupTableAddresses && addressLookupTableAddresses.length > 0) {
-            const { AddressLookupTableAccount } = require('@solana/web3.js');
-            const accountInfos = await connection.getMultipleAccountsInfo(
-              addressLookupTableAddresses.map((key) => new PublicKey(key))
-            );
-            
-            addressLookupTableAccounts = accountInfos.reduce((acc, accountInfo, index) => {
-              if (accountInfo) {
-                const addressLookupTableAccount = new AddressLookupTableAccount({
-                  key: new PublicKey(addressLookupTableAddresses[index]),
-                  state: AddressLookupTableAccount.deserialize(accountInfo.data),
-                });
-                acc.push(addressLookupTableAccount);
-              }
-              return acc;
-            }, []);
-          }
-          
-          // Build and sign transaction
-          const { TransactionMessage } = require('@solana/web3.js');
-          const { blockhash } = await connection.getLatestBlockhash();
-          const messageV0 = new TransactionMessage({
-            payerKey: keypair.publicKey,
-            recentBlockhash: blockhash,
-            instructions,
-          }).compileToV0Message(addressLookupTableAccounts);
-          
-          transaction = new VersionedTransaction(messageV0);
-          transaction.sign([keypair]);
-          
-          console.log(`✅ Transaction built and signed using QuickNode instructions`);
-        }
-        
-      } catch (instructionsError) {
-        console.log(`⚠️ QuickNode /swap-instructions failed, trying traditional /swap endpoint...`);
-        console.log(`Instructions error: ${instructionsError.message}`);
-        
-        // Fallback: Try traditional /swap endpoint
-        try {
-          swapResponse = await retryWithBackoff(async () => {
-            return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
-          }, maxRetries);
-          
-          if (swapResponse.data && swapResponse.data.swapTransaction) {
-            const serializedTx = swapResponse.data.swapTransaction;
-            const buffer = Buffer.from(serializedTx, 'base64');
-            transaction = VersionedTransaction.deserialize(buffer);
-            transaction.sign([keypair]);
-            console.log(`✅ Using traditional QuickNode /swap endpoint as fallback`);
-          }
-        } catch (swapError) {
-          console.error(`❌ Both QuickNode methods failed:`, swapError.message);
-          throw swapError;
-        }
-      }
-      
-    } else {
-      // Use public Jupiter API
-      const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
-      console.log(`Using public Jupiter swap URL: ${swapUrl}`);
-      
-      const swapRequest = {
-        quoteResponse: quoteResponse.data,
-        userPublicKey: keypair.publicKey.toBase58(),
-        wrapAndUnwrapSol: true,
-        prioritizationFeeLamports: priorityFee,
-        dynamicComputeUnitLimit: true,
-        dynamicSlippage: { maxBps: parseInt(slippageBps) }
-      };
-      
-      console.log('Swap request prepared');
-      
-      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
-      swapResponse = await retryWithBackoff(async () => {
-        console.log('Attempting to prepare swap...');
-        return await axios.post(swapUrl, swapRequest, {
-          headers: { 
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-          },
-          timeout: 20000
-        });
-      }, maxRetries);
-    }
+    // Always use public Jupiter API for swaps until QuickNode 405 errors are resolved
+    console.log(`🔄 Using PUBLIC Jupiter API for swaps (QuickNode has 405 errors on swap endpoints)`);
+    const swapUrl = `https://quote-api.jup.ag/v6/swap`;
+    console.log(`Using public Jupiter swap URL: ${swapUrl}`);
+    
+    const swapRequest = {
+      quoteResponse: quoteResponse.data,
+      userPublicKey: keypair.publicKey.toBase58(),
+      wrapAndUnwrapSol: true,
+      prioritizationFeeLamports: priorityFee,
+      dynamicComputeUnitLimit: true,
+      dynamicSlippage: { maxBps: parseInt(slippageBps) }
+    };
+    
+    console.log('Swap request prepared for public Jupiter API');
+    
+    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+    swapResponse = await retryWithBackoff(async () => {
+      console.log('Attempting to prepare swap via public Jupiter API...');
+      return await axios.post(swapUrl, swapRequest, {
+        headers: { 
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+        },
+        timeout: 20000
+      });
+    }, maxRetries);
     
     // Handle public Jupiter API or if QuickNode didn't create a transaction above
     if (!transaction) {
