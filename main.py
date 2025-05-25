@@ -69,7 +69,7 @@ CONFIG = {
     'ZERO_BALANCE_TOKEN_CACHE': {},
     'ZERO_BALANCE_CACHE_EXPIRY': int(os.environ.get('ZERO_BALANCE_CACHE_EXPIRY', '3600'))
 }
-
+    update_config_for_quicknode()
 
 def check_solders_version():
     """Check the installed version of Solders library."""
