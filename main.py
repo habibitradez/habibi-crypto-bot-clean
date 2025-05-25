@@ -4324,7 +4324,7 @@ def trading_loop():
                 if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 3):
                     token_search_interval = 30
                         
-                except Exception as e:
+            except Exception as e:
                     logging.error(f"❌ Error in token acquisition: {str(e)}")
                     circuit_breaker_check(error=True)
                     
