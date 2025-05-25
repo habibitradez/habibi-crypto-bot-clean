@@ -1410,8 +1410,9 @@ def update_config_for_quicknode():
     """Update configuration to use QuickNode Metis Jupiter features."""
     global CONFIG
     
-    # Check if QuickNode should be enabled
-    use_quicknode = CONFIG.get('SOLANA_RPC_URL', '').find('quiknode.pro') != -1
+    # Check if QuickNode should be enabled - use os.environ.get for proper environment variable access
+    solana_rpc_url = os.environ.get('SOLANA_RPC_URL', '')
+    use_quicknode = 'quiknode.pro' in solana_rpc_url.lower()
     
     if use_quicknode:
         # Add QuickNode specific settings
@@ -1425,13 +1426,15 @@ def update_config_for_quicknode():
         })
         
         logging.info("✅ Updated configuration for QuickNode Metis Jupiter Swap API")
+        logging.info(f"   RPC URL: {solana_rpc_url[:50]}...")
         logging.info(f"   Rate Limit: {CONFIG['QUICKNODE_RATE_LIMIT']} RPS")
         logging.info(f"   Monthly Requests: {CONFIG['QUICKNODE_REQUESTS_PER_MONTH']:,}")
     else:
         CONFIG['USE_QUICKNODE_METIS'] = False
         logging.info("ℹ️ QuickNode Metis not detected, using standard configuration")
+        logging.info(f"   Current RPC: {solana_rpc_url[:50]}...")
 
-# Replace your existing find_newest_tokens function with this enhanced version
+
 def find_newest_tokens():
     """Main token finder that uses enhanced methods with QuickNode integration."""
     try:
