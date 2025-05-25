@@ -178,8 +178,8 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
   
   console.log(`🔍 Getting quote via QuickNode Metis: ${amount} ${inputMint.slice(0,8)}... -> ${outputMint.slice(0,8)}...`);
   
-  // QuickNode Metis Jupiter Swap API endpoint
-  const quoteUrl = `${QUICKNODE_ENDPOINT}/quote`;
+  // QuickNode Metis Jupiter Swap API endpoint - correct format with v6
+  const quoteUrl = `${QUICKNODE_ENDPOINT}/v6/quote`;
   
   const params = {
     inputMint: inputMint,
@@ -213,7 +213,8 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   
   console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
   
-  const swapUrl = `${QUICKNODE_ENDPOINT}/swap`;
+  // QuickNode Metis Jupiter Swap API endpoint - correct format with v6
+  const swapUrl = `${QUICKNODE_ENDPOINT}/v6/swap`;
   
   const swapRequest = {
     quoteResponse: quoteResponse.data,
