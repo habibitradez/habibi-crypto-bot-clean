@@ -945,6 +945,507 @@ def smart_token_selection(potential_tokens):
         logging.error(f"Error in smart token selection: {str(e)}")
         return potential_tokens[0] if potential_tokens else None
 
+# Add these functions to your main.py file
+
+def get_verified_tradable_tokens():
+    """Get a list of verified tradable tokens for fallback (JUP removed)."""
+    verified_tokens = [
+        {
+            "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+            "symbol": "BONK",
+            "verified": True
+        },
+        {
+            "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
+            "symbol": "WIF",
+            "verified": True
+        },
+        {
+            "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",
+            "symbol": "ORCA", 
+            "verified": True
+        },
+        {
+            "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU",
+            "symbol": "SAMO",
+            "verified": True
+        }
+    ]
+    
+    # Add cooldown tracking to prevent rapid re-trading
+    current_time = time.time()
+    available_tokens = []
+    
+    for token in verified_tokens:
+        last_bought_key = f"last_bought_{token['address']}"
+        cooldown_minutes = 20  # 20 minute cooldown for verified tokens
+        
+        if last_bought_key not in globals() or \
+           current_time - globals()[last_bought_key] > cooldown_minutes * 60:
+            available_tokens.append(token)
+    
+    if available_tokens:
+        logging.info(f"✅ Found {len(available_tokens)} verified tradable tokens available")
+        return available_tokens
+    else:
+        logging.warning("⚠️ All verified tokens are in cooldown, returning all tokens")
+        return verified_tokens
+
+def validate_token_before_trading(token_address: str) -> bool:
+    """Comprehensive token validation before attempting to trade."""
+    try:
+        logging.info(f"🔍 Validating token: {token_address[:8]}...")
+        
+        # 1. Basic address validation
+        if not token_address or len(token_address) < 32:
+            logging.warning(f"❌ Invalid token address length: {len(token_address) if token_address else 0}")
+            return False
+        
+        # 2. Check blacklist
+        blacklisted_tokens = getattr(validate_token_before_trading, 'blacklist', set())
+        if token_address in blacklisted_tokens:
+            logging.warning(f"❌ Token {token_address[:8]} is blacklisted")
+            return False
+        
+        # 3. Test Jupiter quote (small amount)
+        try:
+            test_amount = 1000000  # 0.001 SOL in lamports
+            quote_url = "https://quote-api.jup.ag/v6/quote"
+            
+            # Try to get a quote for a small amount
+            params = {
+                "inputMint": "So11111111111111111111111111111111111111112",  # SOL
+                "outputMint": token_address,
+                "amount": str(test_amount),
+                "slippageBps": "300"
+            }
+            
+            response = requests.get(quote_url, params=params, timeout=10)
+            
+            if response.status_code == 200 and response.json().get('outAmount'):
+                logging.info(f"✅ Token {token_address[:8]} passed Jupiter validation")
+                return True
+            else:
+                logging.warning(f"⚠️ Token {token_address[:8]} failed Jupiter quote validation")
+                # Add to blacklist
+                if not hasattr(validate_token_before_trading, 'blacklist'):
+                    validate_token_before_trading.blacklist = set()
+                validate_token_before_trading.blacklist.add(token_address)
+                return False
+                
+        except Exception as quote_error:
+            logging.warning(f"⚠️ Jupiter validation error for {token_address[:8]}: {str(quote_error)}")
+            return False
+        
+    except Exception as e:
+        logging.error(f"❌ Error validating token {token_address[:8]}: {str(e)}")
+        return False
+
+def get_newest_tokens_quicknode():
+    """Get newest tokens using QuickNode's Metis Jupiter Swap API integration."""
+    try:
+        # Check if QuickNode Metis is enabled
+        if not CONFIG.get('USE_QUICKNODE_METIS', False):
+            return []
+        
+        quicknode_endpoint = CONFIG['SOLANA_RPC_URL']
+        
+        # Method 1: Try QuickNode new-pools endpoint
+        try:
+            new_pools_url = f"{quicknode_endpoint}/new-pools"
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'SolanaBot/1.0'
+            }
+            
+            params = {
+                'limit': 30,
+                'timeframe': '1h',  # Last hour for freshest tokens
+                'minLiquidity': 1000  # Minimum $1000 liquidity
+            }
+            
+            logging.info("🔍 Fetching newest tokens via QuickNode new-pools...")
+            
+            response = requests.get(
+                new_pools_url, 
+                headers=headers, 
+                params=params,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                pools_data = response.json()
+                
+                new_tokens = []
+                for pool in pools_data.get('pools', []):
+                    # Look for new tokens (usually paired with SOL)
+                    base_token = pool.get('baseToken', {})
+                    
+                    if base_token.get('address') and \
+                       base_token.get('address') not in ['So11111111111111111111111111111111111111112', 
+                                                        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v']:
+                        
+                        token_info = {
+                            'address': base_token.get('address'),
+                            'symbol': base_token.get('symbol', 'UNKNOWN'),
+                            'name': base_token.get('name', 'Unknown Token'),
+                            'liquidity': pool.get('liquidity', 0),
+                            'created_at': pool.get('createdAt'),
+                            'market_cap': pool.get('marketCap', 0),
+                            'volume_24h': pool.get('volume24h', 0),
+                            'source': 'quicknode_new_pools'
+                        }
+                        new_tokens.append(token_info)
+                
+                if new_tokens:
+                    logging.info(f"✅ Found {len(new_tokens)} new tokens via QuickNode new-pools")
+                    return new_tokens[:15]  # Return top 15 newest
+        
+        except Exception as e:
+            logging.warning(f"⚠️ QuickNode new-pools failed: {str(e)}")
+        
+        # Method 2: Try QuickNode pump.fun integration
+        try:
+            pump_fun_endpoints = [
+                f"{quicknode_endpoint}/pump-fun/tokens/newest",
+                f"{quicknode_endpoint}/pump-fun/coins/newest",
+                f"{quicknode_endpoint}/v1/pump-fun/tokens/newest"
+            ]
+            
+            for endpoint in pump_fun_endpoints:
+                try:
+                    logging.info(f"🔍 Trying QuickNode pump.fun endpoint: {endpoint}")
+                    
+                    response = requests.get(
+                        endpoint,
+                        headers={'Content-Type': 'application/json'},
+                        params={'limit': 20},
+                        timeout=15
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        tokens = []
+                        token_list = data if isinstance(data, list) else data.get('tokens', data.get('coins', []))
+                        
+                        for token in token_list[:20]:
+                            if isinstance(token, dict) and 'mint' in token:
+                                token_info = {
+                                    'address': token['mint'],
+                                    'symbol': token.get('symbol', 'UNKNOWN'),
+                                    'name': token.get('name', 'Unknown Token'),
+                                    'market_cap': token.get('market_cap', 0),
+                                    'created_timestamp': token.get('created_timestamp'),
+                                    'uri': token.get('uri', ''),
+                                    'creator': token.get('creator', ''),
+                                    'pump_fun': True,
+                                    'source': 'quicknode_pump_fun'
+                                }
+                                tokens.append(token_info)
+                        
+                        if tokens:
+                            logging.info(f"✅ Found {len(tokens)} pump.fun tokens via QuickNode!")
+                            return tokens
+                
+                except Exception as e:
+                    logging.warning(f"⚠️ QuickNode pump.fun endpoint failed: {str(e)}")
+                    continue
+        
+        except Exception as e:
+            logging.warning(f"⚠️ QuickNode pump.fun integration failed: {str(e)}")
+        
+        logging.warning("⚠️ All QuickNode token discovery methods failed")
+        return []
+        
+    except Exception as e:
+        logging.error(f"❌ Error in QuickNode token discovery: {str(e)}")
+        return []
+
+def smart_token_selection(potential_tokens):
+    """Intelligently select the best token to trade based on multiple factors."""
+    if not potential_tokens:
+        return None
+    
+    try:
+        logging.info(f"🧠 Smart selecting from {len(potential_tokens)} potential tokens...")
+        
+        scored_tokens = []
+        current_time = time.time()
+        
+        for token in potential_tokens:
+            score = 0
+            token_address = token.get('address', '')
+            
+            # Factor 1: Avoid recently bought tokens (higher score for unused tokens)
+            last_bought_key = f"last_bought_{token_address}"
+            if last_bought_key not in globals():
+                score += 50  # Big bonus for never traded tokens
+            else:
+                time_since_bought = current_time - globals()[last_bought_key]
+                if time_since_bought > 3600:  # 1 hour cooldown
+                    score += 30
+                elif time_since_bought > 1800:  # 30 minute cooldown
+                    score += 15
+                else:
+                    score -= 20  # Penalty for recent trades
+            
+            # Factor 2: Market cap (prefer reasonable market caps)
+            market_cap = token.get('market_cap', 0)
+            if 10000 <= market_cap <= 1000000:  # $10K to $1M sweet spot
+                score += 25
+            elif market_cap > 1000000:
+                score += 10
+            elif market_cap > 1000:
+                score += 5
+            
+            # Factor 3: Liquidity (prefer tokens with some liquidity)
+            liquidity = token.get('liquidity', 0)
+            if liquidity > 5000:
+                score += 20
+            elif liquidity > 1000:
+                score += 10
+            
+            # Factor 4: Source bonus
+            source = token.get('source', '')
+            if 'quicknode' in source.lower():
+                score += 15  # Bonus for QuickNode tokens
+            elif token.get('pump_fun'):
+                score += 10  # Bonus for pump.fun tokens
+            
+            # Factor 5: Verified token bonus
+            if token.get('verified'):
+                score += 30
+            
+            # Factor 6: Age factor (prefer newer tokens but not too new)
+            created_timestamp = token.get('created_timestamp')
+            if created_timestamp:
+                try:
+                    age_minutes = (current_time - created_timestamp) / 60
+                    if 5 <= age_minutes <= 60:  # 5-60 minutes old
+                        score += 20
+                    elif age_minutes <= 180:  # Up to 3 hours
+                        score += 10
+                except:
+                    pass
+            
+            scored_tokens.append((token, score))
+        
+        # Sort by score (highest first)
+        scored_tokens.sort(key=lambda x: x[1], reverse=True)
+        
+        if scored_tokens:
+            best_token, best_score = scored_tokens[0]
+            logging.info(f"🎯 Selected token {best_token['address'][:8]} with score {best_score}")
+            logging.info(f"   Symbol: {best_token.get('symbol', 'UNKNOWN')}")
+            logging.info(f"   Market Cap: ${best_token.get('market_cap', 0):,}")
+            logging.info(f"   Source: {best_token.get('source', 'unknown')}")
+            return best_token
+        
+        return None
+        
+    except Exception as e:
+        logging.error(f"❌ Error in smart token selection: {str(e)}")
+        # Fallback to first token
+        return potential_tokens[0] if potential_tokens else None
+
+def enhanced_find_newest_tokens():
+    """Enhanced token finder with better validation and multiple fallback methods."""
+    try:
+        logging.info("🔍 Starting enhanced token search...")
+        
+        all_potential_tokens = []
+        
+        # Method 1: Try QuickNode Metis if enabled
+        if CONFIG.get('USE_QUICKNODE_METIS', False):
+            quicknode_tokens = get_newest_tokens_quicknode()
+            if quicknode_tokens:
+                all_potential_tokens.extend(quicknode_tokens)
+                logging.info(f"✅ Found {len(quicknode_tokens)} tokens via QuickNode Metis")
+        
+        # Method 2: Try pump.fun API with validation
+        if len(all_potential_tokens) < 5:  # Only if we need more tokens
+            pump_fun_tokens = get_newest_pump_fun_tokens(15)
+            if pump_fun_tokens:
+                all_potential_tokens.extend(pump_fun_tokens)
+                logging.info(f"✅ Found {len(pump_fun_tokens)} tokens via pump.fun")
+        
+        # Method 3: Validate all tokens
+        validated_tokens = []
+        for token in all_potential_tokens:
+            if validate_token_before_trading(token['address']):
+                validated_tokens.append(token)
+            
+            if len(validated_tokens) >= 10:  # Stop after finding 10 good tokens
+                break
+        
+        if validated_tokens:
+            # Use smart selection to pick the best token
+            selected_token = smart_token_selection(validated_tokens)
+            if selected_token:
+                logging.info(f"🎯 Enhanced search selected: {selected_token['symbol']} ({selected_token['address'][:8]})")
+                return [selected_token]
+        
+        # Fallback: Return verified tradable tokens
+        logging.warning("⚠️ No new tokens found, using verified fallback tokens")
+        return get_verified_tradable_tokens()
+        
+    except Exception as e:
+        logging.error(f"❌ Error in enhanced token search: {str(e)}")
+        return get_verified_tradable_tokens()
+
+def enhanced_find_newest_tokens_with_quicknode():
+    """Enhanced token finder using QuickNode pump.fun API as primary source."""
+    try:
+        logging.info("🚀 Starting enhanced token search with QuickNode pump.fun API...")
+        
+        # Method 1: QuickNode pump.fun API for newest tokens (PRIMARY)
+        newest_tokens = get_newest_tokens_quicknode()
+        
+        if newest_tokens:
+            # Validate each token before returning
+            validated_tokens = []
+            for token_address in newest_tokens[:5]:  # Check top 5
+                if validate_token_before_trading(token_address):
+                    validated_tokens.append(token_address)
+                    
+                    # Get additional info from QuickNode for logging
+                    try:
+                        token_info = get_pump_fun_token_info_quicknode(token_address)
+                        if token_info:
+                            logging.info(f"✅ Validated QuickNode token: {token_info['symbol']} ({token_address[:8]}) - MC: ${token_info['market_cap']}")
+                        else:
+                            logging.info(f"✅ Validated QuickNode token: {token_address[:8]}")
+                    except:
+                        logging.info(f"✅ Validated QuickNode token: {token_address[:8]}")
+                else:
+                    logging.warning(f"❌ Failed validation: {token_address[:8]}")
+            
+            if validated_tokens:
+                logging.info(f"🎯 QuickNode provided {len(validated_tokens)} validated fresh tokens")
+                return validated_tokens[:2]  # Return max 2 for focus
+        
+        # Method 2: Fallback to verified tradable tokens
+        logging.info("🔄 QuickNode APIs didn't return tokens, using verified fallback...")
+        verified_tokens = get_verified_tradable_tokens()
+        
+        if verified_tokens:
+            logging.info(f"📋 Found {len(verified_tokens)} verified tradable tokens")
+            return verified_tokens[:2]
+        
+        # Method 3: Original pump.fun direct API (last resort)
+        try:
+            logging.info("🔄 Trying direct pump.fun API as last resort...")
+            direct_tokens = get_newest_pump_fun_tokens(limit=5)
+            
+            if direct_tokens:
+                validated_direct = []
+                for token in direct_tokens:
+                    if isinstance(token, dict) and token.get('minutes_old', 999) <= 3:
+                        token_address = token.get('address')
+                        if token_address and validate_token_before_trading(token_address):
+                            validated_direct.append(token_address)
+                
+                if validated_direct:
+                    logging.info(f"🎯 Direct API found {len(validated_direct)} validated tokens")
+                    return validated_direct[:1]
+        
+        except Exception as e:
+            logging.error(f"Direct pump.fun API failed: {str(e)}")
+        
+        logging.warning("❌ No suitable tokens found from any method")
+        return []
+        
+    except Exception as e:
+        logging.error(f"Error in enhanced_find_newest_tokens_with_quicknode: {str(e)}")
+        return []
+
+def get_pump_fun_token_info_quicknode(token_address: str):
+    """Get detailed token info from QuickNode pump.fun API."""
+    try:
+        quicknode_endpoint = CONFIG['SOLANA_RPC_URL']
+        
+        headers = {
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "qn_fetchPumpFunCoinByCA",
+            "params": {
+                "mint": token_address
+            }
+        }
+        
+        response = requests.post(
+            quicknode_endpoint,
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if "result" in data and data["result"]:
+                coin_info = data["result"]
+                return {
+                    "symbol": coin_info.get("symbol", "Unknown"),
+                    "name": coin_info.get("name", "Unknown"),
+                    "market_cap": coin_info.get("market_cap", 0),
+                    "volume_24h": coin_info.get("volume_24h", 0),
+                    "created_timestamp": coin_info.get("created_timestamp", 0),
+                    "creator": coin_info.get("creator", ""),
+                    "description": coin_info.get("description", "")
+                }
+        
+    except Exception as e:
+        logging.error(f"Error getting token info from QuickNode: {str(e)}")
+    
+    return None
+
+def update_config_for_quicknode():
+    """Update configuration to use QuickNode Metis Jupiter features."""
+    global CONFIG
+    
+    # Check if QuickNode should be enabled
+    use_quicknode = CONFIG.get('SOLANA_RPC_URL', '').find('quiknode.pro') != -1
+    
+    if use_quicknode:
+        # Add QuickNode specific settings
+        CONFIG.update({
+            'USE_QUICKNODE_METIS': True,
+            'QUICKNODE_RATE_LIMIT': 50,  # 50 RPS from Launch plan
+            'QUICKNODE_REQUESTS_PER_MONTH': 130000000,  # 130M requests/month
+            'PREFER_QUICKNODE_TOKENS': True,
+            'QUICKNODE_MIN_LIQUIDITY': 1000,  # Minimum $1000 liquidity
+            'QUICKNODE_TIMEFRAME': '1h'  # Look for tokens from last hour
+        })
+        
+        logging.info("✅ Updated configuration for QuickNode Metis Jupiter Swap API")
+        logging.info(f"   Rate Limit: {CONFIG['QUICKNODE_RATE_LIMIT']} RPS")
+        logging.info(f"   Monthly Requests: {CONFIG['QUICKNODE_REQUESTS_PER_MONTH']:,}")
+    else:
+        CONFIG['USE_QUICKNODE_METIS'] = False
+        logging.info("ℹ️ QuickNode Metis not detected, using standard configuration")
+
+# Replace your existing find_newest_tokens function with this enhanced version
+def find_newest_tokens():
+    """Main token finder that uses enhanced methods with QuickNode integration."""
+    try:
+        # Use QuickNode Metis if available
+        if CONFIG.get('USE_QUICKNODE_METIS', True):
+            return enhanced_find_newest_tokens_with_quicknode()
+        else:
+            # Fallback to original methods
+            return enhanced_find_newest_tokens()
+            
+    except Exception as e:
+        logging.error(f"❌ Error in main token finder: {str(e)}")
+        return get_verified_tradable_tokens()
+
 def validate_token_before_trading(token_address: str) -> bool:
     """Comprehensive token validation before attempting to trade."""
     try:
