@@ -15,15 +15,21 @@ const MIN_PRIORITY_FEE_BUYS = 250000;
 const MIN_PRIORITY_FEE_SELLS = 1500000;
 const MIN_PRIORITY_FEE_SMALL = 3000000;
 
-// Global rate limiting for Jupiter API
+// QuickNode Metis configuration
+const USE_QUICKNODE_METIS = process.env.USE_QUICKNODE_METIS === 'true';
+const QUICKNODE_RATE_LIMIT = 50; // 50 RPS for Launch plan
+const QUICKNODE_API_DELAY = Math.floor(1000 / QUICKNODE_RATE_LIMIT); // 20ms between calls
+
+// Global rate limiting for Jupiter API and QuickNode
 let lastRequestTimestamps = [];
-const MAX_REQUESTS_PER_MINUTE = 50;
+const MAX_REQUESTS_PER_MINUTE = USE_QUICKNODE_METIS ? QUICKNODE_RATE_LIMIT * 60 : 50;
 let jupiterRateLimitResetTime = 0;
+let lastQuickNodeCall = 0;
 
 // RPC call rate limiting
 let lastRpcCallTimestamps = {};
 const RPC_RATE_LIMITS = {
-  'default': { max: 40, windowMs: 60000 },
+  'default': { max: USE_QUICKNODE_METIS ? 45 : 40, windowMs: 60000 },
   'getTokenLargestAccounts': { max: 5, windowMs: 60000 },
   'getTokenSupply': { max: 10, windowMs: 60000 },
   'getParsedTokenAccountsByOwner': { max: 15, windowMs: 60000 },
@@ -34,6 +40,7 @@ const RPC_RATE_LIMITS = {
 // Print Node.js version for debugging
 console.log(`Node.js version: ${process.version}`);
 console.log(`Running in directory: ${process.cwd()}`);
+console.log(`QuickNode Metis enabled: ${USE_QUICKNODE_METIS}`);
 
 // Get arguments from command line
 const TOKEN_ADDRESS = process.argv[2] || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
@@ -68,6 +75,22 @@ function createPublicKey(address) {
   }
 }
 
+// QuickNode rate limiting function
+async function quickNodeRateLimit() {
+  if (!USE_QUICKNODE_METIS) return;
+  
+  const now = Date.now();
+  const timeSinceLastCall = now - lastQuickNodeCall;
+  
+  if (timeSinceLastCall < QUICKNODE_API_DELAY) {
+    const waitTime = QUICKNODE_API_DELAY - timeSinceLastCall;
+    console.log(`QuickNode rate limiting: waiting ${waitTime}ms`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+  
+  lastQuickNodeCall = Date.now();
+}
+
 // RPC throttling function
 async function throttledRpcCall(connection, method, params) {
   const rateLimit = RPC_RATE_LIMITS[method] || RPC_RATE_LIMITS['default'];
@@ -90,7 +113,7 @@ async function throttledRpcCall(connection, method, params) {
   }
   
   lastRpcCallTimestamps[method].push(now);
-  await new Promise(resolve => setTimeout(resolve, 200));
+  await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 100 : 200));
   
   try {
     console.log(`Making throttled RPC call: ${method} (${lastRpcCallTimestamps[method].length}/${rateLimit.max})`);
@@ -148,6 +171,76 @@ function logRateLimitStats() {
   }
 }
 
+// QuickNode Metis Jupiter API functions
+async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) {
+  await quickNodeRateLimit();
+  
+  console.log(`🔍 Getting quote via QuickNode Metis: ${amount} ${inputMint.slice(0,8)}... -> ${outputMint.slice(0,8)}...`);
+  
+  // QuickNode Metis Jupiter Swap API endpoint
+  const quoteUrl = `${RPC_URL}/quote`;
+  
+  const params = {
+    inputMint: inputMint,
+    outputMint: outputMint,
+    amount: amount.toString(),
+    slippageBps: slippageBps.toString(),
+    swapMode: 'ExactIn',
+    onlyDirectRoutes: false,
+    asLegacyTransaction: false
+  };
+  
+  const response = await axios.get(quoteUrl, {
+    params: params,
+    timeout: 15000,
+    headers: {
+      'User-Agent': 'SolanaBot/1.0',
+      'Content-Type': 'application/json'
+    }
+  });
+  
+  if (response.data && response.data.outAmount) {
+    console.log(`✅ QuickNode quote success: ${response.data.outAmount} tokens out`);
+    return response;
+  } else {
+    throw new Error('Invalid quote response from QuickNode Metis');
+  }
+}
+
+async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, priorityFee, slippageBps) {
+  await quickNodeRateLimit();
+  
+  console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
+  
+  const swapUrl = `${RPC_URL}/swap`;
+  
+  const swapRequest = {
+    quoteResponse: quoteResponse.data,
+    userPublicKey: userPublicKey,
+    wrapAndUnwrapSol: true,
+    prioritizationFeeLamports: priorityFee,
+    dynamicComputeUnitLimit: true,
+    dynamicSlippage: { 
+      maxBps: parseInt(slippageBps) 
+    }
+  };
+  
+  const response = await axios.post(swapUrl, swapRequest, {
+    timeout: 20000,
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'SolanaBot/1.0'
+    }
+  });
+  
+  if (response.data && response.data.swapTransaction) {
+    console.log(`✅ QuickNode swap transaction received`);
+    return response;
+  } else {
+    throw new Error('Invalid swap transaction response from QuickNode Metis');
+  }
+}
+
 // Retry function with enhanced rate limiting
 async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INITIAL_RETRY_DELAY) {
   let retries = 0;
@@ -155,11 +248,13 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
     try {
       logRateLimitStats();
       
-      const canProceed = canMakeRequest();
-      if (canProceed !== true) {
-        console.log(`Proactive rate limiting: Waiting ${canProceed}ms before attempting request`);
-        await new Promise(resolve => setTimeout(resolve, canProceed));
-        continue;
+      if (!USE_QUICKNODE_METIS) {
+        const canProceed = canMakeRequest();
+        if (canProceed !== true) {
+          console.log(`Proactive rate limiting: Waiting ${canProceed}ms before attempting request`);
+          await new Promise(resolve => setTimeout(resolve, canProceed));
+          continue;
+        }
       }
       
       return await fn();
@@ -176,8 +271,8 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
           jupiterRateLimitResetTime = Math.max(jupiterRateLimitResetTime, resetTime);
           console.log(`Rate limit will reset at: ${new Date(jupiterRateLimitResetTime).toISOString()}`);
         } else {
-          jupiterRateLimitResetTime = Date.now() + 30000;
-          console.log(`Setting cooldown for 30 seconds (until ${new Date(jupiterRateLimitResetTime).toISOString()})`);
+          jupiterRateLimitResetTime = Date.now() + (USE_QUICKNODE_METIS ? 10000 : 30000);
+          console.log(`Setting cooldown for ${USE_QUICKNODE_METIS ? 10 : 30} seconds`);
         }
         
         retries++;
@@ -208,6 +303,7 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
 async function executeSwap() {
   try {
     console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL${IS_FORCE_SELL ? ' (FORCE SELL MODE)' : ''}`);
+    console.log(`Using ${USE_QUICKNODE_METIS ? 'QuickNode Metis Jupiter API' : 'Public Jupiter API'}`);
     
     // Create connection to Solana with better error handling
     const connection = new Connection(RPC_URL, {
@@ -234,8 +330,8 @@ async function executeSwap() {
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
     
-    // Use the public Jupiter API
-    const JUPITER_API_BASE = 'https://quote-api.jup.ag';
+    // Use QuickNode Metis or public Jupiter API
+    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? RPC_URL : 'https://quote-api.jup.ag';
     
     // Set input and output mints based on operation
     const inputMint = IS_SELL 
@@ -388,10 +484,6 @@ async function executeSwap() {
       console.log(`Final amount to sell: ${amount}`);
     }
     
-    // Step 1: Get a quote
-    const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
-    console.log(`Using quote URL: ${quoteUrl}`);
-    
     // Determine slippage
     let slippageBps;
     if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
@@ -402,45 +494,6 @@ async function executeSwap() {
     } else {
       slippageBps = MIN_SLIPPAGE_FOR_BUYS.toString();
     }
-    
-    const quoteParams = {
-      inputMint: inputMint,
-      outputMint: outputMint,
-      amount: amount.toString(),
-      slippageBps: slippageBps
-    };
-    
-    console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
-    
-    // Use retryWithBackoff for quote request
-    const quoteResponse = await retryWithBackoff(async () => {
-      console.log('Attempting to get Jupiter quote...');
-      return await axios.get(quoteUrl, { 
-        params: quoteParams,
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-        },
-        timeout: 20000
-      });
-    });
-    
-    if (!quoteResponse.data) {
-      console.error('Failed to get quote', quoteResponse);
-      if (IS_SELL || IS_FORCE_SELL) {
-        console.error("Marking as sold anyway to remove from monitoring.");
-        process.exit(0);
-      }
-      process.exit(1);
-    }
-    
-    console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Step 2: Get swap instructions
-    const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
-    console.log(`Using swap URL: ${swapUrl}`);
     
     // Determine priority fee
     let priorityFee;
@@ -453,29 +506,93 @@ async function executeSwap() {
       priorityFee = MIN_PRIORITY_FEE_BUYS;
     }
     
-    // FIXED: Proper swap request structure to avoid type errors
-    const swapRequest = {
-      quoteResponse: quoteResponse.data,
-      userPublicKey: keypair.publicKey.toBase58(),  // Ensure this is a string
-      wrapAndUnwrapSol: true,  // Updated parameter name
-      prioritizationFeeLamports: priorityFee,
-      dynamicComputeUnitLimit: true,
-      dynamicSlippage: { maxBps: parseInt(slippageBps) }  // Updated slippage format
-    };
+    // Step 1: Get a quote (QuickNode Metis or public Jupiter)
+    let quoteResponse;
     
-    console.log('Swap request prepared');
-    
-    const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
-    const swapResponse = await retryWithBackoff(async () => {
-      console.log('Attempting to prepare swap...');
-      return await axios.post(swapUrl, swapRequest, {
-        headers: { 
-          'Content-Type': 'application/json',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-        },
-        timeout: 20000
+    if (USE_QUICKNODE_METIS) {
+      // Use QuickNode Metis Jupiter API
+      quoteResponse = await retryWithBackoff(async () => {
+        return await getQuoteViaQuickNode(inputMint, outputMint, amount, parseInt(slippageBps));
       });
-    }, maxRetries);
+    } else {
+      // Use public Jupiter API
+      const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
+      console.log(`Using quote URL: ${quoteUrl}`);
+      
+      const quoteParams = {
+        inputMint: inputMint,
+        outputMint: outputMint,
+        amount: amount.toString(),
+        slippageBps: slippageBps
+      };
+      
+      console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
+      
+      quoteResponse = await retryWithBackoff(async () => {
+        console.log('Attempting to get Jupiter quote...');
+        return await axios.get(quoteUrl, { 
+          params: quoteParams,
+          headers: {
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+          },
+          timeout: 20000
+        });
+      });
+    }
+    
+    if (!quoteResponse.data) {
+      console.error('Failed to get quote', quoteResponse);
+      if (IS_SELL || IS_FORCE_SELL) {
+        console.error("Marking as sold anyway to remove from monitoring.");
+        process.exit(0);
+      }
+      process.exit(1);
+    }
+    
+    console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
+    
+    await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 500 : 1000));
+    
+    // Step 2: Get swap instructions (QuickNode Metis or public Jupiter)
+    let swapResponse;
+    
+    if (USE_QUICKNODE_METIS) {
+      // Use QuickNode Metis Jupiter API
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+      swapResponse = await retryWithBackoff(async () => {
+        return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priority
+
+Fee, slippageBps);
+      }, maxRetries);
+    } else {
+      // Use public Jupiter API
+      const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
+      console.log(`Using swap URL: ${swapUrl}`);
+      
+      const swapRequest = {
+        quoteResponse: quoteResponse.data,
+        userPublicKey: keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol: true,
+        prioritizationFeeLamports: priorityFee,
+        dynamicComputeUnitLimit: true,
+        dynamicSlippage: { maxBps: parseInt(slippageBps) }
+      };
+      
+      console.log('Swap request prepared');
+      
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+      swapResponse = await retryWithBackoff(async () => {
+        console.log('Attempting to prepare swap...');
+        return await axios.post(swapUrl, swapRequest, {
+          headers: { 
+            'Content-Type': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+          },
+          timeout: 20000
+        });
+      }, maxRetries);
+    }
     
     if (!swapResponse.data || !swapResponse.data.swapTransaction) {
       console.error('Failed to get swap transaction', swapResponse.data);
@@ -490,7 +607,7 @@ async function executeSwap() {
     const serializedTx = swapResponse.data.swapTransaction;
     console.log('Received transaction data (length):', serializedTx.length);
     
-    // FIXED: Better transaction handling to avoid type errors
+    // Better transaction handling to avoid type errors
     let transaction;
     try {
       const buffer = Buffer.from(serializedTx, 'base64');
@@ -521,7 +638,7 @@ async function executeSwap() {
     // Submit the transaction
     console.log('Submitting transaction...');
     
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 500 : 1000));
     
     // Determine transaction parameters
     const txParams = {
