@@ -213,15 +213,52 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
   }
 }
 
+// QuickNode Metis approach using swap-instructions (following QuickNode guide)
+async function getSwapInstructionsViaQuickNode(quoteResponse, userPublicKey, priorityFee) {
+  await quickNodeRateLimit();
+  
+  console.log(`🔄 Getting swap instructions via QuickNode Metis (following QuickNode guide)...`);
+  
+  // Use /swap-instructions endpoint as recommended by QuickNode guide
+  const swapInstructionsUrl = `${QUICKNODE_JUPITER_ENDPOINT}/swap-instructions`;
+  
+  const swapRequest = {
+    userPublicKey: userPublicKey,
+    quoteResponse: quoteResponse.data,
+    wrapAndUnwrapSol: true,
+    prioritizationFeeLamports: priorityFee,
+    dynamicComputeUnitLimit: true,
+    asLegacyTransaction: false
+  };
+  
+  console.log(`QuickNode Jupiter Swap Instructions URL: ${swapInstructionsUrl}`);
+  
+  const response = await axios.post(swapInstructionsUrl, swapRequest, {
+    timeout: 20000,
+    headers: {
+      'Content-Type': 'application/json',
+      'User-Agent': 'SolanaBot/1.0',
+      'Accept': 'application/json'
+    }
+  });
+  
+  if (response.data) {
+    console.log(`✅ QuickNode swap instructions received`);
+    return response;
+  } else {
+    throw new Error('Invalid swap instructions response from QuickNode Metis');
+  }
+}
+
+// Fallback: Traditional swap endpoint for compatibility
 async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, priorityFee, slippageBps) {
   await quickNodeRateLimit();
   
-  console.log(`🔄 Getting swap transaction via QuickNode Metis...`);
+  console.log(`🔄 Getting swap transaction via QuickNode Metis (traditional method)...`);
   
-  // FIXED: Use correct QuickNode Metis endpoint WITHOUT /v6 prefix
+  // Try the traditional /swap endpoint
   const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/swap`;
   
-  // FIXED: Correct request format based on QuickNode docs
   const swapRequest = {
     userPublicKey: userPublicKey,
     quoteResponse: quoteResponse.data,
@@ -232,7 +269,6 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   };
   
   console.log(`QuickNode Jupiter Swap URL: ${swapUrl}`);
-  console.log(`QuickNode Swap Request:`, JSON.stringify(swapRequest, null, 2));
   
   const response = await axios.post(swapUrl, swapRequest, {
     timeout: 20000,
@@ -574,12 +610,108 @@ async function executeSwap() {
     let swapResponse;
     
     if (USE_QUICKNODE_METIS) {
-      // Use QuickNode Metis Jupiter API
-      console.log(`💎 Using QuickNode Metis Jupiter API for swaps`);
+      // Use QuickNode Metis Jupiter API - Try swap-instructions first (QuickNode guide approach)
+      console.log(`💎 Using QuickNode Metis Jupiter API for swaps (QuickNode guide method)`);
       const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
-      swapResponse = await retryWithBackoff(async () => {
-        return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
-      }, maxRetries);
+      
+      try {
+        // First try: Use /swap-instructions endpoint (recommended by QuickNode guide)
+        console.log(`Trying QuickNode /swap-instructions endpoint first...`);
+        const instructionsResponse = await retryWithBackoff(async () => {
+          return await getSwapInstructionsViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee);
+        }, maxRetries);
+        
+        // If we get instructions, we need to build the transaction manually
+        if (instructionsResponse.data) {
+          console.log(`✅ Got swap instructions from QuickNode, building transaction...`);
+          
+          // Extract instructions from the response
+          const {
+            computeBudgetInstructions,
+            setupInstructions,
+            swapInstruction,
+            cleanupInstruction,
+            addressLookupTableAddresses,
+          } = instructionsResponse.data;
+          
+          // Helper function to convert instruction data to transaction instructions
+          const instructionDataToTransactionInstruction = (instruction) => {
+            if (!instruction) return null;
+            return new (await import('@solana/web3.js')).TransactionInstruction({
+              programId: new PublicKey(instruction.programId),
+              keys: instruction.accounts.map((key) => ({
+                pubkey: new PublicKey(key.pubkey),
+                isSigner: key.isSigner,
+                isWritable: key.isWritable,
+              })),
+              data: Buffer.from(instruction.data, 'base64'),
+            });
+          };
+          
+          // Build instruction array
+          const instructions = [
+            ...computeBudgetInstructions.map(instructionDataToTransactionInstruction),
+            ...setupInstructions.map(instructionDataToTransactionInstruction),
+            instructionDataToTransactionInstruction(swapInstruction),
+            instructionDataToTransactionInstruction(cleanupInstruction),
+          ].filter((ix) => ix !== null);
+          
+          // Get address lookup table accounts if needed
+          let addressLookupTableAccounts = [];
+          if (addressLookupTableAddresses && addressLookupTableAddresses.length > 0) {
+            const accountInfos = await connection.getMultipleAccountsInfo(
+              addressLookupTableAddresses.map((key) => new PublicKey(key))
+            );
+            
+            addressLookupTableAccounts = accountInfos.reduce((acc, accountInfo, index) => {
+              if (accountInfo) {
+                const addressLookupTableAccount = new (await import('@solana/web3.js')).AddressLookupTableAccount({
+                  key: new PublicKey(addressLookupTableAddresses[index]),
+                  state: (await import('@solana/web3.js')).AddressLookupTableAccount.deserialize(accountInfo.data),
+                });
+                acc.push(addressLookupTableAccount);
+              }
+              return acc;
+            }, []);
+          }
+          
+          // Build and sign transaction
+          const { blockhash } = await connection.getLatestBlockhash();
+          const messageV0 = new (await import('@solana/web3.js')).TransactionMessage({
+            payerKey: keypair.publicKey,
+            recentBlockhash: blockhash,
+            instructions,
+          }).compileToV0Message(addressLookupTableAccounts);
+          
+          transaction = new VersionedTransaction(messageV0);
+          transaction.sign([keypair]);
+          
+          console.log(`✅ Transaction built and signed using QuickNode instructions`);
+        }
+        
+      } catch (instructionsError) {
+        console.log(`⚠️ QuickNode /swap-instructions failed, trying traditional /swap endpoint...`);
+        console.log(`Instructions error: ${instructionsError.message}`);
+        
+        // Fallback: Try traditional /swap endpoint
+        try {
+          swapResponse = await retryWithBackoff(async () => {
+            return await getSwapTransactionViaQuickNode(quoteResponse, keypair.publicKey.toBase58(), priorityFee, slippageBps);
+          }, maxRetries);
+          
+          if (swapResponse.data && swapResponse.data.swapTransaction) {
+            const serializedTx = swapResponse.data.swapTransaction;
+            const buffer = Buffer.from(serializedTx, 'base64');
+            transaction = VersionedTransaction.deserialize(buffer);
+            transaction.sign([keypair]);
+            console.log(`✅ Using traditional QuickNode /swap endpoint as fallback`);
+          }
+        } catch (swapError) {
+          console.error(`❌ Both QuickNode methods failed:`, swapError.message);
+          throw swapError;
+        }
+      }
+      
     } else {
       // Use public Jupiter API
       const swapUrl = `${JUPITER_API_BASE}/v6/swap`;
@@ -609,45 +741,37 @@ async function executeSwap() {
       }, maxRetries);
     }
     
-    if (!swapResponse.data || !swapResponse.data.swapTransaction) {
-      console.error('Failed to get swap transaction', swapResponse.data);
-      if (IS_SELL || IS_FORCE_SELL) {
-        console.error("Marking as sold anyway to remove from monitoring.");
-        process.exit(0);
+    // Handle public Jupiter API or if QuickNode didn't create a transaction above
+    if (!transaction) {
+      if (!swapResponse || !swapResponse.data || !swapResponse.data.swapTransaction) {
+        console.error('No swap transaction available from any method');
+        if (IS_SELL || IS_FORCE_SELL) {
+          console.error("Marking as sold anyway to remove from monitoring.");
+          process.exit(0);
+        }
+        process.exit(1);
       }
-      process.exit(1);
-    }
-    
-    // The transaction is already serialized from the API
-    const serializedTx = swapResponse.data.swapTransaction;
-    console.log('Received transaction data (length):', serializedTx.length);
-    
-    // Better transaction handling to avoid type errors
-    let transaction;
-    try {
-      const buffer = Buffer.from(serializedTx, 'base64');
-      transaction = VersionedTransaction.deserialize(buffer);
-      console.log('Successfully deserialized VersionedTransaction');
-    } catch (deserializeError) {
-      console.error('Error deserializing transaction:', deserializeError.message);
-      if (IS_SELL || IS_FORCE_SELL) {
-        console.error("Marking as sold anyway due to transaction error.");
-        process.exit(0);
+      
+      // Handle traditional serialized transaction
+      const serializedTx = swapResponse.data.swapTransaction;
+      console.log('Received transaction data (length):', serializedTx.length);
+      
+      try {
+        const buffer = Buffer.from(serializedTx, 'base64');
+        transaction = VersionedTransaction.deserialize(buffer);
+        console.log('Successfully deserialized VersionedTransaction');
+        
+        // Sign the transaction
+        transaction.sign([keypair]);
+        console.log('Transaction signed successfully');
+      } catch (deserializeError) {
+        console.error('Error deserializing/signing transaction:', deserializeError.message);
+        if (IS_SELL || IS_FORCE_SELL) {
+          console.error("Marking as sold anyway due to transaction error.");
+          process.exit(0);
+        }
+        process.exit(1);
       }
-      process.exit(1);
-    }
-    
-    // Sign the transaction with our keypair
-    try {
-      transaction.sign([keypair]);
-      console.log('Transaction signed successfully');
-    } catch (signError) {
-      console.error('Error signing transaction:', signError.message);
-      if (IS_SELL || IS_FORCE_SELL) {
-        console.error("Marking as sold anyway due to signing error.");
-        process.exit(0);
-      }
-      process.exit(1);
     }
     
     // Submit the transaction
