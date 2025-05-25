@@ -1,4 +1,4 @@
-const { Connection, Keypair, PublicKey, VersionedTransaction } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruction, TransactionMessage, AddressLookupTableAccount } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
 const fs = require('fs');
@@ -637,7 +637,8 @@ async function executeSwap() {
           // Helper function to convert instruction data to transaction instructions
           const instructionDataToTransactionInstruction = (instruction) => {
             if (!instruction) return null;
-            return new (await import('@solana/web3.js')).TransactionInstruction({
+            const { TransactionInstruction } = require('@solana/web3.js');
+            return new TransactionInstruction({
               programId: new PublicKey(instruction.programId),
               keys: instruction.accounts.map((key) => ({
                 pubkey: new PublicKey(key.pubkey),
@@ -659,15 +660,16 @@ async function executeSwap() {
           // Get address lookup table accounts if needed
           let addressLookupTableAccounts = [];
           if (addressLookupTableAddresses && addressLookupTableAddresses.length > 0) {
+            const { AddressLookupTableAccount } = require('@solana/web3.js');
             const accountInfos = await connection.getMultipleAccountsInfo(
               addressLookupTableAddresses.map((key) => new PublicKey(key))
             );
             
             addressLookupTableAccounts = accountInfos.reduce((acc, accountInfo, index) => {
               if (accountInfo) {
-                const addressLookupTableAccount = new (await import('@solana/web3.js')).AddressLookupTableAccount({
+                const addressLookupTableAccount = new AddressLookupTableAccount({
                   key: new PublicKey(addressLookupTableAddresses[index]),
-                  state: (await import('@solana/web3.js')).AddressLookupTableAccount.deserialize(accountInfo.data),
+                  state: AddressLookupTableAccount.deserialize(accountInfo.data),
                 });
                 acc.push(addressLookupTableAccount);
               }
@@ -676,8 +678,9 @@ async function executeSwap() {
           }
           
           // Build and sign transaction
+          const { TransactionMessage } = require('@solana/web3.js');
           const { blockhash } = await connection.getLatestBlockhash();
-          const messageV0 = new (await import('@solana/web3.js')).TransactionMessage({
+          const messageV0 = new TransactionMessage({
             payerKey: keypair.publicKey,
             recentBlockhash: blockhash,
             instructions,
