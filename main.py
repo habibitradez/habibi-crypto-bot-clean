@@ -70,6 +70,37 @@ CONFIG = {
     'ZERO_BALANCE_CACHE_EXPIRY': int(os.environ.get('ZERO_BALANCE_CACHE_EXPIRY', '3600'))
 }
 
+def update_config_for_quicknode():
+    """Update configuration to use QuickNode Metis Jupiter features."""
+    global CONFIG
+    
+    # Check if QuickNode should be enabled - use os.environ.get for proper environment variable access
+    solana_rpc_url = os.environ.get('SOLANA_RPC_URL', '')
+    use_quicknode = 'quiknode.pro' in solana_rpc_url.lower()
+    
+    if use_quicknode:
+        # Add QuickNode specific settings
+        CONFIG.update({
+            'USE_QUICKNODE_METIS': True,
+            'QUICKNODE_RATE_LIMIT': 50,  # 50 RPS from Launch plan
+            'QUICKNODE_REQUESTS_PER_MONTH': 130000000,  # 130M requests/month
+            'PREFER_QUICKNODE_TOKENS': True,
+            'QUICKNODE_MIN_LIQUIDITY': 1000,  # Minimum $1000 liquidity
+            'QUICKNODE_TIMEFRAME': '1h'  # Look for tokens from last hour
+        })
+        
+        logging.info("✅ Updated configuration for QuickNode Metis Jupiter Swap API")
+        logging.info(f"   RPC URL: {solana_rpc_url[:50]}...")
+        logging.info(f"   Rate Limit: {CONFIG['QUICKNODE_RATE_LIMIT']} RPS")
+        logging.info(f"   Monthly Requests: {CONFIG['QUICKNODE_REQUESTS_PER_MONTH']:,}")
+    else:
+        CONFIG['USE_QUICKNODE_METIS'] = False
+        logging.info("ℹ️ QuickNode Metis not detected, using standard configuration")
+        logging.info(f"   Current RPC: {solana_rpc_url[:50]}...")
+
+# Call the function after it's defined
+update_config_for_quicknode()
+
 def check_solders_version():
     """Check the installed version of Solders library."""
     try:
@@ -1404,35 +1435,6 @@ def get_pump_fun_token_info_quicknode(token_address: str):
         logging.error(f"Error getting token info from QuickNode: {str(e)}")
     
     return None
-
-def update_config_for_quicknode():
-    """Update configuration to use QuickNode Metis Jupiter features."""
-    global CONFIG
-    
-    # Check if QuickNode should be enabled - use os.environ.get for proper environment variable access
-    solana_rpc_url = os.environ.get('SOLANA_RPC_URL', '')
-    use_quicknode = 'quiknode.pro' in solana_rpc_url.lower()
-    
-    if use_quicknode:
-        # Add QuickNode specific settings
-        CONFIG.update({
-            'USE_QUICKNODE_METIS': True,
-            'QUICKNODE_RATE_LIMIT': 50,  # 50 RPS from Launch plan
-            'QUICKNODE_REQUESTS_PER_MONTH': 130000000,  # 130M requests/month
-            'PREFER_QUICKNODE_TOKENS': True,
-            'QUICKNODE_MIN_LIQUIDITY': 1000,  # Minimum $1000 liquidity
-            'QUICKNODE_TIMEFRAME': '1h'  # Look for tokens from last hour
-        })
-        
-        logging.info("✅ Updated configuration for QuickNode Metis Jupiter Swap API")
-        logging.info(f"   RPC URL: {solana_rpc_url[:50]}...")
-        logging.info(f"   Rate Limit: {CONFIG['QUICKNODE_RATE_LIMIT']} RPS")
-        logging.info(f"   Monthly Requests: {CONFIG['QUICKNODE_REQUESTS_PER_MONTH']:,}")
-    else:
-        CONFIG['USE_QUICKNODE_METIS'] = False
-        logging.info("ℹ️ QuickNode Metis not detected, using standard configuration")
-        logging.info(f"   Current RPC: {solana_rpc_url[:50]}...")
-
 
 def find_newest_tokens():
     """Main token finder that uses enhanced methods with QuickNode integration."""
