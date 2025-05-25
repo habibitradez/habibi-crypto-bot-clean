@@ -221,24 +221,25 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   // FIXED: Use correct QuickNode Metis endpoint WITHOUT /v6 prefix
   const swapUrl = `${QUICKNODE_JUPITER_ENDPOINT}/swap`;
   
+  // FIXED: Correct request format based on QuickNode docs
   const swapRequest = {
-    quoteResponse: quoteResponse.data,
     userPublicKey: userPublicKey,
+    quoteResponse: quoteResponse.data,
     wrapAndUnwrapSol: true,
     prioritizationFeeLamports: priorityFee,
     dynamicComputeUnitLimit: true,
-    dynamicSlippage: { 
-      maxBps: parseInt(slippageBps) 
-    }
+    asLegacyTransaction: false
   };
   
   console.log(`QuickNode Jupiter Swap URL: ${swapUrl}`);
+  console.log(`QuickNode Swap Request:`, JSON.stringify(swapRequest, null, 2));
   
   const response = await axios.post(swapUrl, swapRequest, {
     timeout: 20000,
     headers: {
       'Content-Type': 'application/json',
-      'User-Agent': 'SolanaBot/1.0'
+      'User-Agent': 'SolanaBot/1.0',
+      'Accept': 'application/json'
     }
   });
   
