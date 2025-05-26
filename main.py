@@ -809,59 +809,113 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
 
 def enhanced_find_newest_tokens_with_free_apis():
     """
-    Enhanced token discovery using Helius DEVELOPER tier + free API fallbacks
-    Now has full transaction parsing capabilities with Developer subscription
+    Complete enhanced token discovery using Helius DEVELOPER + free API fallbacks
+    Uses your real Helius API key: 6e4e884f-d053-4682-81a5-3aeaa0b4c7dc
     """
     try:
         all_tokens = []
-        helius_key = os.environ.get('HELIUS_API_KEY', '')
+        helius_key = os.environ.get('HELIUS_API_KEY', '6e4e884f-d053-4682-81a5-3aeaa0b4c7dc')
         
         if helius_key:
-            logging.info("🔥 Starting PREMIUM Helius DEVELOPER token discovery...")
+            logging.info("🔥 Starting PREMIUM Helius DEVELOPER token discovery with your real API key...")
             
-            # Method 1: Enhanced Helius transaction parsing (DEVELOPER tier)
+            # Method 1: Helius transaction analysis (using proven endpoints from your dashboard)
             try:
-                # Get recent transactions with enhanced parsing
-                helius_url = f"https://api.helius.xyz/v0/transactions"
-                params = {
-                    'api-key': helius_key,
-                    'limit': 50,
-                    'type': 'UNKNOWN'  # Catches new token creations
-                }
+                # Your dashboard shows 'getsignaturesforaddress' is working well (35 calls)
+                popular_tokens = [
+                    "So11111111111111111111111111111111111111112",  # SOL
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC
+                    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT
+                ]
                 
-                response = requests.get(helius_url, params=params, timeout=15)
-                logging.info(f"🚀 Helius DEVELOPER transaction parsing: Status {response.status_code}")
+                for token_address in popular_tokens:
+                    try:
+                        # Use the exact RPC URL from your Helius dashboard
+                        rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+                        
+                        payload = {
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "method": "getSignaturesForAddress",
+                            "params": [
+                                token_address,
+                                {
+                                    "limit": 8,
+                                    "commitment": "confirmed"
+                                }
+                            ]
+                        }
+                        
+                        response = requests.post(rpc_url, json=payload, timeout=12)
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            if 'result' in data and data['result']:
+                                signatures = [tx['signature'] for tx in data['result'][:3]]  # Top 3 recent
+                                
+                                # Get transaction details to find new tokens
+                                for signature in signatures:
+                                    tx_payload = {
+                                        "jsonrpc": "2.0",
+                                        "id": 1,
+                                        "method": "getTransaction",
+                                        "params": [
+                                            signature,
+                                            {
+                                                "encoding": "jsonParsed",
+                                                "commitment": "confirmed",
+                                                "maxSupportedTransactionVersion": 0
+                                            }
+                                        ]
+                                    }
+                                    
+                                    tx_response = requests.post(rpc_url, json=tx_payload, timeout=8)
+                                    
+                                    if tx_response.status_code == 200:
+                                        tx_data = tx_response.json()
+                                        
+                                        if 'result' in tx_data and tx_data['result']:
+                                            tx_info = tx_data['result']
+                                            
+                                            # Extract token mints from postTokenBalances
+                                            if 'meta' in tx_info and 'postTokenBalances' in tx_info['meta']:
+                                                for balance in tx_info['meta']['postTokenBalances']:
+                                                    mint = balance.get('mint')
+                                                    if mint and mint not in popular_tokens and len(mint) > 40:
+                                                        all_tokens.append(mint)
+                                                        logging.info(f"🔥 Helius found token: {mint[:8]}...")
+                                
+                                logging.info(f"✅ Helius analyzed {len(signatures)} transactions for {token_address[:8]}")
+                                
+                    except Exception as e:
+                        logging.warning(f"Helius signature search failed for {token_address[:8]}: {str(e)}")
+                        continue
                 
-                if response.status_code == 200:
-                    transactions = response.json()
-                    new_tokens = extract_new_token_addresses_enhanced(transactions)
-                    
-                    if new_tokens:
-                        all_tokens.extend(new_tokens[:5])
-                        logging.info(f"🔥 Helius DEVELOPER found {len(new_tokens)} fresh tokens via transaction parsing!")
-                        for token in new_tokens[:3]:
-                            logging.info(f"   💎 Fresh token: {token[:8]}...")
+                unique_helius_tokens = list(set(all_tokens))
+                
+                if unique_helius_tokens:
+                    logging.info(f"🎯 Helius DEVELOPER found {len(unique_helius_tokens)} tokens from transaction analysis!")
+                    all_tokens = unique_helius_tokens[:4]  # Keep top 4
+                else:
+                    logging.info("🔍 Helius transaction analysis complete, checking other methods...")
                 
             except Exception as e:
-                logging.warning(f"Helius DEVELOPER transaction parsing failed: {str(e)}")
+                logging.warning(f"Helius DEVELOPER transaction analysis failed: {str(e)}")
             
-            # Method 2: Enhanced Helius RPC calls for token metadata
+            # Method 2: Enhanced Helius RPC for token accounts
             try:
-                # Use enhanced RPC to get token account data
-                rpc_url = f"https://api.helius.xyz/?api-key={helius_key}"
+                rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
                 
-                # Get recent program accounts for token programs
                 payload = {
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "getProgramAccounts",
                     "params": [
-                        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token Program
+                        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                         {
                             "encoding": "jsonParsed",
-                            "filters": [
-                                {"dataSize": 165}  # Token account size
-                            ]
+                            "commitment": "confirmed",
+                            "filters": [{"dataSize": 165}]
                         }
                     ]
                 }
@@ -870,66 +924,81 @@ def enhanced_find_newest_tokens_with_free_apis():
                 
                 if response.status_code == 200:
                     data = response.json()
+                    
                     if 'result' in data and data['result']:
-                        # Extract unique token mints from recent accounts
                         token_mints = set()
-                        for account in data['result'][:20]:  # Check recent 20 accounts
+                        for account in data['result'][:8]:  # Check first 8 accounts
                             try:
-                                parsed = account.get('account', {}).get('data', {}).get('parsed', {})
-                                mint = parsed.get('info', {}).get('mint')
-                                if mint and len(mint) > 40:  # Valid Solana address
+                                parsed_data = account.get('account', {}).get('data', {}).get('parsed', {})
+                                mint = parsed_data.get('info', {}).get('mint')
+                                
+                                if mint and len(mint) > 40:
                                     token_mints.add(mint)
-                            except:
+                                    
+                            except Exception as e:
                                 continue
                         
                         if token_mints:
-                            helius_tokens = list(token_mints)[:5]
-                            all_tokens.extend(helius_tokens)
-                            logging.info(f"🔥 Helius DEVELOPER RPC found {len(helius_tokens)} tokens via enhanced RPC!")
+                            helius_rpc_tokens = list(token_mints)[:3]
+                            all_tokens.extend(helius_rpc_tokens)
+                            logging.info(f"💎 Helius RPC found {len(helius_rpc_tokens)} token accounts")
                 
             except Exception as e:
-                logging.warning(f"Helius DEVELOPER RPC failed: {str(e)}")
-            
-            # Method 3: Helius Laserstream for real-time updates (if available)
-            try:
-                laserstream_url = f"https://api.helius.xyz/v0/laserstream"
-                headers = {'Authorization': f'Bearer {helius_key}'}
-                
-                # Quick check if Laserstream is available
-                response = requests.get(f"{laserstream_url}/status", headers=headers, timeout=10)
-                if response.status_code == 200:
-                    logging.info("🚀 Helius Laserstream available - real-time token detection active!")
-                
-            except Exception as e:
-                logging.warning(f"Helius Laserstream not available: {str(e)}")
+                logging.warning(f"Helius RPC method failed: {str(e)}")
         
         else:
             logging.info("🔄 No Helius key found, using free APIs only...")
         
-        # Method 4: Free API fallbacks (DexScreener, Pump.fun)
+        # Method 3: DexScreener trending tokens (FREE)
         try:
             logging.info("📈 Fetching DexScreener trending tokens...")
             response = requests.get("https://api.dexscreener.com/latest/dex/tokens/trending/solana", timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                for token in data.get('pairs', [])[:8]:
+                for token in data.get('pairs', [])[:6]:
                     if token.get('baseToken', {}).get('address'):
                         all_tokens.append(token['baseToken']['address'])
                         logging.info(f"📈 DexScreener: {token['baseToken']['symbol']} - Vol: ${token.get('volume', {}).get('h24', 0):,.0f}")
         except Exception as e:
             logging.warning(f"DexScreener failed: {str(e)}")
         
+        # Method 4: Pump.fun fresh launches (FREE)
         try:
             logging.info("🚀 Fetching fresh Pump.fun launches...")
             response = requests.get("https://frontend-api.pump.fun/coins/king-of-the-hill?offset=0&limit=50&includeNsfw=false", timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                for token in data[:8]:
+                for token in data[:6]:
                     if token.get('mint'):
                         all_tokens.append(token['mint'])
                         logging.info(f"🚀 Pump.fun: {token.get('name', 'Unknown')} - MC: ${token.get('market_cap', 0):,.0f}")
         except Exception as e:
             logging.warning(f"Pump.fun failed: {str(e)}")
+        
+        # Method 5: Birdeye trending (FREE tier)
+        try:
+            logging.info("🐦 Fetching Birdeye trending tokens...")
+            birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')
+            
+            if birdeye_key:
+                headers = {"X-API-KEY": birdeye_key}
+                response = requests.get(
+                    "https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=20",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    for token in data.get('data', {}).get('tokens', [])[:4]:
+                        if token.get('address') and token.get('v24hUSD', 0) > 10000:
+                            all_tokens.append(token['address'])
+                            logging.info(f"🐦 Birdeye: {token.get('symbol')} - Vol: ${token.get('v24hUSD', 0):,.0f}")
+            else:
+                logging.info("🔄 No Birdeye key found, skipping Birdeye API")
+                
+        except Exception as e:
+            logging.warning(f"Birdeye failed: {str(e)}")
         
         # Remove duplicates and validate
         unique_tokens = list(set(all_tokens))
@@ -938,10 +1007,10 @@ def enhanced_find_newest_tokens_with_free_apis():
         logging.info(f"🔍 Validating {len(unique_tokens)} discovered tokens...")
         
         for token in unique_tokens[:10]:  # Check top 10
-            if is_token_tradable_simple(token):
+            if is_token_tradable_enhanced(token):
                 validated_tokens.append(token)
                 logging.info(f"✅ Validated: {token[:8]}...")
-                if len(validated_tokens) >= 5:  # Max 5 tokens
+                if len(validated_tokens) >= 5:  # Max 5 tokens for focus
                     break
             else:
                 logging.warning(f"❌ Failed validation: {token[:8]}...")
@@ -951,7 +1020,6 @@ def enhanced_find_newest_tokens_with_free_apis():
             return validated_tokens
         else:
             logging.warning("❌ No validated tokens found, using emergency fallback...")
-            # Emergency fallback
             return [
                 "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
                 "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
