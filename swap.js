@@ -65,7 +65,7 @@ function getQuickNodeHeaders() {
   
   return headers;
 }
-const TOKEN_ADDRESS = process.argv[2] || 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263';
+const TOKEN_ADDRESS = process.argv[2] || 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm';
 const AMOUNT_SOL = parseFloat(process.argv[3] || '0.005');
 const IS_SELL = process.argv[4] === 'true';
 const IS_FORCE_SELL = process.argv[5] === 'true';
