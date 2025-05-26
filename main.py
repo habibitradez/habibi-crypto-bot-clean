@@ -938,17 +938,14 @@ def smart_token_selection(potential_tokens):
                 elif minutes_since_buy > 30:
                     score += 2
                 elif minutes_since_buy > 15:
-                    score += 1
-            else:
-                score += 5  # Never bought before gets highest score
-            
-            # Factor 2: Known good tokens get bonus
-            known_good = [
-                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
-            ]
-            if token_address in known_good:
-                score += 2
+            score += 1
+        else:
+            score += 10  # Never bought before gets highest score (increased from 5 to 10)
+        
+        # Discourage BONK repetition to encourage token diversity
+        bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+        if token_address == bonk_address:
+            score -= 3  # Small penalty for BONK to prioritize fresh tokens
             
             # Factor 3: Quick price check bonus
             try:
