@@ -1470,91 +1470,117 @@ def get_newest_tokens_quicknode():
         return []
 
 def smart_token_selection(potential_tokens):
-    """Intelligently select the best token to trade based on multiple factors."""
+    """Intelligently select the best token to trade."""
     if not potential_tokens:
         return None
     
     try:
-        logging.info(f"🧠 Smart selecting from {len(potential_tokens)} potential tokens...")
-        
-        scored_tokens = []
-        current_time = time.time()
-        
+        # Handle both string addresses and dict objects
+        normalized_tokens = []
         for token in potential_tokens:
+            if isinstance(token, str):
+                # Simple string address - convert to dict format
+                normalized_tokens.append({
+                    'address': token,
+                    'symbol': 'Unknown',
+                    'source': 'fallback',
+                    'score': 0
+                })
+            elif isinstance(token, dict):
+                # Already in dict format
+                normalized_tokens.append(token)
+            else:
+                logging.warning(f"Unknown token format: {type(token)}")
+                continue
+        
+        if not normalized_tokens:
+            return None
+        
+        # Score tokens based on various factors
+        scored_tokens = []
+        
+        for token in normalized_tokens:
             score = 0
             token_address = token.get('address', '')
             
-            # Factor 1: Avoid recently bought tokens (higher score for unused tokens)
-            last_bought_key = f"last_bought_{token_address}"
-            if last_bought_key not in globals():
-                score += 50  # Big bonus for never traded tokens
+            if not token_address:
+                continue
+            
+            # Factor 1: Not recently bought (higher score for longer gap)
+            if token_address in token_buy_timestamps:
+                minutes_since_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                if minutes_since_buy > 60:
+                    score += 3
+                elif minutes_since_buy > 30:
+                    score += 2
+                elif minutes_since_buy > 15:
+                    score += 1
             else:
-                time_since_bought = current_time - globals()[last_bought_key]
-                if time_since_bought > 3600:  # 1 hour cooldown
-                    score += 30
-                elif time_since_bought > 1800:  # 30 minute cooldown
-                    score += 15
-                else:
-                    score -= 20  # Penalty for recent trades
+                score += 10  # Never bought before gets highest score
             
-            # Factor 2: Market cap (prefer reasonable market caps)
+            # Discourage BONK repetition to encourage token diversity
+            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+            if token_address == bonk_address:
+                score -= 3  # Small penalty for BONK to prioritize fresh tokens
+            
+            # Factor 2: Known good tokens get bonus
+            known_good = [
+                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
+            ]
+            
+            if token_address in known_good:
+                score += 2
+            
+            # Factor 3: Source bonus
+            source = token.get('source', 'unknown')
+            if 'BullX' in source:
+                score += 5  # Highest priority for BullX tokens
+            elif 'DexScreener' in source:
+                score += 3
+            elif 'Birdeye' in source:
+                score += 2
+            elif 'Pump.fun' in source:
+                score += 1
+            
+            # Factor 4: Volume/Market Cap bonus
+            volume = token.get('volume', 0)
             market_cap = token.get('market_cap', 0)
-            if 10000 <= market_cap <= 1000000:  # $10K to $1M sweet spot
-                score += 25
-            elif market_cap > 1000000:
-                score += 10
-            elif market_cap > 1000:
-                score += 5
             
-            # Factor 3: Liquidity (prefer tokens with some liquidity)
-            liquidity = token.get('liquidity', 0)
-            if liquidity > 5000:
-                score += 20
-            elif liquidity > 1000:
-                score += 10
+            if volume > 100000:  # $100k+ volume
+                score += 2
+            elif volume > 50000:  # $50k+ volume
+                score += 1
+                
+            if 10000 <= market_cap <= 1000000:  # Sweet spot market cap
+                score += 2
             
-            # Factor 4: Source bonus
-            source = token.get('source', '')
-            if 'quicknode' in source.lower():
-                score += 15  # Bonus for QuickNode tokens
-            elif token.get('pump_fun'):
-                score += 10  # Bonus for pump.fun tokens
-            
-            # Factor 5: Verified token bonus
-            if token.get('verified'):
-                score += 30
-            
-            # Factor 6: Age factor (prefer newer tokens but not too new)
-            created_timestamp = token.get('created_timestamp')
-            if created_timestamp:
-                try:
-                    age_minutes = (current_time - created_timestamp) / 60
-                    if 5 <= age_minutes <= 60:  # 5-60 minutes old
-                        score += 20
-                    elif age_minutes <= 180:  # Up to 3 hours
-                        score += 10
-                except:
-                    pass
-            
-            scored_tokens.append((token, score))
+            scored_tokens.append((token_address, score, token))
         
         # Sort by score (highest first)
         scored_tokens.sort(key=lambda x: x[1], reverse=True)
         
         if scored_tokens:
-            best_token, best_score = scored_tokens[0]
-            logging.info(f"🎯 Selected token {best_token['address'][:8]} with score {best_score}")
-            logging.info(f"   Symbol: {best_token.get('symbol', 'UNKNOWN')}")
-            logging.info(f"   Market Cap: ${best_token.get('market_cap', 0):,}")
-            logging.info(f"   Source: {best_token.get('source', 'unknown')}")
-            return best_token
+            best_token_address, best_score, best_token_data = scored_tokens[0]
+            symbol = best_token_data.get('symbol', best_token_address[:8])
+            source = best_token_data.get('source', 'unknown')
+            
+            logging.info(f"🎯 Selected best token: {symbol} ({best_token_address[:8]}) from {source} (score: {best_score})")
+            return best_token_address
         
-        return None
+        # Fallback to first token
+        first_token = normalized_tokens[0]
+        return first_token.get('address')
         
     except Exception as e:
-        logging.error(f"❌ Error in smart token selection: {str(e)}")
-        # Fallback to first token
-        return potential_tokens[0] if potential_tokens else None
+        logging.error(f"Error in smart token selection: {str(e)}")
+        # Return first available token as fallback
+        if potential_tokens:
+            first_token = potential_tokens[0]
+            if isinstance(first_token, str):
+                return first_token
+            elif isinstance(first_token, dict):
+                return first_token.get('address')
+        return None
 
 def enhanced_find_newest_tokens():
     """Enhanced token finder with better validation and multiple fallback methods."""
