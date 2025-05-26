@@ -992,6 +992,38 @@ def extract_new_token_addresses_enhanced(transactions):
     
     return list(set(new_tokens))  # Remove duplicates
 
+def is_token_tradable_simple(token_address):
+    """Enhanced token validation using multiple methods."""
+    try:
+        # Method 1: Jupiter quote test (most reliable)
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000",
+            timeout=8
+        )
+        if response.status_code == 200 and 'outAmount' in response.text:
+            return True
+        
+        # Method 2: Simple RPC call to check if token exists
+        helius_key = os.environ.get('HELIUS_API_KEY', '')
+        if helius_key:
+            rpc_url = f"https://api.helius.xyz/?api-key={helius_key}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [token_address, {"encoding": "base64"}]
+            }
+            
+            response = requests.post(rpc_url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('result', {}).get('value') is not None
+        
+        return False
+        
+    except Exception as e:
+        return False
+
 def is_token_tradable_jupiter(token_address):
     """
     Fast, reliable token validation using Jupiter API.
