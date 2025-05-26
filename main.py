@@ -1032,18 +1032,51 @@ def enhanced_find_newest_tokens_with_free_apis():
             "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
         ]
 
-def is_token_tradable_enhanced(token_address):
-    """Enhanced token validation using multiple methods including Helius."""
+def is_likely_rug_pull(token_address):
+    """Quick rug pull detection before trading."""
     try:
-        # Method 1: Jupiter quote test (most reliable)
+        # Check if token has locked liquidity (basic check)
         response = requests.get(
-            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000",
+            f"https://api.dexscreener.com/latest/dex/tokens/{token_address}",
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            pairs = data.get('pairs', [])
+            
+            for pair in pairs:
+                # Check for suspicious signs
+                liquidity = pair.get('liquidity', {}).get('usd', 0)
+                volume_24h = pair.get('volume', {}).get('h24', 0)
+                
+                # Red flags
+                if liquidity < 5000:  # Very low liquidity
+                    return True
+                if volume_24h > liquidity * 10:  # Suspicious volume ratio
+                    return True
+                    
+        return False
+        
+    except:
+        return False  # If check fails, allow trade
+
+def is_token_tradable_enhanced(token_address):
+    """Enhanced token validation with rug pull detection."""
+    try:
+        # Existing Jupiter validation
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=50000",  # Reduced test amount
             timeout=8
         )
         if response.status_code == 200 and 'outAmount' in response.text:
+            # Additional rug pull check
+            if is_likely_rug_pull(token_address):
+                logging.warning(f"⚠️ Potential rug pull detected for {token_address[:8]}, skipping...")
+                return False
             return True
         
-        # Method 2: Enhanced validation using Helius RPC
+        # Rest of your existing validation code...
         helius_key = os.environ.get('HELIUS_API_KEY', '6e4e884f-d053-4682-81a5-3aeaa0b4c7dc')
         if helius_key:
             rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
@@ -1057,9 +1090,13 @@ def is_token_tradable_enhanced(token_address):
             response = requests.post(rpc_url, json=payload, timeout=6)
             if response.status_code == 200:
                 data = response.json()
-                return data.get('result', {}).get('value') is not None
+                if data.get('result', {}).get('value') is not None:
+                    # Additional rug pull check
+                    if is_likely_rug_pull(token_address):
+                        logging.warning(f"⚠️ Potential rug pull detected for {token_address[:8]}, skipping...")
+                        return False
+                    return True
         
-        # Method 3: Basic address validation
         if len(token_address) >= 43 and len(token_address) <= 44:
             return True
             
