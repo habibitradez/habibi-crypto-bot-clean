@@ -979,7 +979,7 @@ def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback (JUP removed)."""
     verified_tokens = [
         {
-            "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+           # "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
             "symbol": "BONK",
             "verified": True
         },
@@ -2436,7 +2436,7 @@ def check_token_socials(token_address):
         
         # For tokens we know are legitimate
         known_legitimate_tokens = [
-            "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+           # "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
             "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
             "So11111111111111111111111111111111111111112"   # SOL
         ]
@@ -3221,7 +3221,7 @@ def get_fallback_newest_tokens():
         
         # Add known good meme tokens that are tradable
         known_meme_tokens = [
-            {"address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "symbol": "BONK", "minutes_old": 10},
+           # {"address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "symbol": "BONK", "minutes_old": 10},
             {"address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "symbol": "WIF", "minutes_old": 15},
             {"address": "7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr", "symbol": "POPCAT", "minutes_old": 20}
         ]
@@ -3583,7 +3583,7 @@ def verify_token(token_address):
         if not is_recent_token(token_address):
             # Only continue with older tokens if they're on our verified list
             if token_address not in [
-                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+               # "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
                 "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"   # WIF
             ]:
                 logging.info(f"Token {token_address} is not recent and not in verified list - skipping")
@@ -5946,7 +5946,7 @@ def main():
     
     if initialize():
         # Quick test to verify JavaScript is working
-        test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+       # test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
         test_amount = 0.001  # Very small test amount
         
         logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
