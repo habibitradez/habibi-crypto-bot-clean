@@ -176,7 +176,6 @@ SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
 # Predefined list of known tokens
 KNOWN_TOKENS = [
     {"symbol": "SOL", "address": SOL_TOKEN_ADDRESS},
-    {"symbol": "BONK", "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", "tradable": True},
     {"symbol": "WIF", "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", "tradable": True},
     {"symbol": "HADES", "address": "GzYBeP4qDXP5onnpKKdYw7m6hxzgTBjTTUXkVxZToDsi", "tradable": False},
     {"symbol": "PENGU", "address": "4GUQXsieAfBX4Xfv2eXG3oNkQTVNnbnu6ZNF13uD7hYA", "tradable": False},
