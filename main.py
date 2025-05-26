@@ -76,7 +76,7 @@ def update_config_for_quicknode():
     
     # Check if QuickNode should be enabled - use os.environ.get for proper environment variable access
     solana_rpc_url = os.environ.get('SOLANA_RPC_URL', '')
-    use_quicknode = 'quiknode.pro' in solana_rpc_url.lower()
+    use_quicknode = False
     
     if use_quicknode:
         # Add QuickNode specific settings
@@ -5947,12 +5947,12 @@ def main():
     if initialize():
         # Quick test to verify JavaScript is working
        # test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-        test_amount = 0.001  # Very small test amount
+       # test_amount = 0.001  # Very small test amount
         
-        logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
-        try:
+       # logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
+       # try:
             # Quick JS test
-            success, signature = execute_via_javascript(test_token, test_amount)
+           # success, signature = execute_via_javascript(test_token, test_amount)
             
             if success:
                 logging.info(f"JavaScript test successful! Starting Quick-Flip trading...")
