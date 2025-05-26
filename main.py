@@ -196,8 +196,7 @@ KNOWN_TOKENS = [
 
 # Define verified tokens list
 VERIFIED_TOKENS = [
-    "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
-    "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"   # WIF
+    "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
 ]
 def decode_transaction_blob(blob_str: str) -> bytes:
     """Try to decode a transaction blob using multiple formats."""
@@ -812,11 +811,7 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
 def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback."""
     verified_tokens = [
-        {
-            "address": "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-            "symbol": "BONK",
-            "verified": True
-        },
+        
         {
             "address": "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", 
             "symbol": "WIF",
@@ -949,7 +944,6 @@ def smart_token_selection(potential_tokens):
             
             # Factor 2: Known good tokens get bonus
             known_good = [
-                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
                 "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
             ]
             
