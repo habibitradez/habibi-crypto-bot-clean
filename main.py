@@ -938,14 +938,23 @@ def smart_token_selection(potential_tokens):
                 elif minutes_since_buy > 30:
                     score += 2
                 elif minutes_since_buy > 15:
-            score += 1
-        else:
-            score += 10  # Never bought before gets highest score (increased from 5 to 10)
-        
-        # Discourage BONK repetition to encourage token diversity
-        bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-        if token_address == bonk_address:
-            score -= 3  # Small penalty for BONK to prioritize fresh tokens
+                    score += 1
+            else:
+                score += 10  # Never bought before gets highest score (increased from 5 to 10)
+            
+            # Discourage BONK repetition to encourage token diversity
+            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
+            if token_address == bonk_address:
+                score -= 3  # Small penalty for BONK to prioritize fresh tokens
+            
+            # Factor 2: Known good tokens get bonus
+            known_good = [
+                "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",  # BONK
+                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
+            ]
+            
+            if token_address in known_good:
+                score += 2
             
             # Factor 3: Quick price check bonus
             try:
@@ -971,7 +980,6 @@ def smart_token_selection(potential_tokens):
     except Exception as e:
         logging.error(f"Error in smart token selection: {str(e)}")
         return potential_tokens[0] if potential_tokens else None
-
 # Add these functions to your main.py file
 
 def get_verified_tradable_tokens():
