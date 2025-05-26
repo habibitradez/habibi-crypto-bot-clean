@@ -1196,11 +1196,36 @@ def smart_token_selection(potential_tokens):
         return None
     
     try:
+        # Handle both string addresses and dict objects
+        normalized_tokens = []
+        for token in potential_tokens:
+            if isinstance(token, str):
+                # Simple string address - convert to dict format
+                normalized_tokens.append({
+                    'address': token,
+                    'symbol': 'Unknown',
+                    'source': 'fallback',
+                    'score': 0
+                })
+            elif isinstance(token, dict):
+                # Already in dict format
+                normalized_tokens.append(token)
+            else:
+                logging.warning(f"Unknown token format: {type(token)}")
+                continue
+        
+        if not normalized_tokens:
+            return None
+        
         # Score tokens based on various factors
         scored_tokens = []
         
-        for token_address in potential_tokens:
+        for token in normalized_tokens:
             score = 0
+            token_address = token.get('address', '')
+            
+            if not token_address:
+                continue
             
             # Factor 1: Not recently bought (higher score for longer gap)
             if token_address in token_buy_timestamps:
@@ -1212,7 +1237,7 @@ def smart_token_selection(potential_tokens):
                 elif minutes_since_buy > 15:
                     score += 1
             else:
-                score += 10  # Never bought before gets highest score (increased from 5 to 10)
+                score += 10  # Never bought before gets highest score
             
             # Discourage BONK repetition to encourage token diversity
             bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
@@ -1227,31 +1252,56 @@ def smart_token_selection(potential_tokens):
             if token_address in known_good:
                 score += 2
             
-            # Factor 3: Quick price check bonus
-            try:
-                price = get_token_price(token_address)
-                if price and price > 0:
-                    score += 2
-            except:
-                pass
+            # Factor 3: Source bonus
+            source = token.get('source', 'unknown')
+            if 'BullX' in source:
+                score += 5  # Highest priority for BullX tokens
+            elif 'DexScreener' in source:
+                score += 3
+            elif 'Birdeye' in source:
+                score += 2
+            elif 'Pump.fun' in source:
+                score += 1
             
-            scored_tokens.append((token_address, score))
+            # Factor 4: Volume/Market Cap bonus
+            volume = token.get('volume', 0)
+            market_cap = token.get('market_cap', 0)
+            
+            if volume > 100000:  # $100k+ volume
+                score += 2
+            elif volume > 50000:  # $50k+ volume
+                score += 1
+                
+            if 10000 <= market_cap <= 1000000:  # Sweet spot market cap
+                score += 2
+            
+            scored_tokens.append((token_address, score, token))
         
         # Sort by score (highest first)
         scored_tokens.sort(key=lambda x: x[1], reverse=True)
         
         if scored_tokens:
-            best_token = scored_tokens[0][0]
-            best_score = scored_tokens[0][1]
-            logging.info(f"🎯 Selected best token: {best_token[:8]} (score: {best_score})")
-            return best_token
+            best_token_address, best_score, best_token_data = scored_tokens[0]
+            symbol = best_token_data.get('symbol', best_token_address[:8])
+            source = best_token_data.get('source', 'unknown')
+            
+            logging.info(f"🎯 Selected best token: {symbol} ({best_token_address[:8]}) from {source} (score: {best_score})")
+            return best_token_address
         
-        return potential_tokens[0] if potential_tokens else None
+        # Fallback to first token
+        first_token = normalized_tokens[0]
+        return first_token.get('address')
         
     except Exception as e:
         logging.error(f"Error in smart token selection: {str(e)}")
-        return potential_tokens[0] if potential_tokens else None
-# Add these functions to your main.py file
+        # Return first available token as fallback
+        if potential_tokens:
+            first_token = potential_tokens[0]
+            if isinstance(first_token, str):
+                return first_token
+            elif isinstance(first_token, dict):
+                return first_token.get('address')
+        return None
 
 def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback (JUP removed)."""
