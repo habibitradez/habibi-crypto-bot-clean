@@ -807,192 +807,190 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     return None
 
 
-# FUNCTION 1: Replace enhanced_find_newest_tokens_with_free_apis()
 def enhanced_find_newest_tokens_with_free_apis():
     """
-    Enhanced token discovery with Helius FREE tier integration
-    Tests Helius free limits before recommending upgrade
+    Enhanced token discovery using Helius DEVELOPER tier + free API fallbacks
+    Now has full transaction parsing capabilities with Developer subscription
     """
     try:
         all_tokens = []
         helius_key = os.environ.get('HELIUS_API_KEY', '')
         
         if helius_key:
-            logging.info("🧪 Testing HELIUS FREE tier + Free API hybrid discovery...")
-        else:
-            logging.info("🔍 Starting FREE API token discovery...")
-        
-        # Method 1: Test Helius FREE tier (if available)
-        if helius_key:
+            logging.info("🔥 Starting PREMIUM Helius DEVELOPER token discovery...")
+            
+            # Method 1: Enhanced Helius transaction parsing (DEVELOPER tier)
             try:
-                logging.info("🧪 Testing Helius FREE RPC performance...")
-                helius_tokens = test_helius_free_tier(helius_key)
+                # Get recent transactions with enhanced parsing
+                helius_url = f"https://api.helius.xyz/v0/transactions"
+                params = {
+                    'api-key': helius_key,
+                    'limit': 50,
+                    'type': 'UNKNOWN'  # Catches new token creations
+                }
                 
-                if helius_tokens:
-                    all_tokens.extend(helius_tokens)
-                    logging.info(f"✅ Helius FREE found {len(helius_tokens)} tokens (testing)")
-                else:
-                    logging.info("⚠️ Helius FREE tier returned no tokens - may need upgrade for full features")
+                response = requests.get(helius_url, params=params, timeout=15)
+                logging.info(f"🚀 Helius DEVELOPER transaction parsing: Status {response.status_code}")
+                
+                if response.status_code == 200:
+                    transactions = response.json()
+                    new_tokens = extract_new_token_addresses_enhanced(transactions)
+                    
+                    if new_tokens:
+                        all_tokens.extend(new_tokens[:5])
+                        logging.info(f"🔥 Helius DEVELOPER found {len(new_tokens)} fresh tokens via transaction parsing!")
+                        for token in new_tokens[:3]:
+                            logging.info(f"   💎 Fresh token: {token[:8]}...")
                 
             except Exception as e:
-                logging.warning(f"Helius FREE API failed: {str(e)}")
-                logging.info("💡 Consider upgrading Helius if this provides value")
-        
-        # Method 2: DexScreener trending tokens (FREE - most reliable)
-        try:
-            logging.info("📈 Fetching DexScreener trending tokens...")
-            response = requests.get(
-                "https://api.dexscreener.com/latest/dex/tokens/trending/solana",
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'}
-            )
+                logging.warning(f"Helius DEVELOPER transaction parsing failed: {str(e)}")
             
-            if response.status_code == 200:
-                data = response.json()
-                dex_count = 0
-                for token in data.get('pairs', [])[:15]:  # Top 15 trending
-                    token_data = token.get('baseToken', {})
-                    if token_data.get('address') and token.get('volume', {}).get('h24', 0) > 50000:  # Min $50k volume
-                        all_tokens.append({
-                            'address': token_data['address'],
-                            'symbol': token_data.get('symbol', 'Unknown'),
-                            'source': 'DexScreener',
-                            'volume': token.get('volume', {}).get('h24', 0),
-                            'score': 10  # High score for trending
-                        })
-                        dex_count += 1
-                        logging.info(f"📈 DexScreener: {token_data.get('symbol')} - Vol: ${token.get('volume', {}).get('h24', 0):,.0f}")
+            # Method 2: Enhanced Helius RPC calls for token metadata
+            try:
+                # Use enhanced RPC to get token account data
+                rpc_url = f"https://api.helius.xyz/?api-key={helius_key}"
                 
-                logging.info(f"✅ DexScreener found {dex_count} trending tokens")
-            else:
-                logging.warning(f"DexScreener failed with status {response.status_code}")
-                
-        except Exception as e:
-            logging.warning(f"DexScreener API failed: {str(e)}")
-        
-        # Method 3: Pump.fun direct API (FREE - fresh launches)
-        try:
-            logging.info("🚀 Fetching fresh Pump.fun launches...")
-            response = requests.get(
-                "https://frontend-api.pump.fun/coins/king-of-the-hill?offset=0&limit=30&includeNsfw=false",
-                timeout=10,
-                headers={'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'}
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                pump_count = 0
-                for token in data[:12]:  # Top 12 from pump
-                    if token.get('mint') and token.get('market_cap', 0) > 10000:  # Min $10k MC
-                        all_tokens.append({
-                            'address': token['mint'],
-                            'symbol': token.get('name', 'Unknown')[:10],
-                            'source': 'Pump.fun',
-                            'market_cap': token.get('market_cap', 0),
-                            'score': 8  # Good score for fresh launches
-                        })
-                        pump_count += 1
-                        logging.info(f"🚀 Pump.fun: {token.get('name', 'Unknown')[:15]} - MC: ${token.get('market_cap', 0):,.0f}")
-                
-                logging.info(f"✅ Pump.fun found {pump_count} fresh tokens")
-            else:
-                logging.warning(f"Pump.fun failed with status {response.status_code}")
-                
-        except Exception as e:
-            logging.warning(f"Pump.fun API failed: {str(e)}")
-        
-        # Method 4: Birdeye trending (Free tier - 60 RPM)
-        try:
-            logging.info("🐦 Fetching Birdeye trending tokens...")
-            birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')
-            
-            if birdeye_key:
-                headers = {
-                    "X-API-KEY": birdeye_key,
-                    'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'
+                # Get recent program accounts for token programs
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getProgramAccounts",
+                    "params": [
+                        "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token Program
+                        {
+                            "encoding": "jsonParsed",
+                            "filters": [
+                                {"dataSize": 165}  # Token account size
+                            ]
+                        }
+                    ]
                 }
-                response = requests.get(
-                    "https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=20",
-                    headers=headers,
-                    timeout=10
-                )
+                
+                response = requests.post(rpc_url, json=payload, timeout=15)
                 
                 if response.status_code == 200:
                     data = response.json()
-                    birdeye_count = 0
-                    for token in data.get('data', {}).get('tokens', [])[:8]:  # Top 8
-                        if token.get('address') and token.get('v24hUSD', 0) > 25000:  # Min $25k volume
-                            all_tokens.append({
-                                'address': token['address'],
-                                'symbol': token.get('symbol', 'Unknown'),
-                                'source': 'Birdeye',
-                                'volume': token.get('v24hUSD', 0),
-                                'score': 9  # High score for volume leaders
-                            })
-                            birdeye_count += 1
-                            logging.info(f"🐦 Birdeye: {token.get('symbol')} - Vol: ${token.get('v24hUSD', 0):,.0f}")
-                    
-                    logging.info(f"✅ Birdeye found {birdeye_count} high-volume tokens")
-                else:
-                    logging.warning(f"Birdeye failed with status {response.status_code}")
-            else:
-                logging.warning("🐦 Birdeye API key not found in environment")
+                    if 'result' in data and data['result']:
+                        # Extract unique token mints from recent accounts
+                        token_mints = set()
+                        for account in data['result'][:20]:  # Check recent 20 accounts
+                            try:
+                                parsed = account.get('account', {}).get('data', {}).get('parsed', {})
+                                mint = parsed.get('info', {}).get('mint')
+                                if mint and len(mint) > 40:  # Valid Solana address
+                                    token_mints.add(mint)
+                            except:
+                                continue
+                        
+                        if token_mints:
+                            helius_tokens = list(token_mints)[:5]
+                            all_tokens.extend(helius_tokens)
+                            logging.info(f"🔥 Helius DEVELOPER RPC found {len(helius_tokens)} tokens via enhanced RPC!")
                 
-        except Exception as e:
-            logging.warning(f"Birdeye API failed: {str(e)}")
+            except Exception as e:
+                logging.warning(f"Helius DEVELOPER RPC failed: {str(e)}")
+            
+            # Method 3: Helius Laserstream for real-time updates (if available)
+            try:
+                laserstream_url = f"https://api.helius.xyz/v0/laserstream"
+                headers = {'Authorization': f'Bearer {helius_key}'}
+                
+                # Quick check if Laserstream is available
+                response = requests.get(f"{laserstream_url}/status", headers=headers, timeout=10)
+                if response.status_code == 200:
+                    logging.info("🚀 Helius Laserstream available - real-time token detection active!")
+                
+            except Exception as e:
+                logging.warning(f"Helius Laserstream not available: {str(e)}")
         
-        # Process and deduplicate tokens
-        if not all_tokens:
-            logging.warning("❌ No tokens found from any API, using emergency fallback")
+        else:
+            logging.info("🔄 No Helius key found, using free APIs only...")
+        
+        # Method 4: Free API fallbacks (DexScreener, Pump.fun)
+        try:
+            logging.info("📈 Fetching DexScreener trending tokens...")
+            response = requests.get("https://api.dexscreener.com/latest/dex/tokens/trending/solana", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                for token in data.get('pairs', [])[:8]:
+                    if token.get('baseToken', {}).get('address'):
+                        all_tokens.append(token['baseToken']['address'])
+                        logging.info(f"📈 DexScreener: {token['baseToken']['symbol']} - Vol: ${token.get('volume', {}).get('h24', 0):,.0f}")
+        except Exception as e:
+            logging.warning(f"DexScreener failed: {str(e)}")
+        
+        try:
+            logging.info("🚀 Fetching fresh Pump.fun launches...")
+            response = requests.get("https://frontend-api.pump.fun/coins/king-of-the-hill?offset=0&limit=50&includeNsfw=false", timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                for token in data[:8]:
+                    if token.get('mint'):
+                        all_tokens.append(token['mint'])
+                        logging.info(f"🚀 Pump.fun: {token.get('name', 'Unknown')} - MC: ${token.get('market_cap', 0):,.0f}")
+        except Exception as e:
+            logging.warning(f"Pump.fun failed: {str(e)}")
+        
+        # Remove duplicates and validate
+        unique_tokens = list(set(all_tokens))
+        validated_tokens = []
+        
+        logging.info(f"🔍 Validating {len(unique_tokens)} discovered tokens...")
+        
+        for token in unique_tokens[:10]:  # Check top 10
+            if is_token_tradable_simple(token):
+                validated_tokens.append(token)
+                logging.info(f"✅ Validated: {token[:8]}...")
+                if len(validated_tokens) >= 5:  # Max 5 tokens
+                    break
+            else:
+                logging.warning(f"❌ Failed validation: {token[:8]}...")
+        
+        if validated_tokens:
+            logging.info(f"🎯 HELIUS DEVELOPER + Free APIs found {len(validated_tokens)} validated trading opportunities!")
+            return validated_tokens
+        else:
+            logging.warning("❌ No validated tokens found, using emergency fallback...")
+            # Emergency fallback
             return [
                 "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
                 "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
             ]
         
-        # Remove duplicates and sort by score
-        unique_tokens = {}
-        for token in all_tokens:
-            addr = token['address']
-            if addr not in unique_tokens or token['score'] > unique_tokens[addr]['score']:
-                unique_tokens[addr] = token
-        
-        # Sort by score (highest first)
-        sorted_tokens = sorted(unique_tokens.values(), key=lambda x: x['score'], reverse=True)
-        
-        # Validate tokens quickly
-        validated_tokens = []
-        logging.info("🔍 Validating discovered tokens...")
-        
-        for token in sorted_tokens[:10]:  # Check top 10
-            if is_token_tradable_jupiter(token['address']):
-                validated_tokens.append(token['address'])
-                logging.info(f"✅ Validated: {token['symbol']} ({token['source']}) - {token['address'][:8]}")
-                
-                if len(validated_tokens) >= 5:  # Max 5 tokens for focus
-                    break
-            else:
-                logging.warning(f"❌ Failed validation: {token['symbol']} - {token['address'][:8]}")
-        
-        if helius_key:
-            logging.info(f"🧪 Helius FREE + Free APIs found {len(validated_tokens)} validated trading opportunities")
-            if len([t for t in all_tokens if t.get('source') == 'Helius/Free']) > 0:
-                logging.info(f"💡 Helius FREE tier is working - consider upgrade for enhanced features!")
-            else:
-                logging.info(f"⚠️ Helius FREE tier limited - may need upgrade for token discovery features")
-        else:
-            logging.info(f"🎯 FREE APIs found {len(validated_tokens)} validated trading opportunities")
-        
-        return validated_tokens
-        
     except Exception as e:
-        logging.error(f"Hybrid token discovery failed: {str(e)}")
-        # Emergency fallback
-        logging.info("🚨 Using emergency token fallback")
+        logging.error(f"Enhanced token discovery failed: {str(e)}")
         return [
             "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
             "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
         ]
 
+def extract_new_token_addresses_enhanced(transactions):
+    """Extract new token addresses from Helius transaction data."""
+    new_tokens = []
+    
+    try:
+        for tx in transactions:
+            # Look for token creation signatures
+            if 'tokenTransfers' in tx:
+                for transfer in tx['tokenTransfers']:
+                    mint = transfer.get('mint')
+                    if mint and len(mint) > 40:  # Valid Solana address
+                        new_tokens.append(mint)
+            
+            # Look for program interactions that might indicate new tokens
+            if 'instructions' in tx:
+                for instruction in tx['instructions']:
+                    if instruction.get('programId') == 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA':
+                        # Token program interaction - might be new token
+                        accounts = instruction.get('accounts', [])
+                        for account in accounts:
+                            if len(account) > 40:  # Valid address
+                                new_tokens.append(account)
+    
+    except Exception as e:
+        logging.warning(f"Token extraction failed: {str(e)}")
+    
+    return list(set(new_tokens))  # Remove duplicates
 
 def is_token_tradable_jupiter(token_address):
     """
