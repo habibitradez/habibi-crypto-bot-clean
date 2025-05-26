@@ -1033,35 +1033,60 @@ def enhanced_find_newest_tokens_with_free_apis():
         ]
 
 def extract_new_token_addresses_enhanced(transactions):
-    """Extract new token addresses from Helius transaction data."""
+    """Extract new token addresses from Helius transaction data with enhanced parsing."""
     new_tokens = []
     
     try:
         for tx in transactions:
-            # Look for token creation signatures
+            # Method 1: Token transfers
             if 'tokenTransfers' in tx:
                 for transfer in tx['tokenTransfers']:
                     mint = transfer.get('mint')
-                    if mint and len(mint) > 40:  # Valid Solana address
+                    if mint and len(mint) > 40:
                         new_tokens.append(mint)
             
-            # Look for program interactions that might indicate new tokens
+            # Method 2: Post token balances
+            if 'meta' in tx and 'postTokenBalances' in tx['meta']:
+                for balance in tx['meta']['postTokenBalances']:
+                    mint = balance.get('mint')
+                    if mint and len(mint) > 40:
+                        new_tokens.append(mint)
+            
+            # Method 3: Account keys (newly created accounts)
+            if 'transaction' in tx and 'message' in tx['transaction']:
+                account_keys = tx['transaction']['message'].get('accountKeys', [])
+                for account in account_keys:
+                    if isinstance(account, str) and len(account) > 40:
+                        new_tokens.append(account)
+            
+            # Method 4: Program interactions
             if 'instructions' in tx:
                 for instruction in tx['instructions']:
                     if instruction.get('programId') == 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA':
-                        # Token program interaction - might be new token
                         accounts = instruction.get('accounts', [])
                         for account in accounts:
-                            if len(account) > 40:  # Valid address
+                            if len(account) > 40:
                                 new_tokens.append(account)
     
     except Exception as e:
         logging.warning(f"Token extraction failed: {str(e)}")
     
-    return list(set(new_tokens))  # Remove duplicates
+    # Remove duplicates and common tokens
+    common_tokens = {
+        'So11111111111111111111111111111111111111112',  # SOL
+        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  # USDC
+        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  # USDT
+    }
+    
+    unique_tokens = []
+    for token in new_tokens:
+        if token not in common_tokens and token not in unique_tokens:
+            unique_tokens.append(token)
+    
+    return unique_tokens
 
-def is_token_tradable_simple(token_address):
-    """Enhanced token validation using multiple methods."""
+def is_token_tradable_enhanced(token_address):
+    """Enhanced token validation using multiple methods including Helius."""
     try:
         # Method 1: Jupiter quote test (most reliable)
         response = requests.get(
@@ -1071,10 +1096,10 @@ def is_token_tradable_simple(token_address):
         if response.status_code == 200 and 'outAmount' in response.text:
             return True
         
-        # Method 2: Simple RPC call to check if token exists
-        helius_key = os.environ.get('HELIUS_API_KEY', '')
+        # Method 2: Enhanced validation using Helius RPC
+        helius_key = os.environ.get('HELIUS_API_KEY', '6e4e884f-d053-4682-81a5-3aeaa0b4c7dc')
         if helius_key:
-            rpc_url = f"https://api.helius.xyz/?api-key={helius_key}"
+            rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -1082,15 +1107,20 @@ def is_token_tradable_simple(token_address):
                 "params": [token_address, {"encoding": "base64"}]
             }
             
-            response = requests.post(rpc_url, json=payload, timeout=5)
+            response = requests.post(rpc_url, json=payload, timeout=6)
             if response.status_code == 200:
                 data = response.json()
                 return data.get('result', {}).get('value') is not None
         
+        # Method 3: Basic address validation
+        if len(token_address) >= 43 and len(token_address) <= 44:
+            return True
+            
         return False
         
     except Exception as e:
         return False
+
 
 def is_token_tradable_jupiter(token_address):
     """
@@ -1243,116 +1273,92 @@ def enhanced_find_newest_tokens():
         return []
 
 def smart_token_selection(potential_tokens):
-    """Intelligently select the best token to trade."""
+    """Intelligently select the best token to trade with enhanced scoring."""
     if not potential_tokens:
         return None
     
     try:
         # Handle both string addresses and dict objects
         normalized_tokens = []
+        
         for token in potential_tokens:
-            if isinstance(token, str):
-                # Simple string address - convert to dict format
-                normalized_tokens.append({
+            if isinstance(token, dict):
+                # Extract address from dict format
+                address = token.get('address') or token.get('mint') or token.get('baseToken', {}).get('address')
+                if address:
+                    token_data = {
+                        'address': address,
+                        'source': token.get('source', 'unknown'),
+                        'symbol': token.get('symbol', 'Unknown'),
+                        'volume': token.get('volume', 0),
+                        'market_cap': token.get('market_cap', 0)
+                    }
+                    normalized_tokens.append(token_data)
+            elif isinstance(token, str) and len(token) > 40:
+                # String address format
+                token_data = {
                     'address': token,
-                    'symbol': 'Unknown',
                     'source': 'fallback',
-                    'score': 0
-                })
-            elif isinstance(token, dict):
-                # Already in dict format
-                normalized_tokens.append(token)
-            else:
-                logging.warning(f"Unknown token format: {type(token)}")
-                continue
+                    'symbol': 'Unknown',
+                    'volume': 0,
+                    'market_cap': 0
+                }
+                normalized_tokens.append(token_data)
         
         if not normalized_tokens:
             return None
         
-        # Score tokens based on various factors
+        # Score each token
         scored_tokens = []
         
-        for token in normalized_tokens:
-            score = 0
-            token_address = token.get('address', '')
+        for token_data in normalized_tokens:
+            score = 10  # Base score
             
-            if not token_address:
-                continue
-            
-            # Factor 1: Not recently bought (higher score for longer gap)
-            if token_address in token_buy_timestamps:
-                minutes_since_buy = (time.time() - token_buy_timestamps[token_address]) / 60
-                if minutes_since_buy > 60:
-                    score += 3
-                elif minutes_since_buy > 30:
-                    score += 2
-                elif minutes_since_buy > 15:
-                    score += 1
-            else:
-                score += 10  # Never bought before gets highest score
-            
-            # Discourage BONK repetition to encourage token diversity
-            bonk_address = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"
-            if token_address == bonk_address:
-                score -= 3  # Small penalty for BONK to prioritize fresh tokens
-            
-            # Factor 2: Known good tokens get bonus
-            known_good = [
-                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
-            ]
-            
-            if token_address in known_good:
-                score += 2
-            
-            # Factor 3: Source bonus
-            source = token.get('source', 'unknown')
-            if 'Helius' in source:
-                score += 5  # Highest priority for Helius tokens
-            elif 'DexScreener' in source:
+            # Source-based scoring (prioritize premium sources)
+            if 'helius' in token_data['source'].lower():
+                score += 5  # Helius tokens get highest priority
+            elif 'dexscreener' in token_data['source'].lower():
                 score += 3
-            elif 'Birdeye' in source:
+            elif 'birdeye' in token_data['source'].lower():
                 score += 2
-            elif 'Pump.fun' in source:
+            elif 'pump.fun' in token_data['source'].lower():
                 score += 1
             
-            # Factor 4: Volume/Market Cap bonus
-            volume = token.get('volume', 0)
-            market_cap = token.get('market_cap', 0)
-            
-            if volume > 100000:  # $100k+ volume
+            # Volume-based scoring
+            volume = token_data.get('volume', 0)
+            if isinstance(volume, (int, float)) and volume > 100000:
                 score += 2
-            elif volume > 50000:  # $50k+ volume
+            elif isinstance(volume, (int, float)) and volume > 50000:
                 score += 1
-                
-            if 10000 <= market_cap <= 1000000:  # Sweet spot market cap
-                score += 2
             
-            scored_tokens.append((token_address, score, token))
+            # Market cap scoring (prefer smaller caps for meme coins)
+            market_cap = token_data.get('market_cap', 0)
+            if isinstance(market_cap, (int, float)) and 100000 <= market_cap <= 10000000:
+                score += 2  # Sweet spot for meme coins
+            
+            scored_tokens.append({
+                'token': token_data,
+                'score': score
+            })
         
         # Sort by score (highest first)
-        scored_tokens.sort(key=lambda x: x[1], reverse=True)
+        scored_tokens.sort(key=lambda x: x['score'], reverse=True)
         
-        if scored_tokens:
-            best_token_address, best_score, best_token_data = scored_tokens[0]
-            symbol = best_token_data.get('symbol', best_token_address[:8])
-            source = best_token_data.get('source', 'unknown')
-            
-            logging.info(f"🎯 Selected best token: {symbol} ({best_token_address[:8]}) from {source} (score: {best_score})")
-            return best_token_address
+        # Return the highest-scoring token address
+        best_token = scored_tokens[0]['token']
         
-        # Fallback to first token
-        first_token = normalized_tokens[0]
-        return first_token.get('address')
+        logging.info(f"🎯 Selected best token: {best_token['symbol']} ({best_token['address'][:8]}) from {best_token['source']} (score: {scored_tokens[0]['score']})")
+        
+        return best_token['address']
         
     except Exception as e:
         logging.error(f"Error in smart token selection: {str(e)}")
-        # Return first available token as fallback
+        # Fallback to first valid token
         if potential_tokens:
-            first_token = potential_tokens[0]
-            if isinstance(first_token, str):
-                return first_token
-            elif isinstance(first_token, dict):
-                return first_token.get('address')
+            if isinstance(potential_tokens[0], dict):
+                return potential_tokens[0].get('address') or potential_tokens[0].get('mint')
+            else:
+                return potential_tokens[0]
         return None
 
 
