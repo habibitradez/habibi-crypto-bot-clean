@@ -1032,6 +1032,42 @@ def enhanced_find_newest_tokens_with_free_apis():
             "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
         ]
 
+def is_token_tradable_enhanced(token_address):
+    """Enhanced token validation using multiple methods including Helius."""
+    try:
+        # Method 1: Jupiter quote test (most reliable)
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000",
+            timeout=8
+        )
+        if response.status_code == 200 and 'outAmount' in response.text:
+            return True
+        
+        # Method 2: Enhanced validation using Helius RPC
+        helius_key = os.environ.get('HELIUS_API_KEY', '6e4e884f-d053-4682-81a5-3aeaa0b4c7dc')
+        if helius_key:
+            rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [token_address, {"encoding": "base64"}]
+            }
+            
+            response = requests.post(rpc_url, json=payload, timeout=6)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('result', {}).get('value') is not None
+        
+        # Method 3: Basic address validation
+        if len(token_address) >= 43 and len(token_address) <= 44:
+            return True
+            
+        return False
+        
+    except Exception as e:
+        return False
+
 def extract_new_token_addresses_enhanced(transactions):
     """Extract new token addresses from Helius transaction data with enhanced parsing."""
     new_tokens = []
