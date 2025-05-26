@@ -4931,7 +4931,7 @@ def trading_loop():
                 
                 try:
                     # Use enhanced token discovery with QuickNode integration
-                    potential_tokens = enhanced_find_newest_tokens_with_quicknode()
+                    potential_tokens = enhanced_find_newest_tokens_with_free_apis()
                     
                     if potential_tokens:
                         # Use smart selection to pick the best token
