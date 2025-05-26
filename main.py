@@ -807,17 +807,38 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     return None
 
 
+# FUNCTION 1: Replace enhanced_find_newest_tokens_with_free_apis()
 def enhanced_find_newest_tokens_with_free_apis():
     """
-    BULLETPROOF token discovery using FREE APIs only.
-    Hybrid approach: DexScreener + Pump.fun + Birdeye
-    Cost: $0/month vs $300/month QuickNode
+    Enhanced token discovery with Helius FREE tier integration
+    Tests Helius free limits before recommending upgrade
     """
     try:
         all_tokens = []
-        logging.info("🔍 Starting FREE hybrid token discovery...")
+        helius_key = os.environ.get('HELIUS_API_KEY', '')
         
-        # Method 1: DexScreener trending tokens (FREE - most reliable)
+        if helius_key:
+            logging.info("🧪 Testing HELIUS FREE tier + Free API hybrid discovery...")
+        else:
+            logging.info("🔍 Starting FREE API token discovery...")
+        
+        # Method 1: Test Helius FREE tier (if available)
+        if helius_key:
+            try:
+                logging.info("🧪 Testing Helius FREE RPC performance...")
+                helius_tokens = test_helius_free_tier(helius_key)
+                
+                if helius_tokens:
+                    all_tokens.extend(helius_tokens)
+                    logging.info(f"✅ Helius FREE found {len(helius_tokens)} tokens (testing)")
+                else:
+                    logging.info("⚠️ Helius FREE tier returned no tokens - may need upgrade for full features")
+                
+            except Exception as e:
+                logging.warning(f"Helius FREE API failed: {str(e)}")
+                logging.info("💡 Consider upgrading Helius if this provides value")
+        
+        # Method 2: DexScreener trending tokens (FREE - most reliable)
         try:
             logging.info("📈 Fetching DexScreener trending tokens...")
             response = requests.get(
@@ -849,7 +870,7 @@ def enhanced_find_newest_tokens_with_free_apis():
         except Exception as e:
             logging.warning(f"DexScreener API failed: {str(e)}")
         
-        # Method 2: Pump.fun direct API (FREE - fresh launches)
+        # Method 3: Pump.fun direct API (FREE - fresh launches)
         try:
             logging.info("🚀 Fetching fresh Pump.fun launches...")
             response = requests.get(
@@ -880,7 +901,7 @@ def enhanced_find_newest_tokens_with_free_apis():
         except Exception as e:
             logging.warning(f"Pump.fun API failed: {str(e)}")
         
-        # Method 3: Birdeye trending (60 RPM rate limit)
+        # Method 4: Birdeye trending (Free tier - 60 RPM)
         try:
             logging.info("🐦 Fetching Birdeye trending tokens...")
             birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')
@@ -919,83 +940,10 @@ def enhanced_find_newest_tokens_with_free_apis():
                 
         except Exception as e:
             logging.warning(f"Birdeye API failed: {str(e)}")
-
-        # Method 4: BullX via BitQuery (PREMIUM meme coin discovery)
-        try:
-            logging.info("🚀 Fetching BullX trending via BitQuery...")
-            bitquery_key = os.environ.get('BITQUERY_API_KEY', '')
-            
-            if bitquery_key:
-                headers = {
-                    "X-API-KEY": bitquery_key,
-                    'Content-Type': 'application/json'
-                }
-                
-                # GraphQL query for trending Solana tokens (BullX style)
-                query = """
-                query {
-                  Solana {
-                    DEXTrades(
-                      orderBy: {descendingByField: "volume"}
-                      limit: {count: 15}
-                      where: {
-                        Trade: {
-                          Currency: {MintAddress: {not: "So11111111111111111111111111111111111111112"}}
-                        }
-                        Block: {Time: {since: "2024-01-01"}}
-                      }
-                    ) {
-                      Trade {
-                        Currency {
-                          MintAddress
-                          Symbol
-                          Name
-                        }
-                      }
-                      volume: sum(of: Trade_Amount)
-                      trades: count
-                    }
-                  }
-                }
-                """
-                
-                response = requests.post(
-                    "https://graphql.bitquery.io/",
-                    json={"query": query},
-                    headers=headers,
-                    timeout=15
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    bullx_count = 0
-                    for trade_data in data.get('data', {}).get('Solana', {}).get('DEXTrades', [])[:10]:
-                        token_info = trade_data.get('Trade', {}).get('Currency', {})
-                        volume = trade_data.get('volume', 0)
-                        
-                        if token_info.get('MintAddress') and volume > 10000:  # Min volume threshold
-                            all_tokens.append({
-                                'address': token_info['MintAddress'],
-                                'symbol': token_info.get('Symbol', 'Unknown'),
-                                'source': 'BullX/BitQuery',
-                                'volume': volume,
-                                'score': 12  # HIGHEST score - BullX finds the hottest memes!
-                            })
-                            bullx_count += 1
-                            logging.info(f"🚀 BullX: {token_info.get('Symbol')} - Vol: ${volume:,.0f}")
-                    
-                    logging.info(f"✅ BullX/BitQuery found {bullx_count} hot meme tokens")
-                else:
-                    logging.warning(f"BitQuery failed with status {response.status_code}")
-            else:
-                logging.info("🚀 BitQuery API key not found, skipping BullX integration")
-                
-        except Exception as e:
-            logging.warning(f"BullX/BitQuery API failed: {str(e)}")
         
         # Process and deduplicate tokens
         if not all_tokens:
-            logging.warning("❌ No tokens found from any free API, using emergency fallback")
+            logging.warning("❌ No tokens found from any API, using emergency fallback")
             return [
                 "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
                 "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
@@ -1025,8 +973,14 @@ def enhanced_find_newest_tokens_with_free_apis():
             else:
                 logging.warning(f"❌ Failed validation: {token['symbol']} - {token['address'][:8]}")
         
-        logging.info(f"🎯 FREE APIs found {len(validated_tokens)} validated trading opportunities")
-        logging.info(f"💰 Saved $300/month by ditching QuickNode!")
+        if helius_key:
+            logging.info(f"🧪 Helius FREE + Free APIs found {len(validated_tokens)} validated trading opportunities")
+            if len([t for t in all_tokens if t.get('source') == 'Helius/Free']) > 0:
+                logging.info(f"💡 Helius FREE tier is working - consider upgrade for enhanced features!")
+            else:
+                logging.info(f"⚠️ Helius FREE tier limited - may need upgrade for token discovery features")
+        else:
+            logging.info(f"🎯 FREE APIs found {len(validated_tokens)} validated trading opportunities")
         
         return validated_tokens
         
@@ -1254,8 +1208,8 @@ def smart_token_selection(potential_tokens):
             
             # Factor 3: Source bonus
             source = token.get('source', 'unknown')
-            if 'BullX' in source:
-                score += 5  # Highest priority for BullX tokens
+            if 'Helius' in source:
+                score += 5  # Highest priority for Helius tokens
             elif 'DexScreener' in source:
                 score += 3
             elif 'Birdeye' in source:
@@ -1302,6 +1256,144 @@ def smart_token_selection(potential_tokens):
             elif isinstance(first_token, dict):
                 return first_token.get('address')
         return None
+
+
+# FUNCTION 3: Add this NEW function for Helius testing
+def test_helius_free_tier(helius_key):
+    """Test Helius FREE tier capabilities and performance."""
+    try:
+        helius_rpc = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+        test_tokens = []
+        
+        logging.info("🧪 Testing Helius FREE tier limits and features...")
+        
+        # Test 1: Basic RPC health check
+        headers = {'Content-Type': 'application/json'}
+        health_payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getHealth"
+        }
+        
+        start_time = time.time()
+        response = requests.post(helius_rpc, json=health_payload, headers=headers, timeout=10)
+        response_time = time.time() - start_time
+        
+        if response.status_code == 200:
+            logging.info(f"✅ Helius FREE RPC responding in {response_time:.2f}s")
+        else:
+            logging.warning(f"⚠️ Helius FREE RPC status: {response.status_code}")
+            return []
+        
+        # Test 2: Try to get recent token program signatures (basic feature)
+        try:
+            sig_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getSignaturesForAddress",
+                "params": [
+                    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # Token Program
+                    {
+                        "commitment": "confirmed",
+                        "limit": 5  # Small limit for free tier
+                    }
+                ]
+            }
+            
+            response = requests.post(helius_rpc, json=sig_payload, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and data['result']:
+                    logging.info(f"✅ Helius FREE can access recent transactions ({len(data['result'])} signatures)")
+                    
+                    # Try to parse one transaction for tokens (if free tier allows)
+                    first_sig = data['result'][0]['signature']
+                    
+                    tx_payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getParsedTransaction",
+                        "params": [
+                            first_sig,
+                            {
+                                "encoding": "jsonParsed",
+                                "maxSupportedTransactionVersion": 0,
+                                "commitment": "confirmed"
+                            }
+                        ]
+                    }
+                    
+                    tx_response = requests.post(helius_rpc, json=tx_payload, headers=headers, timeout=8)
+                    
+                    if tx_response.status_code == 200:
+                        tx_data = tx_response.json()
+                        if 'result' in tx_data and tx_data['result']:
+                            logging.info("✅ Helius FREE can parse transactions - basic token discovery possible")
+                            
+                            # Try to extract any token addresses (for testing)
+                            try:
+                                token_addresses = extract_new_token_addresses(tx_data['result'])
+                                for addr in token_addresses[:2]:  # Limit for free tier
+                                    test_tokens.append({
+                                        'address': addr,
+                                        'symbol': f'FREE-{addr[:4]}',
+                                        'source': 'Helius/Free',
+                                        'score': 12  # Good score for Helius discoveries
+                                    })
+                                    logging.info(f"🧪 Helius FREE discovered: {addr[:8]}")
+                            except Exception as e:
+                                logging.debug(f"Token extraction test failed: {str(e)}")
+                        else:
+                            logging.info("⚠️ Helius FREE transaction parsing limited")
+                    else:
+                        logging.warning(f"⚠️ Helius FREE transaction parsing failed: {tx_response.status_code}")
+                else:
+                    logging.warning("⚠️ Helius FREE returned no transaction signatures")
+            else:
+                logging.warning(f"⚠️ Helius FREE signature request failed: {response.status_code}")
+                
+        except Exception as e:
+            logging.warning(f"Helius FREE advanced features failed: {str(e)}")
+        
+        # Test 3: Rate limit assessment
+        logging.info(f"🧪 Helius FREE tier test complete - found {len(test_tokens)} tokens")
+        
+        if len(test_tokens) > 0:
+            logging.info("💡 Helius FREE tier shows promise - upgrade could provide significant benefits!")
+        else:
+            logging.info("⚠️ Helius FREE tier very limited - upgrade likely needed for meaningful token discovery")
+        
+        return test_tokens
+        
+    except Exception as e:
+        logging.warning(f"Helius FREE tier test failed: {str(e)}")
+        return []
+
+
+# FUNCTION 4: Add this NEW helper function  
+def extract_new_token_addresses(transaction_data):
+    """Parse transaction data to find newly created token addresses."""
+    try:
+        token_addresses = []
+        
+        if 'meta' in transaction_data and 'innerInstructions' in transaction_data['meta']:
+            for inner_instruction in transaction_data['meta']['innerInstructions']:
+                for instruction in inner_instruction.get('instructions', []):
+                    # Look for token creation instructions
+                    if (instruction.get('parsed', {}).get('type') in ['initializeMint', 'mintTo'] and
+                        'info' in instruction.get('parsed', {}) and
+                        'mint' in instruction['parsed']['info']):
+                        
+                        mint_address = instruction['parsed']['info']['mint']
+                        if mint_address not in token_addresses:
+                            token_addresses.append(mint_address)
+        
+        return token_addresses[:3]  # Limit to 3 per transaction
+        
+    except Exception as e:
+        logging.debug(f"Error parsing transaction: {str(e)}")
+        return []
 
 def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback (JUP removed)."""
