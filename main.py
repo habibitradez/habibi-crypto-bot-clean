@@ -807,6 +807,211 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     return None
 
 
+def enhanced_find_newest_tokens_with_free_apis():
+    """
+    BULLETPROOF token discovery using FREE APIs only.
+    Hybrid approach: DexScreener + Pump.fun + Birdeye
+    Cost: $0/month vs $300/month QuickNode
+    """
+    try:
+        all_tokens = []
+        logging.info("🔍 Starting FREE hybrid token discovery...")
+        
+        # Method 1: DexScreener trending tokens (FREE - most reliable)
+        try:
+            logging.info("📈 Fetching DexScreener trending tokens...")
+            response = requests.get(
+                "https://api.dexscreener.com/latest/dex/tokens/trending/solana",
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                dex_count = 0
+                for token in data.get('pairs', [])[:15]:  # Top 15 trending
+                    token_data = token.get('baseToken', {})
+                    if token_data.get('address') and token.get('volume', {}).get('h24', 0) > 50000:  # Min $50k volume
+                        all_tokens.append({
+                            'address': token_data['address'],
+                            'symbol': token_data.get('symbol', 'Unknown'),
+                            'source': 'DexScreener',
+                            'volume': token.get('volume', {}).get('h24', 0),
+                            'score': 10  # High score for trending
+                        })
+                        dex_count += 1
+                        logging.info(f"📈 DexScreener: {token_data.get('symbol')} - Vol: ${token.get('volume', {}).get('h24', 0):,.0f}")
+                
+                logging.info(f"✅ DexScreener found {dex_count} trending tokens")
+            else:
+                logging.warning(f"DexScreener failed with status {response.status_code}")
+                
+        except Exception as e:
+            logging.warning(f"DexScreener API failed: {str(e)}")
+        
+        # Method 2: Pump.fun direct API (FREE - fresh launches)
+        try:
+            logging.info("🚀 Fetching fresh Pump.fun launches...")
+            response = requests.get(
+                "https://frontend-api.pump.fun/coins/king-of-the-hill?offset=0&limit=30&includeNsfw=false",
+                timeout=10,
+                headers={'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'}
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                pump_count = 0
+                for token in data[:12]:  # Top 12 from pump
+                    if token.get('mint') and token.get('market_cap', 0) > 10000:  # Min $10k MC
+                        all_tokens.append({
+                            'address': token['mint'],
+                            'symbol': token.get('name', 'Unknown')[:10],
+                            'source': 'Pump.fun',
+                            'market_cap': token.get('market_cap', 0),
+                            'score': 8  # Good score for fresh launches
+                        })
+                        pump_count += 1
+                        logging.info(f"🚀 Pump.fun: {token.get('name', 'Unknown')[:15]} - MC: ${token.get('market_cap', 0):,.0f}")
+                
+                logging.info(f"✅ Pump.fun found {pump_count} fresh tokens")
+            else:
+                logging.warning(f"Pump.fun failed with status {response.status_code}")
+                
+        except Exception as e:
+            logging.warning(f"Pump.fun API failed: {str(e)}")
+        
+        # Method 3: Birdeye trending (FREE tier - 100 calls/day)
+        try:
+            logging.info("🐦 Fetching Birdeye trending tokens...")
+            # Note: Get free API key from birdeye.so
+            birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')  # Add to your env vars
+            
+            if birdeye_key:
+                headers = {
+                    "X-API-KEY": birdeye_key,
+                    'User-Agent': 'Mozilla/5.0 (compatible; TradingBot/1.0)'
+                }
+                response = requests.get(
+                    "https://public-api.birdeye.so/public/tokenlist?sort_by=v24hUSD&sort_type=desc&offset=0&limit=20",
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    birdeye_count = 0
+                    for token in data.get('data', {}).get('tokens', [])[:8]:  # Top 8
+                        if token.get('address') and token.get('v24hUSD', 0) > 25000:  # Min $25k volume
+                            all_tokens.append({
+                                'address': token['address'],
+                                'symbol': token.get('symbol', 'Unknown'),
+                                'source': 'Birdeye',
+                                'volume': token.get('v24hUSD', 0),
+                                'score': 9  # High score for volume leaders
+                            })
+                            birdeye_count += 1
+                            logging.info(f"🐦 Birdeye: {token.get('symbol')} - Vol: ${token.get('v24hUSD', 0):,.0f}")
+                    
+                    logging.info(f"✅ Birdeye found {birdeye_count} high-volume tokens")
+                else:
+                    logging.warning(f"Birdeye failed with status {response.status_code}")
+            else:
+                logging.info("🐦 Birdeye API key not set, skipping (optional)")
+                
+        except Exception as e:
+            logging.warning(f"Birdeye API failed: {str(e)}")
+        
+        # Process and deduplicate tokens
+        if not all_tokens:
+            logging.warning("❌ No tokens found from any free API, using emergency fallback")
+            return [
+                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
+                "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
+            ]
+        
+        # Remove duplicates and sort by score
+        unique_tokens = {}
+        for token in all_tokens:
+            addr = token['address']
+            if addr not in unique_tokens or token['score'] > unique_tokens[addr]['score']:
+                unique_tokens[addr] = token
+        
+        # Sort by score (highest first)
+        sorted_tokens = sorted(unique_tokens.values(), key=lambda x: x['score'], reverse=True)
+        
+        # Validate tokens quickly
+        validated_tokens = []
+        logging.info("🔍 Validating discovered tokens...")
+        
+        for token in sorted_tokens[:10]:  # Check top 10
+            if is_token_tradable_jupiter(token['address']):
+                validated_tokens.append(token['address'])
+                logging.info(f"✅ Validated: {token['symbol']} ({token['source']}) - {token['address'][:8]}")
+                
+                if len(validated_tokens) >= 5:  # Max 5 tokens for focus
+                    break
+            else:
+                logging.warning(f"❌ Failed validation: {token['symbol']} - {token['address'][:8]}")
+        
+        logging.info(f"🎯 FREE APIs found {len(validated_tokens)} validated trading opportunities")
+        logging.info(f"💰 Saved $300/month by ditching QuickNode!")
+        
+        return validated_tokens
+        
+    except Exception as e:
+        logging.error(f"Hybrid token discovery failed: {str(e)}")
+        # Emergency fallback
+        logging.info("🚨 Using emergency token fallback")
+        return [
+            "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",  # WIF
+            "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
+        ]
+
+
+def is_token_tradable_jupiter(token_address):
+    """
+    Fast, reliable token validation using Jupiter API.
+    Tests if token can actually be traded.
+    """
+    try:
+        # Quick Jupiter quote test - most reliable validation
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote"
+            f"?inputMint=So11111111111111111111111111111111111111112"
+            f"&outputMint={token_address}"
+            f"&amount=100000"  # 0.0001 SOL test
+            f"&slippageBps=300",  # 3% slippage tolerance
+            timeout=8
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            # Check if we get a valid quote with reasonable output
+            if 'outAmount' in data and int(data['outAmount']) > 0:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        logging.debug(f"Token validation failed for {token_address[:8]}: {str(e)}")
+        return False
+
+
+def update_environment_for_free_apis():
+    """Update environment to disable QuickNode and enable free APIs."""
+    import os
+    
+    # Disable QuickNode
+    os.environ['USE_QUICKNODE_METIS'] = 'false'
+    
+    # Optional: Add Birdeye key for enhanced discovery
+    # Get free key from https://birdeye.so/
+    if not os.environ.get('BIRDEYE_API_KEY'):
+        logging.info("💡 TIP: Get free Birdeye API key from birdeye.so for enhanced token discovery")
+    
+    logging.info("🔧 Environment updated for FREE API mode")
+    logging.info("💰 QuickNode disabled - saving $300/month!")
+
 def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback."""
     verified_tokens = [
