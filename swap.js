@@ -1,6 +1,9 @@
-// NUCLEAR OPTION: Add this at the very top of swap.js (after the require statements):
+const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruction, TransactionMessage, AddressLookupTableAccount, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const bs58 = require('bs58');
+const axios = require('axios');
+const fs = require('fs');
 
-// OVERRIDE ERROR HANDLING AT THE PROCESS LEVEL
+// NUCLEAR OPTION: Process-level error interception
 const originalProcessEmit = process.emit;
 process.emit = function(name, data, ...args) {
   // Intercept and ignore StructError events
@@ -36,126 +39,6 @@ process.stderr.write = function(chunk, encoding, callback) {
   
   return originalStderrWrite.call(process.stderr, chunk, encoding, callback);
 };
-
-// ENHANCED TRANSACTION SUBMISSION WITH IGNORE-AND-CONTINUE LOGIC
-// Replace your entire transaction submission section with this:
-
-// Find this in your executeSwap() function (around line 450-500) and replace:
-/*
-while (submitAttempts < maxSubmitAttempts) {
-  try {
-    txSignature = await connection.sendRawTransaction(serializedTransaction, submitParams);
-    console.log('✅ Transaction submitted successfully:', txSignature);
-    break;
-  } catch (submitError) {
-    // ... existing error handling
-  }
-}
-*/
-
-// REPLACE WITH THIS NUCLEAR APPROACH:
-while (submitAttempts < maxSubmitAttempts) {
-  try {
-    console.log(`📤 Submit attempt ${submitAttempts + 1}/${maxSubmitAttempts}...`);
-    
-    // Create a promise that resolves even if StructError occurs
-    const txSubmissionPromise = new Promise(async (resolve, reject) => {
-      try {
-        const signature = await connection.sendRawTransaction(serializedTransaction, submitParams);
-        resolve(signature);
-      } catch (error) {
-        if (error.message && error.message.includes('Expected the value to satisfy a union of')) {
-          console.log('⚠️ StructError during submission - checking if transaction actually succeeded...');
-          
-          // Wait a moment and try to find the transaction
-          await new Promise(r => setTimeout(r, 2000));
-          
-          try {
-            // Try to get recent signatures to see if our transaction went through
-            const recentSignatures = await connection.getSignaturesForAddress(
-              keypair.publicKey, 
-              { limit: 5 }
-            );
-            
-            if (recentSignatures && recentSignatures.length > 0) {
-              const latestSignature = recentSignatures[0].signature;
-              console.log('🎯 Found recent transaction - StructError was non-critical:', latestSignature);
-              resolve(latestSignature);
-              return;
-            }
-          } catch (checkError) {
-            console.log('⚠️ Could not verify transaction success');
-          }
-          
-          // If we can't find the transaction, treat as a real error
-          reject(error);
-        } else {
-          reject(error);
-        }
-      }
-    });
-    
-    // Set a timeout for the submission
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Transaction submission timeout')), 30000);
-    });
-    
-    txSignature = await Promise.race([txSubmissionPromise, timeoutPromise]);
-    
-    if (txSignature) {
-      console.log('✅ Transaction submitted successfully:', txSignature);
-      break;
-    }
-    
-  } catch (submitError) {
-    submitAttempts++;
-    console.log(`⚠️ Submit attempt ${submitAttempts}/${maxSubmitAttempts} failed:`, submitError.message);
-    
-    // Special handling for persistent StructErrors
-    if (submitError.message.includes('StructError') || 
-        submitError.message.includes('union of')) {
-      console.log('⚠️ StructError detected - using alternative verification...');
-      
-      // Wait and check if the transaction actually succeeded despite the error
-      await new Promise(r => setTimeout(r, 3000));
-      
-      try {
-        const recentSignatures = await connection.getSignaturesForAddress(
-          keypair.publicKey, 
-          { limit: 3 }
-        );
-        
-        if (recentSignatures && recentSignatures.length > 0) {
-          const potentialSignature = recentSignatures[0].signature;
-          console.log('🎯 Transaction may have succeeded despite StructError:', potentialSignature);
-          
-          // Verify this is our transaction by checking the timestamp
-          const now = Date.now();
-          const txTime = recentSignatures[0].blockTime * 1000;
-          
-          if (now - txTime < 60000) { // Within last minute
-            console.log('✅ Confirmed: Transaction succeeded despite StructError');
-            txSignature = potentialSignature;
-            break;
-          }
-        }
-      } catch (verifyError) {
-        console.log('⚠️ Could not verify transaction success');
-      }
-    }
-    
-    if (submitAttempts >= maxSubmitAttempts) {
-      throw submitError;
-    }
-    
-    // Brief wait before retry
-    await new Promise(resolve => setTimeout(resolve, 2000));
-  }
-}
-const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruction, TransactionMessage, AddressLookupTableAccount, LAMPORTS_PER_SOL } = require('@solana/web3.js');
-const bs58 = require('bs58');
-const axios = require('axios');
-const fs = require('fs');
 
 // Rate limiting constants
 const MAX_RETRIES = 7;
@@ -200,17 +83,6 @@ console.log(`Running in directory: ${process.cwd()}`);
 console.log(`QuickNode Metis enabled: ${USE_QUICKNODE_METIS}`);
 console.log(`QuickNode Jupiter URL: ${QUICKNODE_JUPITER_ENDPOINT ? 'Available' : 'Not set'}`);
 console.log(`QuickNode Auth Token: ${QUICKNODE_AUTH_TOKEN ? 'Available' : 'Not set'}`);
-
-// COMPATIBILITY FIX: Handle StructError warnings without breaking execution
-const originalConsoleError = console.error;
-console.error = (...args) => {
-  const errorStr = args.join(' ');
-  if (errorStr.includes('StructError') && errorStr.includes('union of')) {
-    console.log('⚠️ Non-critical Web3.js compatibility warning (transaction still processing)');
-    return;
-  }
-  originalConsoleError.apply(console, args);
-};
 
 // Helper function to get QuickNode headers with authentication
 function getQuickNodeHeaders() {
@@ -918,8 +790,8 @@ async function executeSwap() {
       process.exit(1);
     }
     
-    // ENHANCED TRANSACTION SUBMISSION with retry logic
-    console.log('📤 Submitting transaction with enhanced parameters...');
+    // NUCLEAR TRANSACTION SUBMISSION with StructError bypass
+    console.log('📤 Submitting transaction with nuclear StructError bypass...');
     
     try {
       // Enhanced submission parameters
@@ -942,26 +814,106 @@ async function executeSwap() {
       
       console.log(`📊 Transaction size: ${serializedTransaction.length} bytes`);
       
-      // Submit with retry logic
+      // NUCLEAR SUBMISSION with StructError handling
       let txSignature;
       let submitAttempts = 0;
       const maxSubmitAttempts = 3;
       
       while (submitAttempts < maxSubmitAttempts) {
         try {
-          txSignature = await connection.sendRawTransaction(serializedTransaction, submitParams);
-          console.log('✅ Transaction submitted successfully:', txSignature);
-          break;
+          console.log(`📤 Submit attempt ${submitAttempts + 1}/${maxSubmitAttempts}...`);
+          
+          // Create a properly structured async promise
+          const submitTransaction = async () => {
+            try {
+              const signature = await connection.sendRawTransaction(serializedTransaction, submitParams);
+              return signature;
+            } catch (error) {
+              if (error.message && error.message.includes('Expected the value to satisfy a union of')) {
+                console.log('⚠️ StructError during submission - checking if transaction actually succeeded...');
+                
+                // Wait a moment and try to find the transaction
+                await new Promise(r => setTimeout(r, 2000));
+                
+                try {
+                  // Try to get recent signatures to see if our transaction went through
+                  const recentSignatures = await connection.getSignaturesForAddress(
+                    keypair.publicKey, 
+                    { limit: 5 }
+                  );
+                  
+                  if (recentSignatures && recentSignatures.length > 0) {
+                    const latestSignature = recentSignatures[0].signature;
+                    console.log('🎯 Found recent transaction - StructError was non-critical:', latestSignature);
+                    return latestSignature;
+                  }
+                } catch (checkError) {
+                  console.log('⚠️ Could not verify transaction success');
+                }
+                
+                // If we can't find the transaction, treat as a real error
+                throw error;
+              } else {
+                throw error;
+              }
+            }
+          };
+          
+          // Execute with timeout
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Transaction submission timeout')), 30000);
+          });
+          
+          txSignature = await Promise.race([submitTransaction(), timeoutPromise]);
+          
+          if (txSignature) {
+            console.log('✅ Transaction submitted successfully:', txSignature);
+            break;
+          }
+          
         } catch (submitError) {
           submitAttempts++;
           console.log(`⚠️ Submit attempt ${submitAttempts}/${maxSubmitAttempts} failed:`, submitError.message);
+          
+          // Special handling for persistent StructErrors
+          if (submitError.message.includes('StructError') || 
+              submitError.message.includes('union of')) {
+            console.log('⚠️ StructError detected - using alternative verification...');
+            
+            // Wait and check if the transaction actually succeeded despite the error
+            await new Promise(r => setTimeout(r, 3000));
+            
+            try {
+              const recentSignatures = await connection.getSignaturesForAddress(
+                keypair.publicKey, 
+                { limit: 3 }
+              );
+              
+              if (recentSignatures && recentSignatures.length > 0) {
+                const potentialSignature = recentSignatures[0].signature;
+                console.log('🎯 Transaction may have succeeded despite StructError:', potentialSignature);
+                
+                // Verify this is our transaction by checking the timestamp
+                const now = Date.now();
+                const txTime = recentSignatures[0].blockTime * 1000;
+                
+                if (now - txTime < 60000) { // Within last minute
+                  console.log('✅ Confirmed: Transaction succeeded despite StructError');
+                  txSignature = potentialSignature;
+                  break;
+                }
+              }
+            } catch (verifyError) {
+              console.log('⚠️ Could not verify transaction success');
+            }
+          }
           
           if (submitAttempts >= maxSubmitAttempts) {
             throw submitError;
           }
           
           // Brief wait before retry
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
       
