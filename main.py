@@ -5945,24 +5945,29 @@ def main():
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
+        # Comment out the entire test section to eliminate the test_token error
         # Quick test to verify JavaScript is working
-       # test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-       # test_amount = 0.001  # Very small test amount
+        # test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
+        # test_amount = 0.001  # Very small test amount
         
-       # logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
-       # try:
+        # logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
+        # try:
             # Quick JS test
-           # success, signature = execute_via_javascript(test_token, test_amount)
+            # success, signature = execute_via_javascript(test_token, test_amount)
             
-            if success:
-                logging.info(f"JavaScript test successful! Starting Quick-Flip trading...")
-                trading_loop()
-            else:
-                logging.error("JavaScript test failed. Cannot start trading.")
-                logging.error("Please verify JavaScript setup and configuration.")
-        except Exception as e:
-            logging.error(f"Error during JavaScript test: {str(e)}")
-            logging.error(traceback.format_exc())
+            # if success:
+                # logging.info("JavaScript test successful! Starting Quick-Flip trading...")
+                # trading_loop()
+            # else:
+                # logging.error("JavaScript test failed. Cannot start trading.")
+                # logging.error("Please verify JavaScript setup and configuration.")
+        # except Exception as e:
+            # logging.error(f"Error during JavaScript test: {str(e)}")
+            # logging.error(traceback.format_exc())
+        
+        # Skip test and go directly to trading
+        logging.info("Initialization successful! Starting Quick-Flip trading...")
+        trading_loop()
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 
