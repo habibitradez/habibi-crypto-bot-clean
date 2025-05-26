@@ -880,11 +880,10 @@ def enhanced_find_newest_tokens_with_free_apis():
         except Exception as e:
             logging.warning(f"Pump.fun API failed: {str(e)}")
         
-        # Method 3: Birdeye trending (FREE tier - 100 calls/day)
+        # Method 3: Birdeye trending (60 RPM rate limit)
         try:
             logging.info("🐦 Fetching Birdeye trending tokens...")
-            # Note: Get free API key from birdeye.so
-            birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')  # Add to your env vars
+            birdeye_key = os.environ.get('BIRDEYE_API_KEY', '')
             
             if birdeye_key:
                 headers = {
@@ -916,10 +915,83 @@ def enhanced_find_newest_tokens_with_free_apis():
                 else:
                     logging.warning(f"Birdeye failed with status {response.status_code}")
             else:
-                logging.info("🐦 Birdeye API key not set, skipping (optional)")
+                logging.warning("🐦 Birdeye API key not found in environment")
                 
         except Exception as e:
             logging.warning(f"Birdeye API failed: {str(e)}")
+
+        # Method 4: BullX via BitQuery (PREMIUM meme coin discovery)
+        try:
+            logging.info("🚀 Fetching BullX trending via BitQuery...")
+            bitquery_key = os.environ.get('BITQUERY_API_KEY', '')
+            
+            if bitquery_key:
+                headers = {
+                    "X-API-KEY": bitquery_key,
+                    'Content-Type': 'application/json'
+                }
+                
+                # GraphQL query for trending Solana tokens (BullX style)
+                query = """
+                query {
+                  Solana {
+                    DEXTrades(
+                      orderBy: {descendingByField: "volume"}
+                      limit: {count: 15}
+                      where: {
+                        Trade: {
+                          Currency: {MintAddress: {not: "So11111111111111111111111111111111111111112"}}
+                        }
+                        Block: {Time: {since: "2024-01-01"}}
+                      }
+                    ) {
+                      Trade {
+                        Currency {
+                          MintAddress
+                          Symbol
+                          Name
+                        }
+                      }
+                      volume: sum(of: Trade_Amount)
+                      trades: count
+                    }
+                  }
+                }
+                """
+                
+                response = requests.post(
+                    "https://graphql.bitquery.io/",
+                    json={"query": query},
+                    headers=headers,
+                    timeout=15
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    bullx_count = 0
+                    for trade_data in data.get('data', {}).get('Solana', {}).get('DEXTrades', [])[:10]:
+                        token_info = trade_data.get('Trade', {}).get('Currency', {})
+                        volume = trade_data.get('volume', 0)
+                        
+                        if token_info.get('MintAddress') and volume > 10000:  # Min volume threshold
+                            all_tokens.append({
+                                'address': token_info['MintAddress'],
+                                'symbol': token_info.get('Symbol', 'Unknown'),
+                                'source': 'BullX/BitQuery',
+                                'volume': volume,
+                                'score': 12  # HIGHEST score - BullX finds the hottest memes!
+                            })
+                            bullx_count += 1
+                            logging.info(f"🚀 BullX: {token_info.get('Symbol')} - Vol: ${volume:,.0f}")
+                    
+                    logging.info(f"✅ BullX/BitQuery found {bullx_count} hot meme tokens")
+                else:
+                    logging.warning(f"BitQuery failed with status {response.status_code}")
+            else:
+                logging.info("🚀 BitQuery API key not found, skipping BullX integration")
+                
+        except Exception as e:
+            logging.warning(f"BullX/BitQuery API failed: {str(e)}")
         
         # Process and deduplicate tokens
         if not all_tokens:
@@ -1011,6 +1083,7 @@ def update_environment_for_free_apis():
     
     logging.info("🔧 Environment updated for FREE API mode")
     logging.info("💰 QuickNode disabled - saving $300/month!")
+
 
 def get_verified_tradable_tokens():
     """Get a list of verified tradable tokens for fallback."""
