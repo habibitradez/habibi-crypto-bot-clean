@@ -5207,22 +5207,27 @@ def cleanup_memory():
         pass
 
 def trading_loop():
-    """Complete patched trading loop with enhanced token validation and ultra-aggressive selling."""
+    """Complete patched trading loop with enhanced profit tracking and nuclear success detection."""
     global iteration_count, last_status_time, errors_encountered, api_call_delay, daily_profit
     global buy_attempts, buy_successes, sell_attempts, sell_successes, tokens_scanned
-    global circuit_breaker_active
+    global circuit_breaker_active, total_trades, successful_trades, total_profit
     
     logging.info("==================== ULTRA-OPTIMIZED TRADING LOOP STARTING ====================")
     logging.info("🎯 Target: $1,000 daily profit through rapid token flips")
     logging.info("⚡ Strategy: 15-30% quick gains on validated tokens only")
     logging.info("🔄 Max hold time: 45 seconds to avoid rug pulls")
     logging.info("🛡️ Enhanced validation to prevent TOKEN_NOT_TRADABLE errors")
-    logging.info("💰 QuickNode Metis Integration: " + ("ENABLED" if CONFIG.get('USE_QUICKNODE_METIS') else "DISABLED"))
+    logging.info("💰 Helius Developer: " + ("ENABLED" if os.environ.get('HELIUS_API_KEY') else "DISABLED"))
+    logging.info("🔥 Nuclear StructError bypass: ACTIVE")
+    logging.info("📊 Enhanced profit tracking: ACTIVE")
     logging.info("Circuit breaker status: " + ("ACTIVE" if circuit_breaker_active else "INACTIVE"))
     logging.info("================================================================================")
     
-    # Initialize tracking variables
-    daily_profit = 0
+    # Initialize enhanced tracking variables
+    daily_profit = float(os.environ.get('TOTAL_PROFIT', '0.0'))
+    total_trades = int(os.environ.get('TOTAL_TRADES', '0'))
+    successful_trades = int(os.environ.get('SUCCESSFUL_TRADES', '0'))
+    
     daily_profit_start_time = time.time()
     last_performance_report_time = time.time()
     last_memory_cleanup_time = time.time()
@@ -5258,7 +5263,7 @@ def trading_loop():
                 time.sleep(30)  # Shorter pause for faster recovery
                 continue
             
-            # ULTRA-AGGRESSIVE TOKEN MONITORING
+            # ULTRA-AGGRESSIVE TOKEN MONITORING WITH PROFIT TRACKING
             tokens_to_remove = []
             for token_address in list(monitored_tokens.keys()):
                 try:
@@ -5269,20 +5274,48 @@ def trading_loop():
                     if seconds_held >= CONFIG.get('MAX_HOLD_TIME_SECONDS', 45):
                         logging.warning(f"⏰ FORCE SELLING {token_address[:8]} after {seconds_held:.1f}s")
                         try:
-                            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                            if signature:
-                                logging.info(f"🔄 Force sell executed: {signature}")
+                            # Enhanced sell execution with success detection
+                            success, result = execute_via_javascript(token_address, token_data.get('trade_amount', 0.144), is_sell=True)
+                            
+                            if success:
+                                sell_signature = result
+                                logging.info(f"🔄 Force sell executed: {sell_signature}")
+                                
+                                # Calculate time-based profit/loss
+                                initial_price = token_data.get('initial_price', 0)
+                                current_price = get_token_price_for_profit_calc(token_address)
+                                trade_amount = token_data.get('trade_amount', 0.144)
+                                
+                                if current_price and initial_price:
+                                    profit_usd, profit_percentage = calculate_trade_profit(initial_price, current_price, trade_amount)
+                                    daily_profit += profit_usd
+                                    
+                                    logging.info(f"⏰ Time-based sell completed:")
+                                    logging.info(f"   💵 Entry: ${initial_price:.6f} | Exit: ${current_price:.6f}")
+                                    logging.info(f"   📈 Result: ${profit_usd:.2f} ({profit_percentage:+.1f}%)")
+                                    
+                                    update_performance_stats(True, profit_usd, token_address)
+                                else:
+                                    # Estimate break-even for time-based sells
+                                    estimated_result = 0  # Assume break-even on time sells
+                                    update_performance_stats(True, estimated_result, token_address)
+                                    logging.info(f"⏰ Time-based sell - estimated break-even")
+                            else:
+                                logging.warning(f"❌ Force sell failed: {result}")
+                                update_performance_stats(False, 0, token_address)
+                            
                             tokens_to_remove.append(token_address)
                         except Exception as e:
                             logging.error(f"Error in force sell: {str(e)}")
                             tokens_to_remove.append(token_address)  # Remove anyway
                         continue
                     
-                    # Check price and execute ultra-aggressive selling
-                    current_price = get_token_price(token_address)
+                    # Check price and execute ultra-aggressive selling with profit tracking
+                    current_price = get_token_price_for_profit_calc(token_address)
                     if current_price and current_price > 0:
                         initial_price = token_data['initial_price']
                         price_change_pct = ((current_price / initial_price) - 1) * 100
+                        trade_amount = token_data.get('trade_amount', 0.144)
                         
                         # Update peak price
                         if current_price > token_data.get('highest_price', 0):
@@ -5292,21 +5325,33 @@ def trading_loop():
                         token_symbol = get_token_symbol(token_address) or token_address[:8]
                         logging.info(f"📊 {token_symbol}: {price_change_pct:.1f}% | {seconds_held:.1f}s held")
                         
-                        # ULTRA-AGGRESSIVE SELLING CONDITIONS:
+                        # ULTRA-AGGRESSIVE SELLING CONDITIONS WITH PROFIT TRACKING:
                         
                         # 1. Take MIN_PROFIT_PCT profit immediately (default 15%)
                         if price_change_pct >= CONFIG.get('MIN_PROFIT_PCT', 15):
                             logging.info(f"🔥 QUICK PROFIT: {price_change_pct:.1f}% on {token_symbol}")
                             try:
-                                success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                                if signature:
-                                    logging.info(f"💰 Profit sell executed: {signature}")
-                                tokens_to_remove.append(token_address)
+                                success, result = execute_via_javascript(token_address, trade_amount, is_sell=True)
                                 if success:
-                                    profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
-                                    daily_profit += profit_amount
+                                    sell_signature = result
+                                    logging.info(f"💰 Profit sell executed: {sell_signature}")
+                                    
+                                    # Calculate actual profit
+                                    profit_usd, profit_percentage = calculate_trade_profit(initial_price, current_price, trade_amount)
+                                    daily_profit += profit_usd
                                     successful_trades_today += 1
-                                    logging.info(f"💰 Profit: ${profit_amount:.2f} | Daily total: ${daily_profit:.2f}")
+                                    
+                                    logging.info(f"💰 PROFITABLE TRADE COMPLETED:")
+                                    logging.info(f"   💵 Entry: ${initial_price:.6f} | Exit: ${current_price:.6f}")
+                                    logging.info(f"   📈 Profit: ${profit_usd:.2f} ({profit_percentage:+.1f}%)")
+                                    logging.info(f"   💎 Daily Total: ${daily_profit:.2f}")
+                                    
+                                    update_performance_stats(True, profit_usd, token_address)
+                                else:
+                                    logging.warning(f"❌ Profit sell failed: {result}")
+                                    update_performance_stats(False, 0, token_address)
+                                
+                                tokens_to_remove.append(token_address)
                             except Exception as e:
                                 logging.error(f"Error in profit sell: {str(e)}")
                                 tokens_to_remove.append(token_address)
@@ -5316,15 +5361,27 @@ def trading_loop():
                         if seconds_held >= 15 and price_change_pct > 0:
                             logging.info(f"⏱️ TIME PROFIT: {price_change_pct:.1f}% after {seconds_held:.1f}s on {token_symbol}")
                             try:
-                                success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                                if signature:
-                                    logging.info(f"⏰ Time-based sell executed: {signature}")
-                                tokens_to_remove.append(token_address)
+                                success, result = execute_via_javascript(token_address, trade_amount, is_sell=True)
                                 if success:
-                                    profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
-                                    daily_profit += profit_amount
+                                    sell_signature = result
+                                    logging.info(f"⏰ Time-based profit sell executed: {sell_signature}")
+                                    
+                                    # Calculate time-based profit
+                                    profit_usd, profit_percentage = calculate_trade_profit(initial_price, current_price, trade_amount)
+                                    daily_profit += profit_usd
                                     successful_trades_today += 1
-                                    logging.info(f"💰 Time profit: ${profit_amount:.2f} | Daily total: ${daily_profit:.2f}")
+                                    
+                                    logging.info(f"⏰ TIME-BASED PROFIT:")
+                                    logging.info(f"   💵 Entry: ${initial_price:.6f} | Exit: ${current_price:.6f}")
+                                    logging.info(f"   📈 Profit: ${profit_usd:.2f} ({profit_percentage:+.1f}%)")
+                                    logging.info(f"   💎 Daily Total: ${daily_profit:.2f}")
+                                    
+                                    update_performance_stats(True, profit_usd, token_address)
+                                else:
+                                    logging.warning(f"❌ Time-based sell failed: {result}")
+                                    update_performance_stats(False, 0, token_address)
+                                
+                                tokens_to_remove.append(token_address)
                             except Exception as e:
                                 logging.error(f"Error in time-based sell: {str(e)}")
                                 tokens_to_remove.append(token_address)
@@ -5334,14 +5391,26 @@ def trading_loop():
                         if price_change_pct <= -CONFIG.get('STOP_LOSS_PERCENT', 8):
                             logging.warning(f"🛑 STOP LOSS: {price_change_pct:.1f}% on {token_symbol}")
                             try:
-                                success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                                if signature:
-                                    logging.warning(f"🛑 Stop loss executed: {signature}")
-                                tokens_to_remove.append(token_address)
+                                success, result = execute_via_javascript(token_address, trade_amount, is_sell=True)
                                 if success:
-                                    loss_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
-                                    daily_profit += loss_amount  # Will be negative
-                                    logging.warning(f"💸 Loss: ${loss_amount:.2f} | Daily total: ${daily_profit:.2f}")
+                                    sell_signature = result
+                                    logging.warning(f"🛑 Stop loss executed: {sell_signature}")
+                                    
+                                    # Calculate loss
+                                    loss_usd, loss_percentage = calculate_trade_profit(initial_price, current_price, trade_amount)
+                                    daily_profit += loss_usd  # Will be negative
+                                    
+                                    logging.warning(f"🛑 STOP LOSS EXECUTED:")
+                                    logging.warning(f"   💵 Entry: ${initial_price:.6f} | Exit: ${current_price:.6f}")
+                                    logging.warning(f"   📉 Loss: ${loss_usd:.2f} ({loss_percentage:+.1f}%)")
+                                    logging.warning(f"   💎 Daily Total: ${daily_profit:.2f}")
+                                    
+                                    update_performance_stats(True, loss_usd, token_address)  # Count as completed trade
+                                else:
+                                    logging.error(f"❌ Stop loss execution failed: {result}")
+                                    update_performance_stats(False, 0, token_address)
+                                
+                                tokens_to_remove.append(token_address)
                             except Exception as e:
                                 logging.error(f"Error in stop loss: {str(e)}")
                                 tokens_to_remove.append(token_address)
@@ -5354,15 +5423,27 @@ def trading_loop():
                         if price_change_pct > 5 and drop_from_peak > 2:
                             logging.info(f"📉 TREND REVERSAL: Selling {token_symbol} at {price_change_pct:.1f}% after 2% drop from peak")
                             try:
-                                success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                                if signature:
-                                    logging.info(f"📉 Trend reversal sell executed: {signature}")
-                                tokens_to_remove.append(token_address)
+                                success, result = execute_via_javascript(token_address, trade_amount, is_sell=True)
                                 if success:
-                                    profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
-                                    daily_profit += profit_amount
+                                    sell_signature = result
+                                    logging.info(f"📉 Trend reversal sell executed: {sell_signature}")
+                                    
+                                    # Calculate reversal profit
+                                    profit_usd, profit_percentage = calculate_trade_profit(initial_price, current_price, trade_amount)
+                                    daily_profit += profit_usd
                                     successful_trades_today += 1
-                                    logging.info(f"💰 Reversal profit: ${profit_amount:.2f} | Daily total: ${daily_profit:.2f}")
+                                    
+                                    logging.info(f"📉 TREND REVERSAL PROFIT:")
+                                    logging.info(f"   💵 Entry: ${initial_price:.6f} | Exit: ${current_price:.6f}")
+                                    logging.info(f"   📈 Profit: ${profit_usd:.2f} ({profit_percentage:+.1f}%)")
+                                    logging.info(f"   💎 Daily Total: ${daily_profit:.2f}")
+                                    
+                                    update_performance_stats(True, profit_usd, token_address)
+                                else:
+                                    logging.warning(f"❌ Trend reversal sell failed: {result}")
+                                    update_performance_stats(False, 0, token_address)
+                                
+                                tokens_to_remove.append(token_address)
                             except Exception as e:
                                 logging.error(f"Error in trend reversal sell: {str(e)}")
                                 tokens_to_remove.append(token_address)
@@ -5380,9 +5461,13 @@ def trading_loop():
                         if token_data['price_failures'] >= 2:
                             logging.warning(f"🚨 PRICE FAILURE: Force selling {token_address[:8]} after {token_data['price_failures']} failures")
                             try:
-                                success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
-                                if signature:
-                                    logging.warning(f"🚨 Price failure sell executed: {signature}")
+                                success, result = execute_via_javascript(token_address, token_data.get('trade_amount', 0.144), is_sell=True)
+                                if success:
+                                    logging.warning(f"🚨 Price failure sell executed: {result}")
+                                    # Assume break-even on price failure sells
+                                    update_performance_stats(True, 0, token_address)
+                                else:
+                                    update_performance_stats(False, 0, token_address)
                                 tokens_to_remove.append(token_address)
                             except Exception as e:
                                 logging.error(f"Error in price failure sell: {str(e)}")
@@ -5395,7 +5480,8 @@ def trading_loop():
                     logging.error(f"❌ Error monitoring {token_address[:8]}: {str(e)}")
                     # Force sell on any error
                     try:
-                        execute_via_javascript(token_address, 0.001, is_sell=True)
+                        execute_via_javascript(token_address, monitored_tokens[token_address].get('trade_amount', 0.144), is_sell=True)
+                        update_performance_stats(False, 0, token_address)
                     except:
                         pass
                     tokens_to_remove.append(token_address)
@@ -5406,18 +5492,18 @@ def trading_loop():
                     del monitored_tokens[token_address]
                     logging.info(f"🗑️ Removed {token_address[:8]} from monitoring")
             
-            # TOKEN ACQUISITION - Enhanced with QuickNode Metis pump.fun API
+            # TOKEN ACQUISITION - Enhanced with Helius Developer integration
             if (current_time - last_token_search_time > token_search_interval and
                     len(monitored_tokens) < CONFIG.get('MAX_CONCURRENT_TOKENS', 3)):
                 
                 logging.info("🚀 Searching for validated tradable tokens...")
-                if CONFIG.get('USE_QUICKNODE_METIS'):
-                    logging.info("💰 Using QuickNode Metis Jupiter Swap API ($250/month premium service)")
+                if os.environ.get('HELIUS_API_KEY'):
+                    logging.info("💰 Using Helius DEVELOPER ($99/month premium service)")
                 
                 last_token_search_time = current_time
                 
                 try:
-                    # Use enhanced token discovery with QuickNode integration
+                    # Use enhanced token discovery with Helius integration
                     potential_tokens = enhanced_find_newest_tokens_with_free_apis()
                     
                     if potential_tokens:
@@ -5443,63 +5529,70 @@ def trading_loop():
                                 
                                 if validate_token_before_trading(token_address):
                                     
-                                    # Get additional QuickNode info if available
-                                    if CONFIG.get('USE_QUICKNODE_METIS') and 'quicknode' in token_source:
-                                        try:
-                                            token_info = get_pump_fun_token_info_quicknode(token_address)
-                                            if token_info:
-                                                logging.info(f"📊 QuickNode Token Info: {token_info['symbol']} | MC: ${token_info['market_cap']} | Vol: ${token_info['volume_24h']}")
-                                        except:
-                                            pass
-                                    
                                     logging.info(f"🚀 BUYING validated token: {token_symbol} ({token_address[:8]})")
-                                    if CONFIG.get('USE_QUICKNODE_METIS'):
-                                        logging.info(f"💎 Premium QuickNode discovery source: {token_source}")
+                                    if os.environ.get('HELIUS_API_KEY'):
+                                        logging.info(f"💎 Premium Helius discovery source: {token_source}")
                                     
                                     # Execute buy with configured amount
-                                    buy_amount = CONFIG.get('BUY_AMOUNT_SOL', 0.25)
-                                    success, signature = execute_via_javascript(token_address, buy_amount)
+                                    buy_amount = float(os.environ.get('TRADE_AMOUNT_SOL', '0.144'))
+                                    
+                                    # Get initial price BEFORE buying
+                                    initial_price = get_token_price_for_profit_calc(token_address)
+                                    
+                                    # Execute buy with enhanced success detection
+                                    success, result = execute_via_javascript(token_address, buy_amount, is_sell=False)
                                     
                                     buy_attempts += 1
+                                    total_trades += 1
+                                    
                                     if success:
                                         buy_successes += 1
+                                        buy_signature = result
                                         logging.info(f"✅ BUY SUCCESS: {token_symbol} ({token_address[:8]}) with {buy_amount} SOL")
-                                        logging.info(f"📋 Transaction: {signature}")
+                                        logging.info(f"📋 Transaction: {buy_signature}")
                                         
-                                        if CONFIG.get('USE_QUICKNODE_METIS'):
-                                            logging.info(f"🚀 Premium QuickNode Metis discovery successful!")
+                                        if os.environ.get('HELIUS_API_KEY'):
+                                            logging.info(f"🚀 Premium Helius Developer discovery successful!")
                                         
-                                        # Initialize ultra-aggressive monitoring
+                                        # Initialize ultra-aggressive monitoring with enhanced data
                                         try:
-                                            initial_price = get_token_price(token_address)
+                                            if not initial_price or initial_price <= 0:
+                                                initial_price = get_token_price_for_profit_calc(token_address)
+                                            
                                             if initial_price and initial_price > 0:
                                                 monitored_tokens[token_address] = {
                                                     'initial_price': initial_price,
                                                     'highest_price': initial_price,
                                                     'buy_time': current_time,
                                                     'price_failures': 0,
-                                                    'source': token_source
+                                                    'source': token_source,
+                                                    'trade_amount': buy_amount,
+                                                    'buy_signature': buy_signature
                                                 }
-                                                logging.info(f"📊 Initial price: {initial_price} SOL ({token_source} source)")
+                                                logging.info(f"📊 Initial price: ${initial_price:.6f} ({token_source} source)")
                                             else:
                                                 # Use very small fallback price
                                                 monitored_tokens[token_address] = {
-                                                    'initial_price': 0.00001,
-                                                    'highest_price': 0.00001,
+                                                    'initial_price': 0.000001,
+                                                    'highest_price': 0.000001,
                                                     'buy_time': current_time,
                                                     'price_failures': 0,
-                                                    'source': token_source
+                                                    'source': token_source,
+                                                    'trade_amount': buy_amount,
+                                                    'buy_signature': buy_signature
                                                 }
                                                 logging.warning(f"⚠️ Using fallback price for token {token_address[:8]}")
                                         except Exception as e:
                                             logging.error(f"Error getting initial price: {str(e)}")
                                             # Use fallback
                                             monitored_tokens[token_address] = {
-                                                'initial_price': 0.00001,
-                                                'highest_price': 0.00001,
+                                                'initial_price': 0.000001,
+                                                'highest_price': 0.000001,
                                                 'buy_time': current_time,
                                                 'price_failures': 0,
-                                                'source': token_source
+                                                'source': token_source,
+                                                'trade_amount': buy_amount,
+                                                'buy_signature': buy_signature
                                             }
                                         
                                         token_buy_timestamps[token_address] = current_time
@@ -5508,7 +5601,8 @@ def trading_loop():
                                         logging.info(f"🎯 Token Target: {CONFIG.get('MIN_PROFIT_PCT', 15)}% profit or {CONFIG.get('MAX_HOLD_TIME_SECONDS', 45)}-second exit")
                                         
                                     else:
-                                        logging.warning(f"❌ BUY FAILED: {token_symbol} ({token_address[:8]}) - will retry later")
+                                        logging.warning(f"❌ BUY FAILED: {token_symbol} ({token_address[:8]}) - {result}")
+                                        update_performance_stats(False, 0, token_address)
                                         
                                 else:
                                     logging.warning(f"❌ Final validation failed for token: {token_address[:8]}")
@@ -5535,24 +5629,29 @@ def trading_loop():
                 if len(monitored_tokens) >= CONFIG.get('MAX_CONCURRENT_TOKENS', 3):
                     token_search_interval = 30
             
-            # PERFORMANCE REPORTING
+            # ENHANCED PERFORMANCE REPORTING WITH PROFIT TRACKING
             if current_time - last_performance_report_time > 1800:  # Every 30 minutes
                 hours_running = (current_time - daily_profit_start_time) / 3600
                 
-                logging.info("📊 ========== PERFORMANCE UPDATE ==========")
-                logging.info(f"💰 Daily profit: ${daily_profit:.2f}")
-                logging.info(f"🎯 Successful trades: {successful_trades_today}")
-                logging.info(f"📈 Buy/Sell ratio: {buy_successes}/{sell_successes}")
-                logging.info(f"🔄 Tokens monitored: {len(monitored_tokens)}")
-                logging.info(f"🔥 Buy attempts: {buy_attempts} | Success rate: {(buy_successes/buy_attempts*100) if buy_attempts > 0 else 0:.1f}%")
+                # Update environment variables for persistence
+                update_environment_variable('TOTAL_PROFIT', daily_profit)
+                update_environment_variable('TOTAL_TRADES', total_trades)
+                update_environment_variable('SUCCESSFUL_TRADES', successful_trades)
                 
-                if CONFIG.get('USE_QUICKNODE_METIS'):
-                    logging.info(f"💎 QuickNode Metis: ACTIVE (Premium $250/month service)")
+                logging.info("📊 =================== PERFORMANCE UPDATE ===================")
+                logging.info(f"💎 Daily profit: ${daily_profit:.2f}")
+                logging.info(f"✅ Successful trades: {successful_trades}")
+                logging.info(f"📊 Buy/Sell ratio: {successful_trades}/{total_trades - successful_trades}")
+                logging.info(f"🔄 Tokens monitored: {len(monitored_tokens)}")
+                logging.info(f"🔥 Buy attempts: {total_trades} | Success rate: {(successful_trades/total_trades*100) if total_trades > 0 else 0:.1f}%")
+                
+                if os.environ.get('HELIUS_API_KEY'):
+                    logging.info(f"💎 Helius DEVELOPER: ACTIVE (Premium $99/month service)")
                 
                 if hours_running > 0:
                     hourly_rate = daily_profit / hours_running
                     projected_daily = hourly_rate * 24
-                    trades_per_hour = successful_trades_today / hours_running
+                    trades_per_hour = successful_trades / hours_running if hours_running > 0 else 0
                     
                     logging.info(f"⚡ Hourly rate: ${hourly_rate:.2f}/hour")
                     logging.info(f"📊 Projected daily: ${projected_daily:.2f}")
@@ -5561,14 +5660,18 @@ def trading_loop():
                     # Check if we need to be more aggressive
                     if projected_daily < 1000 and hours_running > 2:
                         needed_hourly = (1000 - daily_profit) / (24 - hours_running) if (24 - hours_running) > 0 else 0
-                        logging.warning(f"⚠️  Need ${needed_hourly:.2f}/hour to reach $1k target")
+                        logging.warning(f"⚠️ Need ${needed_hourly:.2f}/hour to reach $1k target")
                         
-                        # Increase buy amount if we're behind target
-                        if needed_hourly > hourly_rate * 1.5 and CONFIG['BUY_AMOUNT_SOL'] < 0.5:
-                            CONFIG['BUY_AMOUNT_SOL'] = min(0.5, CONFIG['BUY_AMOUNT_SOL'] * 1.2)
-                            logging.info(f"🚀 Increasing buy amount to {CONFIG['BUY_AMOUNT_SOL']:.3f} SOL")
+                        # Auto-scaling logic
+                        current_position = float(os.environ.get('TRADE_AMOUNT_SOL', '0.144'))
+                        success_rate = (successful_trades/total_trades*100) if total_trades > 0 else 0
+                        
+                        if success_rate > 20 and daily_profit > 50:  # Good performance
+                            suggested_position = min(current_position * 1.2, 0.5)  # Max 0.5 SOL
+                            logging.info(f"🚀 Increasing buy amount to {suggested_position:.3f} SOL")
+                            update_environment_variable('TRADE_AMOUNT_SOL', f"{suggested_position:.3f}")
                 
-                logging.info("==========================================")
+                logging.info("📊 =======================================================")
                 last_performance_report_time = current_time
                 
                 # Force memory cleanup after performance report
@@ -5590,8 +5693,10 @@ def trading_loop():
                     active_tokens_info.append(f"{symbol}({seconds_held:.0f}s)")
                 
                 active_tokens_str = ", ".join(active_tokens_info) if active_tokens_info else "None"
-                qn_status = "QN✓" if CONFIG.get('USE_QUICKNODE_METIS') else "QN✗"
-                logging.info(f"🔄 Active: [{active_tokens_str}] | Daily: ${daily_profit:.2f} | Trades: {successful_trades_today} | {qn_status}")
+                helius_status = "HD✓" if os.environ.get('HELIUS_API_KEY') else "HD✗"
+                success_rate = (successful_trades/total_trades*100) if total_trades > 0 else 0
+                
+                logging.info(f"🔄 Active: [{active_tokens_str}] | Daily: ${daily_profit:.2f} | Trades: {successful_trades} | SR: {success_rate:.1f}% | {helius_status}")
                 last_status_time = current_time
             
             # Ultra-short sleep for maximum responsiveness
@@ -5603,7 +5708,6 @@ def trading_loop():
             logging.error(traceback.format_exc())
             circuit_breaker_check(error=True)
             time.sleep(2)  # Short error recovery time
-
 
 def simplified_buy_token(token_address: str, amount_sol: float = 0.01) -> bool:
     """Simplified token purchase function with minimal steps."""
