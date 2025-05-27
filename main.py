@@ -1,3 +1,5 @@
+import subprocess
+import re
 import gc
 import os
 import time
@@ -4597,7 +4599,7 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """Enhanced execution with nuclear success detection - FIXED VERSION."""
+    """Enhanced execution with nuclear success detection - FIXED VERSION with re import."""
     try:
         trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.144')
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
@@ -4609,7 +4611,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=180  # Increased timeout for nuclear solution
+            timeout=180
         )
         
         # Get all output
@@ -4619,7 +4621,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         
         print(f"📤 JavaScript output length: {len(combined_output)} characters")
         
-        # NUCLEAR SUCCESS DETECTION - Updated for your exact success messages
+        # NUCLEAR SUCCESS DETECTION with FIXED re usage
         nuclear_success_indicators = [
             "SUCCESS" in combined_output,
             "BUY SUCCESS:" in combined_output,
@@ -4629,7 +4631,8 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             "JavaScript execution successful!" in combined_output
         ]
         
-        # Additional signature-based detection
+        # Extract transaction signatures using re (NOW IMPORTED!)
+        import re  # EXTRA SAFETY - import here too
         transaction_signatures = re.findall(r'[A-Za-z0-9]{87,88}', combined_output)
         has_valid_signature = len(transaction_signatures) > 0
         
@@ -4651,25 +4654,24 @@ def execute_via_javascript(token_address, amount, is_sell=False):
                 print(f"🔍 Solscan: https://solscan.io/tx/{transaction_signature}")
             
             # Show which success indicator triggered
-            for i, indicator in enumerate(nuclear_success_indicators):
-                if indicator:
-                    indicator_names = [
-                        "SUCCESS keyword",
-                        "BUY SUCCESS message", 
-                        "SELL SUCCESS message",
-                        "Transaction submitted successfully",
-                        "Nuclear StructError bypass",
-                        "JavaScript execution successful"
-                    ]
-                    print(f"🎯 Success detected via: {indicator_names[i]}")
-                    break
+            success_reasons = []
+            if "SUCCESS" in combined_output:
+                success_reasons.append("SUCCESS keyword found")
+            if "BUY SUCCESS:" in combined_output:
+                success_reasons.append("BUY SUCCESS message")
+            if "Transaction submitted successfully" in combined_output:
+                success_reasons.append("Transaction submitted successfully")
+            if "Found recent transaction - StructError was non-critical" in combined_output:
+                success_reasons.append("Nuclear StructError bypass")
+            if has_valid_signature:
+                success_reasons.append(f"Valid signature found: {transaction_signature}")
+            
+            print(f"🎯 Success detected via: {', '.join(success_reasons)}")
             
             return True, combined_output
         else:
             print(f"❌ NUCLEAR {action} FAILED: {token_address}")
             print(f"🔍 Output sample: {combined_output[:300]}...")
-            print(f"🔍 Checked {len(nuclear_success_indicators)} success indicators")
-            print(f"🔍 Found {len(transaction_signatures)} transaction signatures")
             return False, combined_output
             
     except subprocess.TimeoutExpired:
