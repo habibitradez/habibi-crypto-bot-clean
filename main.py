@@ -4597,74 +4597,87 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """Enhanced JavaScript execution with better success detection."""
+    """Enhanced execution with nuclear success detection - FIXED VERSION."""
     try:
-        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.144')  # Use your current amount
+        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.144')
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
         
-        logging.info(f"Executing command: {command}")
+        print(f"🎯 Executing command: {command}")
         
         result = subprocess.run(
-            command.split(),
-            capture_output=True,
-            text=True,
-            timeout=120,  # Increased timeout
-            cwd=os.getcwd()
+            command, 
+            shell=True, 
+            capture_output=True, 
+            text=True, 
+            timeout=180  # Increased timeout for nuclear solution
         )
         
-        # ENHANCED success detection
-        output = result.stdout + result.stderr
-        logging.info(f"JavaScript output: {output}")
+        # Get all output
+        stdout_output = result.stdout if result.stdout else ""
+        stderr_output = result.stderr if result.stderr else ""
+        combined_output = stdout_output + stderr_output
         
-        # Multiple success indicators
-        success_indicators = [
-            "SUCCESS",
-            "Transaction submitted successfully:",
-            "View on Solscan:",
-            "🎉 SUCCESS"
-        ]
+        print(f"📤 JavaScript output length: {len(combined_output)} characters")
         
-        # Extract transaction signature
-        signature = None
-        for line in output.split('\n'):
-            if any(indicator in line for indicator in success_indicators):
-                # Try to extract signature from various formats
-                if "SUCCESS" in line:
-                    parts = line.split()
-                    for part in parts:
-                        if len(part) > 80 and part.isalnum():  # Likely a signature
-                            signature = part
-                            break
-                
-                if "https://solscan.io/tx/" in line:
-                    signature = line.split("https://solscan.io/tx/")[-1].strip()
-                    break
-        
-        # Determine success
-        if any(indicator in output for indicator in success_indicators) or signature:
-            logging.info(f"✅ JavaScript execution successful! Signature: {signature}")
-            return True, signature or "SUCCESS"
-        
-        # Check for nuclear solution success messages
+        # NUCLEAR SUCCESS DETECTION - Updated for your exact success messages
         nuclear_success_indicators = [
-            "Found recent transaction - StructError was non-critical",
-            "Transaction may have succeeded despite StructError",
-            "Confirmed: Transaction succeeded despite StructError"
+            "SUCCESS" in combined_output,
+            "BUY SUCCESS:" in combined_output,
+            "SELL SUCCESS:" in combined_output,  
+            "Transaction submitted successfully" in combined_output,
+            "Found recent transaction - StructError was non-critical" in combined_output,
+            "JavaScript execution successful!" in combined_output
         ]
         
-        if any(indicator in output for indicator in nuclear_success_indicators):
-            logging.info("✅ Nuclear solution detected successful transaction despite StructError")
-            return True, "NUCLEAR_SUCCESS"
+        # Additional signature-based detection
+        transaction_signatures = re.findall(r'[A-Za-z0-9]{87,88}', combined_output)
+        has_valid_signature = len(transaction_signatures) > 0
         
-        logging.warning(f"❌ JavaScript execution failed. Output: {output}")
-        return False, output
+        # SUCCESS if ANY nuclear indicator OR valid signature found
+        is_successful = any(nuclear_success_indicators) or has_valid_signature
         
+        # Extract the most recent transaction signature
+        transaction_signature = None
+        if transaction_signatures:
+            transaction_signature = transaction_signatures[-1]
+        
+        # Enhanced logging
+        action = "SELL" if is_sell else "BUY"
+        
+        if is_successful:
+            print(f"✅ NUCLEAR {action} SUCCESS DETECTED: {token_address}")
+            if transaction_signature:
+                print(f"🔗 Transaction Signature: {transaction_signature}")
+                print(f"🔍 Solscan: https://solscan.io/tx/{transaction_signature}")
+            
+            # Show which success indicator triggered
+            for i, indicator in enumerate(nuclear_success_indicators):
+                if indicator:
+                    indicator_names = [
+                        "SUCCESS keyword",
+                        "BUY SUCCESS message", 
+                        "SELL SUCCESS message",
+                        "Transaction submitted successfully",
+                        "Nuclear StructError bypass",
+                        "JavaScript execution successful"
+                    ]
+                    print(f"🎯 Success detected via: {indicator_names[i]}")
+                    break
+            
+            return True, combined_output
+        else:
+            print(f"❌ NUCLEAR {action} FAILED: {token_address}")
+            print(f"🔍 Output sample: {combined_output[:300]}...")
+            print(f"🔍 Checked {len(nuclear_success_indicators)} success indicators")
+            print(f"🔍 Found {len(transaction_signatures)} transaction signatures")
+            return False, combined_output
+            
     except subprocess.TimeoutExpired:
-        logging.error("❌ JavaScript execution timed out")
-        return False, "TIMEOUT"
+        print(f"⏰ TIMEOUT: JavaScript execution exceeded 180 seconds for {token_address}")
+        return False, "Nuclear execution timeout"
     except Exception as e:
-        logging.error(f"❌ JavaScript execution error: {str(e)}")
-        return False, str(e)
+        print(f"❌ NUCLEAR EXECUTION ERROR: {e}")
+        return False, f"Nuclear execution error: {str(e)}"
 
 def get_token_symbol(token_address):
     """Get symbol for token address, or return None if not found."""
