@@ -844,6 +844,21 @@ def enhanced_token_filter(token_address):
         logging.warning(f"Token filter error for {token_address[:8]}: {str(e)}")
         return False
 
+def calculate_trade_profit(buy_price, sell_price, amount_sol):
+    """Calculate actual profit from a trade."""
+    try:
+        if buy_price and sell_price and amount_sol:
+            # Calculate profit in USD
+            price_change_percentage = ((sell_price - buy_price) / buy_price)
+            profit_usd = amount_sol * 240 * price_change_percentage  # Assuming ~$240 SOL
+            profit_percentage = price_change_percentage * 100
+            
+            return profit_usd, profit_percentage
+        return 0, 0
+    except Exception as e:
+        logging.error(f"Error calculating profit: {str(e)}")
+        return 0, 0
+
 def get_token_price_for_profit_calc(token_address):
     """Get token price for profit calculation."""
     try:
