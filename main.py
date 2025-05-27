@@ -7032,8 +7032,8 @@ def main():
             # logging.error(traceback.format_exc())
         
         # Skip test and go directly to trading
-        logging.info("Initialization successful! Starting Quick-Flip trading...")
-        trading_loop()
+        logging.info("Initialization successful! Starting Enhanced Quick-Flip trading...")
+        enhanced_main_loop()  # ENHANCED SYSTEM
     else:
         logging.error("Failed to initialize bot. Please check configurations.")
 
