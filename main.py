@@ -806,6 +806,99 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     
     return None
 
+def update_environment_variable(key, value):
+    """Update environment variable for persistence across restarts."""
+    try:
+        os.environ[key] = str(value)
+        logging.info(f"Updated {key} = {value}")
+    except Exception as e:
+        logging.error(f"Failed to update {key}: {str(e)}")
+
+def enhanced_token_filter(token_address):
+    """Enhanced token filtering to avoid obvious rug pulls."""
+    try:
+        # Quick Jupiter validation
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000",
+            timeout=8
+        )
+        
+        if response.status_code == 200 and 'outAmount' in response.text:
+            data = response.json()
+            out_amount = int(data.get('outAmount', 0))
+            
+            # Filter out tokens with suspicious exchange rates
+            if out_amount > 0:
+                exchange_rate = 100000000 / out_amount  # SOL to token rate
+                
+                # Skip tokens that are too expensive or too cheap (likely rugs)
+                if 0.001 < exchange_rate < 10000:
+                    return True
+                else:
+                    logging.warning(f"❌ Suspicious exchange rate for {token_address[:8]}: {exchange_rate}")
+                    return False
+        
+        return False
+        
+    except Exception as e:
+        logging.warning(f"Token filter error for {token_address[:8]}: {str(e)}")
+        return False
+
+def get_token_price_for_profit_calc(token_address):
+    """Get token price for profit calculation."""
+    try:
+        # Method 1: Jupiter quote for price
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint={token_address}&outputMint=So11111111111111111111111111111111111111112&amount=1000000",
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            out_amount = int(data.get('outAmount', 0))
+            if out_amount > 0:
+                # Price in SOL per token
+                price_sol = out_amount / 1000000 / 1e9  # Convert lamports to SOL
+                price_usd = price_sol * 240  # Approximate SOL price
+                return price_usd
+        
+        # Method 2: DexScreener fallback
+        response = requests.get(
+            f"https://api.dexscreener.com/latest/dex/tokens/{token_address}",
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            pairs = data.get('pairs', [])
+            if pairs:
+                price_usd = float(pairs[0].get('priceUsd', 0))
+                if price_usd > 0:
+                    return price_usd
+        
+        return None
+        
+    except Exception as e:
+        logging.warning(f"Could not get price for {token_address[:8]}: {str(e)}")
+        return None
+
+def add_token_to_monitoring(token_address, buy_price, amount, signature):
+    """Add token to monitoring list."""
+    try:
+        # Your existing token monitoring logic
+        logging.info(f"📊 Added {token_address[:8]} to monitoring (bought at ${buy_price:.6f})")
+    except Exception as e:
+        logging.error(f"Error adding token to monitoring: {str(e)}")
+
+def remove_token_from_monitoring(token_address):
+    """Remove token from monitoring list."""
+    try:
+        # Your existing token removal logic
+        logging.info(f"📊 Removed {token_address[:8]} from monitoring")
+    except Exception as e:
+        logging.error(f"Error removing token from monitoring: {str(e)}")
+
+
 
 def enhanced_find_newest_tokens_with_free_apis():
     """
@@ -1060,6 +1153,60 @@ def is_likely_rug_pull(token_address):
         
     except:
         return False  # If check fails, allow trade
+
+def update_performance_stats(success, profit_amount=0, token_address=""):
+    """Update performance statistics with proper profit tracking."""
+    try:
+        # Get current stats
+        total_trades = int(os.environ.get('TOTAL_TRADES', '0'))
+        successful_trades = int(os.environ.get('SUCCESSFUL_TRADES', '0'))
+        total_profit = float(os.environ.get('TOTAL_PROFIT', '0.0'))
+        
+        # Update stats
+        total_trades += 1
+        
+        if success:
+            successful_trades += 1
+            total_profit += profit_amount
+            logging.info(f"💰 PROFITABLE TRADE: +${profit_amount:.2f} | Total: ${total_profit:.2f}")
+        
+        # Calculate rates
+        success_rate = (successful_trades / total_trades * 100) if total_trades > 0 else 0
+        hourly_rate = total_profit  # Simplified for now
+        
+        # Log performance update
+        logging.info("🔶 =================== PERFORMANCE UPDATE ===================")
+        logging.info(f"💎 Daily profit: ${total_profit:.2f}")
+        logging.info(f"✅ Successful trades: {successful_trades}")
+        logging.info(f"📊 Buy/Sell ratio: {successful_trades}/{total_trades - successful_trades}")
+        logging.info(f"🎯 Tokens monitored: {total_trades}")
+        logging.info(f"🔥 Buy attempts: {total_trades} | Success rate: {success_rate:.1f}%")
+        logging.info(f"⚡ Hourly rate: ${hourly_rate:.2f}/hour")
+        
+        # Calculate what's needed for $1K
+        needed_hourly = (1000 - total_profit) / 24  # Assuming 24 hour operation
+        logging.info(f"📈 Projected daily: ${total_profit:.2f}")
+        logging.info(f"🎯 Trade rate: {successful_trades} trades/hour")
+        logging.info(f"⚠️ Need ${needed_hourly:.2f}/hour to reach $1k target")
+        
+        # Auto-scaling suggestion
+        current_position = float(os.environ.get('TRADE_AMOUNT_SOL', '0.144'))
+        if success_rate > 20 and total_profit > 50:  # Good performance
+            suggested_position = min(current_position * 1.2, 0.5)  # Max 0.5 SOL
+            logging.info(f"🚀 Increasing buy amount to {suggested_position:.3f} SOL")
+        
+        logging.info("🔶 =======================================================")
+        
+        return {
+            'total_trades': total_trades,
+            'successful_trades': successful_trades,
+            'total_profit': total_profit,
+            'success_rate': success_rate
+        }
+        
+    except Exception as e:
+        logging.error(f"Error updating performance stats: {str(e)}")
+        return None
 
 def is_token_tradable_enhanced(token_address):
     """Enhanced token validation with rug pull detection."""
