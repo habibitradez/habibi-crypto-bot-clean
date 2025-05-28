@@ -1250,6 +1250,27 @@ def get_token_price_estimate(token_address):
         print(f"⚠️ Price estimation error: {e}")
         return 0.000001  # Safe fallback price
 
+def update_daily_profit(profit_amount):
+    """Update daily profit tracking"""
+    global CURRENT_DAILY_PROFIT
+    
+    try:
+        CURRENT_DAILY_PROFIT += profit_amount
+        
+        print(f"💰 TRADE PROFIT: ${profit_amount:.2f}")
+        print(f"💎 DAILY TOTAL: ${CURRENT_DAILY_PROFIT:.2f}")
+        print(f"🎯 TARGET PROGRESS: {CURRENT_DAILY_PROFIT/DAILY_PROFIT_TARGET*100:.1f}%")
+        
+        # Update environment variable for persistence across restarts
+        try:
+            os.environ['CURRENT_DAILY_PROFIT'] = str(CURRENT_DAILY_PROFIT)
+        except:
+            pass  # If environment update fails, continue anyway
+            
+    except Exception as e:
+        print(f"⚠️ Profit tracking error: {e}")
+        # Don't let profit tracking errors stop trading
+
 def get_dynamic_position_size():
     """Enhanced position sizing for maximum profitability"""
     global CURRENT_DAILY_PROFIT, buy_successes, buy_attempts
