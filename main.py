@@ -1331,7 +1331,7 @@ def enhanced_trading_cycle():
         
         # STEP 6: PROFIT TAKING MONITORING
         hold_start_time = time.time()
-        max_hold_time = 45  # seconds
+        max_hold_time = 30  # seconds
         profit_taken = False
         remaining_position = position_size
         
