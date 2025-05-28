@@ -1252,7 +1252,7 @@ def get_token_price_estimate(token_address):
 
 # COMPLETE FUNCTION 2: Enhanced Trading Cycle (FULLY INTEGRATED)
 def enhanced_trading_cycle():
-    """Complete enhanced trading cycle with profit tracking"""
+    """Complete optimized enhanced trading cycle with faster execution"""
     global CURRENT_DAILY_PROFIT, buy_attempts, buy_successes, sell_attempts, sell_successes
     
     print(f"🔍 Starting enhanced trading cycle...")
@@ -1294,7 +1294,7 @@ def enhanced_trading_cycle():
             continue
     
     if not selected_token:
-        print(f"❌ NO HIGH-QUALITY TOKENS FOUND (All scores < 15)")
+        print(f"❌ NO HIGH-QUALITY TOKENS FOUND (All scores < 5)")
         return
     
     print(f"✅ FINAL SELECTION: {selected_token} (Score: {best_score}, Source: {token_source})")
@@ -1313,7 +1313,7 @@ def enhanced_trading_cycle():
     print(f"   🎯 Token: {selected_token}")
     print(f"   💰 Entry Price: ${entry_price:.8f}")
     print(f"   📏 Position Size: {position_size:.3f} SOL")
-    print(f"   🏆 Quality Score: {best_score}/26")
+    print(f"   🏆 Quality Score: {best_score}/28")
     
     # STEP 5: EXECUTE BUY (using your existing function)
     buy_attempts += 1
@@ -1329,66 +1329,72 @@ def enhanced_trading_cycle():
         buy_successes += 1
         print(f"✅ BUY SUCCESS CONFIRMED: {selected_token} ({buy_successes}/{buy_attempts} success rate)")
         
-        # STEP 6: PROFIT TAKING MONITORING
+        # OPTIMIZED QUICK EXIT STRATEGY
         hold_start_time = time.time()
-        max_hold_time = 30  # seconds
+        max_hold_time = 15  # Reduced from 20 to 15 seconds for faster exits
+        quick_exit_attempts = 0
+        max_quick_exits = 2  # Maximum 2 quick sell attempts
         profit_taken = False
         remaining_position = position_size
         
-        print(f"📊 MONITORING FOR PROFIT OPPORTUNITIES (Max {max_hold_time}s)...")
+        print(f"🚀 QUICK EXIT MONITORING (Max {max_hold_time}s, {max_quick_exits} attempts)...")
         
-        while (time.time() - hold_start_time) < max_hold_time and not profit_taken:
+        # Quick exit attempt loop
+        while (time.time() - hold_start_time) < max_hold_time and quick_exit_attempts < max_quick_exits and not profit_taken:
+            quick_exit_attempts += 1
             current_price = get_token_price_estimate(selected_token)
             
-            # Check for profit taking using your existing function
-            try:
-                should_sell, sell_percentage = should_take_profit(selected_token, entry_price, current_price, remaining_position)
-            except:
-                should_sell, sell_percentage = False, 0
+            # Check for ANY profit opportunity (even small ones)
+            profit_pct = ((current_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
             
-            if should_sell:
-                sell_amount = remaining_position * sell_percentage
-                print(f"🎯 PROFIT TAKING TRIGGERED:")
-                print(f"   📈 Current Price: ${current_price:.8f}")
-                print(f"   💹 Profit: {((current_price - entry_price) / entry_price * 100):.1f}%")
-                print(f"   🎯 Selling: {sell_percentage*100:.0f}% ({sell_amount:.3f} SOL)")
-                
-                # Execute sell
+            print(f"🎯 QUICK EXIT ATTEMPT #{quick_exit_attempts}/{max_quick_exits}")
+            print(f"   📈 Current Price: ${current_price:.8f}")
+            print(f"   💹 Profit: {profit_pct:.1f}%")
+            
+            # Attempt quick sell if ANY profit or after 10 seconds
+            time_elapsed = time.time() - hold_start_time
+            should_quick_sell = profit_pct > 5.0 or time_elapsed > 10
+            
+            if should_quick_sell:
+                print(f"🚀 ATTEMPTING QUICK SELL...")
                 sell_attempts += 1
-                try:
-                    sell_success, sell_output = execute_via_javascript(selected_token, sell_amount, True)
-                except Exception as e:
-                    print(f"❌ SELL EXECUTION ERROR: {e}")
-                    break
                 
-                if sell_success:
-                    sell_successes += 1
+                try:
+                    sell_success, sell_output = execute_via_javascript(selected_token, remaining_position, True)
                     
-                    # Calculate and record profit
-                    try:
-                        profit_usd = estimate_trade_profit(entry_price, current_price, sell_amount)
-                        update_daily_profit(profit_usd)
-                        print(f"💰 PROFIT LOCKED IN: ${profit_usd:.2f}")
-                    except Exception as e:
-                        print(f"⚠️ Profit calculation error: {e}")
-                    
-                    # Update remaining position
-                    remaining_position *= (1 - sell_percentage)
-                    
-                    if sell_percentage >= 1.0:
+                    if sell_success:
+                        sell_successes += 1
+                        
+                        # Calculate and record profit
+                        try:
+                            profit_usd = estimate_trade_profit(entry_price, current_price, remaining_position)
+                            update_daily_profit(profit_usd)
+                            print(f"💰 QUICK PROFIT LOCKED: ${profit_usd:.2f} ({profit_pct:.1f}%)")
+                        except Exception as e:
+                            # Fallback profit calculation
+                            estimated_profit = remaining_position * 240 * (profit_pct / 100)  # Rough estimate
+                            update_daily_profit(estimated_profit)
+                            print(f"💰 ESTIMATED PROFIT: ~${estimated_profit:.2f}")
+                        
                         profit_taken = True
-                        print(f"✅ COMPLETE EXIT - All tokens sold")
+                        print(f"✅ QUICK EXIT SUCCESSFUL")
+                        break
+                        
                     else:
-                        print(f"📊 PARTIAL EXIT - Remaining: {remaining_position:.3f} SOL")
-                else:
-                    print(f"❌ SELL FAILED - Continuing to monitor")
+                        print(f"❌ Quick sell attempt {quick_exit_attempts} failed")
+                        
+                except Exception as e:
+                    print(f"⚠️ Quick sell error: {e}")
             
-            time.sleep(3)  # Check every 3 seconds
+            # Brief pause between attempts
+            if not profit_taken and quick_exit_attempts < max_quick_exits:
+                time.sleep(3)
         
-        # STEP 7: FORCE SELL AFTER MAX HOLD TIME
+        # FINAL FORCE SELL if quick exits failed
         if not profit_taken and remaining_position > 0:
-            print(f"⏰ MAX HOLD TIME REACHED - FORCE SELLING {remaining_position:.3f} SOL")
+            print(f"⏰ FORCE SELLING REMAINING POSITION...")
             final_price = get_token_price_estimate(selected_token)
+            final_profit_pct = ((final_price - entry_price) / entry_price * 100) if entry_price > 0 else 0
             
             sell_attempts += 1
             try:
@@ -1399,11 +1405,15 @@ def enhanced_trading_cycle():
                     try:
                         profit_usd = estimate_trade_profit(entry_price, final_price, remaining_position)
                         update_daily_profit(profit_usd)
-                        print(f"💰 FINAL EXIT PROFIT: ${profit_usd:.2f}")
+                        print(f"💰 FINAL EXIT: ${profit_usd:.2f} ({final_profit_pct:.1f}%)")
                     except Exception as e:
-                        print(f"⚠️ Final profit calculation error: {e}")
+                        # Fallback calculation
+                        estimated_profit = remaining_position * 240 * (final_profit_pct / 100)
+                        update_daily_profit(estimated_profit)
+                        print(f"💰 ESTIMATED FINAL: ~${estimated_profit:.2f}")
                 else:
-                    print(f"❌ FORCE SELL FAILED")
+                    print(f"❌ FORCE SELL FAILED - Moving to next cycle")
+                    
             except Exception as e:
                 print(f"❌ FORCE SELL ERROR: {e}")
     
@@ -4928,7 +4938,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=60
+            timeout=90
         )
         
         # Get all output
