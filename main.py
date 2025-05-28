@@ -1283,7 +1283,7 @@ def enhanced_trading_cycle():
             # Score the token using your existing function
             token_score = enhanced_token_scoring(token, source)
             
-            if token_score >= 15 and token_score > best_score:  # Only high-quality tokens
+            if token_score >= 5 and token_score > best_score:  # Only high-quality tokens
                 selected_token = token
                 best_score = token_score
                 token_source = source
