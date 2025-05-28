@@ -64,6 +64,10 @@ CONFIG = {
     'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
     'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '5')),  # Only buy very new tokens
     'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
+    'DAILY_PROFIT_TARGET = 1000  # $1000 daily target per bot
+    'CURRENT_DAILY_PROFIT = 0    # Current daily profit tracker
+    'PROFIT_REINVESTMENT_RATE = 0.3  # Reinvest 30% of profits
+    'BASE_POSITION_SIZE = 0.144  # Current position size
 
     # Memory optimization
     'RPC_CALL_DELAY_MS': int(os.environ.get('RPC_CALL_DELAY_MS', '300')),
