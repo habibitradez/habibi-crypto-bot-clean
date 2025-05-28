@@ -906,6 +906,54 @@ def get_token_price_for_profit_calc(token_address):
         logging.warning(f"Could not get price for {token_address[:8]}: {str(e)}")
         return None
 
+# ADD THIS MISSING FUNCTION TO YOUR main.py
+
+def enhanced_token_scoring(token_data, source="unknown"):
+    """Advanced scoring system for consistent winners"""
+    score = 0
+    
+    try:
+        # Helius Discovery Bonus (Your secret weapon)
+        if source == 'helius' or 'helius' in str(token_data).lower():
+            score += 10
+            print(f"🔥 HELIUS BONUS: +10 points")
+            
+        # Volume Verification 
+        volume = token_data.get('volume_24h', 0) if isinstance(token_data, dict) else 0
+        if volume > 50000:
+            score += 5
+            print(f"📊 VOLUME BONUS: +5 points (${volume:,.0f})")
+            
+        # Liquidity Check
+        liquidity = token_data.get('liquidity', 0) if isinstance(token_data, dict) else 0
+        if liquidity > 100000:
+            score += 5
+            print(f"💧 LIQUIDITY BONUS: +5 points (${liquidity:,.0f})")
+            
+        # Community Signals
+        holders = token_data.get('holder_count', 0) if isinstance(token_data, dict) else 0
+        if holders > 100:
+            score += 3
+            print(f"👥 COMMUNITY BONUS: +3 points ({holders} holders)")
+            
+        # Age Filter (avoid brand new rugs)
+        token_age = token_data.get('age_hours', 12) if isinstance(token_data, dict) else 12
+        if 2 <= token_age <= 24:  # Sweet spot
+            score += 3
+            print(f"⏰ AGE BONUS: +3 points ({token_age}h old)")
+        
+        # Basic token bonus (if it made it through validation)
+        if token_data:
+            score += 2
+            print(f"✅ VALIDATION BONUS: +2 points")
+        
+        print(f"🎯 TOTAL SCORE: {score}/28 points")
+        return score
+        
+    except Exception as e:
+        print(f"⚠️ Scoring error: {e}")
+        return 5  # Default safe score
+
 def add_token_to_monitoring(token_address, buy_price, amount, signature):
     """Add token to monitoring list."""
     try:
