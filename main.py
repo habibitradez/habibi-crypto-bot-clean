@@ -4926,7 +4926,7 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """Enhanced execution with nuclear success detection - FIXED VERSION with re import."""
+    """Enhanced execution with optimized timeout and nuclear success detection."""
     try:
         trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.144')
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
@@ -4938,7 +4938,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=90
+            timeout=75  # OPTIMIZED: 75 seconds (faster than 90, safer than 60)
         )
         
         # Get all output
@@ -4948,18 +4948,21 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         
         print(f"📤 JavaScript output length: {len(combined_output)} characters")
         
-        # NUCLEAR SUCCESS DETECTION with FIXED re usage
+        # ENHANCED SUCCESS DETECTION - More aggressive detection
         nuclear_success_indicators = [
             "SUCCESS" in combined_output,
             "BUY SUCCESS:" in combined_output,
             "SELL SUCCESS:" in combined_output,  
             "Transaction submitted successfully" in combined_output,
             "Found recent transaction - StructError was non-critical" in combined_output,
-            "JavaScript execution successful!" in combined_output
+            "JavaScript execution successful!" in combined_output,
+            # Additional success indicators
+            "confirmed" in combined_output.lower(),
+            "submitted" in combined_output.lower() and "successfully" in combined_output.lower()
         ]
         
-        # Extract transaction signatures using re (NOW IMPORTED!)
-        import re  # EXTRA SAFETY - import here too
+        # Extract transaction signatures using re
+        import re
         transaction_signatures = re.findall(r'[A-Za-z0-9]{87,88}', combined_output)
         has_valid_signature = len(transaction_signatures) > 0
         
@@ -4979,30 +4982,14 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             if transaction_signature:
                 print(f"🔗 Transaction Signature: {transaction_signature}")
                 print(f"🔍 Solscan: https://solscan.io/tx/{transaction_signature}")
-            
-            # Show which success indicator triggered
-            success_reasons = []
-            if "SUCCESS" in combined_output:
-                success_reasons.append("SUCCESS keyword found")
-            if "BUY SUCCESS:" in combined_output:
-                success_reasons.append("BUY SUCCESS message")
-            if "Transaction submitted successfully" in combined_output:
-                success_reasons.append("Transaction submitted successfully")
-            if "Found recent transaction - StructError was non-critical" in combined_output:
-                success_reasons.append("Nuclear StructError bypass")
-            if has_valid_signature:
-                success_reasons.append(f"Valid signature found: {transaction_signature}")
-            
-            print(f"🎯 Success detected via: {', '.join(success_reasons)}")
-            
             return True, combined_output
         else:
             print(f"❌ NUCLEAR {action} FAILED: {token_address}")
-            print(f"🔍 Output sample: {combined_output[:300]}...")
+            print(f"🔍 Output sample: {combined_output[:200]}...")
             return False, combined_output
             
     except subprocess.TimeoutExpired:
-        print(f"⏰ TIMEOUT: JavaScript execution exceeded 180 seconds for {token_address}")
+        print(f"⏰ TIMEOUT: JavaScript execution exceeded 75 seconds for {token_address}")
         return False, "Nuclear execution timeout"
     except Exception as e:
         print(f"❌ NUCLEAR EXECUTION ERROR: {e}")
