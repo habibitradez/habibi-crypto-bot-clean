@@ -4928,7 +4928,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=180
+            timeout=60
         )
         
         # Get all output
