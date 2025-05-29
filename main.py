@@ -1295,56 +1295,6 @@ def emergency_desperate_sell(token_address):
     print("🚨 ALL DESPERATE SELL ATTEMPTS FAILED")
     return False, "Complete sell failure - likely rug pull"
 
-def emergency_preservation_cycle():
-    """Emergency cycle focused on preserving remaining capital"""
-    global buy_attempts, buy_successes, sell_attempts, sell_successes
-    
-    print("🚨 EMERGENCY PRESERVATION CYCLE ACTIVATED")
-    
-    # ULTRA-TINY position to test
-    position_size = emergency_position_size()
-    print(f"💰 EMERGENCY POSITION: {position_size} SOL (~${position_size * 240:.2f})")
-    
-    # Get any token quickly (no time for complex analysis)
-    try:
-        tokens = enhanced_find_newest_tokens_with_free_apis()
-        if not tokens:
-            print("❌ No tokens found")
-            return
-        
-        selected_token = tokens[0]  # Take first available
-        
-        # EMERGENCY BUY
-        buy_attempts += 1
-        print(f"🚨 EMERGENCY BUY #{buy_attempts}")
-        
-        buy_result = execute_via_javascript_EMERGENCY(selected_token.address, position_size, is_sell=False)
-        
-        if "SUCCESS" not in str(buy_result).upper():
-            print(f"❌ EMERGENCY BUY FAILED: {buy_result}")
-            return
-        
-        buy_successes += 1
-        print(f"✅ EMERGENCY BUY SUCCESS: {selected_token.address}")
-        
-        # IMMEDIATE SELL ATTEMPT - NO WAITING
-        print("⚡ IMMEDIATE EMERGENCY SELL - NO DELAYS")
-        sell_attempts += 1
-        
-        sell_success, sell_result = emergency_desperate_sell(selected_token.address)
-        
-        if sell_success:
-            sell_successes += 1
-            print(f"✅ EMERGENCY SELL SUCCESS: {sell_result}")
-            # Small profit preserved
-            update_daily_profit(position_size * 0.1)  # 10% profit assumption
-        else:
-            print(f"🚨 EMERGENCY SELL FAILED: {sell_result}")
-            # Log the loss
-            print(f"💸 EMERGENCY LOSS: ${position_size * 240:.2f}")
-        
-    except Exception as e:
-        print(f"🚨 EMERGENCY CYCLE ERROR: {e}")
 
 def emergency_wallet_check():
     """Check if we need to stop all trading"""
@@ -1358,64 +1308,6 @@ def emergency_wallet_check():
     
     return False
     
-
-# 6. EMERGENCY MAIN LOOP
-def emergency_capital_preservation_main():
-    """Emergency main loop - preserve remaining capital"""
-    
-    print("🚨🚨🚨 EMERGENCY CAPITAL PRESERVATION MODE 🚨🚨🚨")
-    print("🛑 Your bot has 4.1% sell success rate - THIS IS CRITICAL")
-    print("💸 You are losing SOL capital while showing fake profits")
-    print("🎯 New Strategy: TINY positions, IMMEDIATE sells, PRESERVE CAPITAL")
-    
-    cycle_count = 0
-    
-    while cycle_count < 10:  # Limit to 10 emergency cycles
-        cycle_count += 1
-        
-        print(f"🚨 ===== EMERGENCY CYCLE #{cycle_count} =====")
-        
-        # Show current dire statistics
-        if buy_attempts > 0:
-            buy_rate = (buy_successes / buy_attempts) * 100
-            sell_rate = (sell_successes / sell_attempts) * 100 if sell_attempts > 0 else 0
-            
-            print(f"📊 EMERGENCY STATS:")
-            print(f"   🎯 Buy Success: {buy_successes}/{buy_attempts} ({buy_rate:.1f}%)")
-            print(f"   💸 Sell Success: {sell_successes}/{sell_attempts} ({sell_rate:.1f}%)")
-            print(f"   🚨 CRITICAL: {sell_rate:.1f}% sell rate is CATASTROPHIC")
-        
-        try:
-            emergency_preservation_cycle()
-            
-            # Very short pause
-            print("⏱️ Emergency pause: 3 seconds...")
-            time.sleep(3)
-            
-        except Exception as e:
-            print(f"🚨 EMERGENCY ERROR: {e}")
-            time.sleep(3)
-            continue
-    
-    print("🛑 EMERGENCY CYCLES COMPLETE")
-    print("📊 Final recommendation: STOP TRADING until sell rate improves")
-
-# 6. CRITICAL CONFIGURATION CHANGES
-# Replace these in your existing code:
-
-# OLD VALUES (CAUSING THE PROBLEM):
-# timeout = 75  # TOO LONG
-# position_size = 0.160  # TOO BIG
-
-# NEW EMERGENCY VALUES:
-EMERGENCY_TIMEOUT = 10    # 10 seconds maximum
-EMERGENCY_POSITION = 0.01  # 0.01 SOL maximum
-EMERGENCY_MAX_CYCLES = 10  # Limited cycles to test
-
-print("🚨 EMERGENCY FIXES LOADED")
-print("🛑 CRITICAL: Your 4.1% sell success rate will bankrupt you")
-print("💡 APPLY THESE FIXES IMMEDIATELY")
-print("⚡ Call: emergency_capital_preservation_main()")
 
 
 def execute_via_javascript_EMERGENCY(token_address, amount, is_sell=False):
