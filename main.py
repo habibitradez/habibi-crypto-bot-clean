@@ -64,6 +64,7 @@ CONFIG = {
     'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
     'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '5')),  # Only buy very new tokens
     'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
+    os.environ['TRADE_AMOUNT_SOL'] = '0.01'  # Reduced from 0.144 to 0.01
 
     # Memory optimization
     'RPC_CALL_DELAY_MS': int(os.environ.get('RPC_CALL_DELAY_MS', '300')),
@@ -6920,4 +6921,8 @@ def main():
         logging.error("Failed to initialize bot. Please check configurations.")
 
 if __name__ == "__main__":
-    enhanced_main_loop()
+    # EMERGENCY MODE - Call trading_loop directly
+    if initialize():
+        trading_loop()
+    else:
+        print("Failed to initialize")
