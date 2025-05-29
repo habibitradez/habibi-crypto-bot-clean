@@ -1199,6 +1199,94 @@ def enhanced_find_newest_tokens_with_free_apis():
             "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE",      # ORCA
         ]
 
+
+def execute_with_hard_timeout(command, timeout_seconds=8):
+    """Execute command with HARD timeout that KILLS the process - SELL OPERATIONS ONLY"""
+    
+    print(f"🚨 EXECUTING SELL WITH {timeout_seconds}s HARD TIMEOUT: {command[:50]}...")
+    
+    try:
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            preexec_fn=subprocess.os.setsid
+        )
+        
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            
+            if process.returncode == 0:
+                print(f"✅ SELL COMMAND SUCCESS in {timeout_seconds}s")
+                return {
+                    'success': True,
+                    'output': stdout.decode('utf-8', errors='ignore'),
+                    'error': stderr.decode('utf-8', errors='ignore')
+                }
+            else:
+                print(f"❌ SELL COMMAND FAILED with return code {process.returncode}")
+                return {'success': False, 'error': stderr.decode('utf-8', errors='ignore')}
+                
+        except subprocess.TimeoutExpired:
+            print(f"🚨 SELL HARD TIMEOUT REACHED - KILLING PROCESS!")
+            subprocess.os.killpg(subprocess.os.getpgid(process.pid), signal.SIGKILL)
+            process.kill()
+            process.wait()
+            return {'success': False, 'error': f'HARD TIMEOUT after {timeout_seconds} seconds'}
+            
+    except Exception as e:
+        print(f"🚨 SELL EXECUTION ERROR: {str(e)}")
+        return {'success': False, 'error': str(e)}
+
+
+async def ultra_fast_sell(token_address, amount):
+    """Ultra-fast sell with 8-second maximum timeout - KEEP YOUR BUY FUNCTION AS-IS"""
+    
+    command = f"node swap.js {token_address} {amount} true"  # true = sell
+    
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+    
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        try:
+            future = executor.submit(execute_with_hard_timeout, command, 8)
+            result = future.result(timeout=10)
+            
+            if result['success'] and 'NUCLEAR SELL SUCCESS DETECTED' in result['output']:
+                print(f"✅ ULTRA-FAST SELL SUCCESS: {token_address}")
+                return True
+            else:
+                print(f"❌ ULTRA-FAST SELL FAILED: {token_address}")
+                return False
+                
+        except FutureTimeoutError:
+            print(f"🚨 ULTRA-FAST SELL TIMEOUT: {token_address}")
+            return False
+
+async def desperate_multi_sell(token_address, position_size):
+    """Try multiple sell amounts with ultra-fast timeouts"""
+    
+    sell_attempts = [
+        position_size,           # Full amount
+        position_size * 0.90,    # 90%
+        position_size * 0.75,    # 75%  
+        position_size * 0.50,    # 50%
+        position_size * 0.25     # 25% (desperate)
+    ]
+    
+    for i, amount in enumerate(sell_attempts):
+        print(f"🎯 DESPERATE SELL ATTEMPT {i+1}/5: {amount:.6f} SOL")
+        
+        success = await ultra_fast_sell(token_address, amount)
+        if success:
+            print(f"✅ DESPERATE SELL SUCCESS on attempt {i+1}")
+            return True
+        
+        await asyncio.sleep(1)  # Very short pause
+    
+    print("🚨 ALL DESPERATE SELL ATTEMPTS FAILED")
+    return False
+
 def is_likely_rug_pull(token_address):
     """Quick rug pull detection before trading."""
     try:
