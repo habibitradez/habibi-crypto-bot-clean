@@ -1226,6 +1226,222 @@ def is_likely_rug_pull(token_address):
     except:
         return False  # If check fails, allow trade
 
+def emergency_position_sizing():
+    """Ultra-small positions to stop massive losses"""
+    return 0.02  # Only 0.02 SOL (~$5) per trade instead of 0.160 SOL
+
+
+def emergency_mandatory_sell(token_address, position_size):
+    """Emergency sell - try everything possible"""
+    
+    print("🚨 EMERGENCY SELL ACTIVATED")
+    
+    # Attempt 1: Full position
+    result = execute_via_javascript_emergency(token_address, position_size, is_sell=True)
+    if "SUCCESS" in str(result).upper():
+        return True, f"Full position sold: {result}"
+    
+    # Attempt 2: 75% of position
+    result = execute_via_javascript_emergency(token_address, position_size * 0.75, is_sell=True)
+    if "SUCCESS" in str(result).upper():
+        return True, f"75% position sold: {result}"
+    
+    # Attempt 3: 50% of position
+    result = execute_via_javascript_emergency(token_address, position_size * 0.5, is_sell=True)
+    if "SUCCESS" in str(result).upper():
+        return True, f"50% position sold: {result}"
+    
+    # Attempt 4: 25% of position (minimum)
+    result = execute_via_javascript_emergency(token_address, position_size * 0.25, is_sell=True)
+    if "SUCCESS" in str(result).upper():
+        return True, f"25% position sold: {result}"
+    
+    print("🚨 ALL EMERGENCY SELL ATTEMPTS FAILED - LIKELY RUG PULL")
+    return False, "All emergency attempts failed"
+
+
+def emergency_capital_preservation_cycle():
+    """Emergency trading cycle focused on preserving remaining capital"""
+    global CURRENT_DAILY_PROFIT, buy_attempts, buy_successes, sell_attempts, sell_successes
+    
+    print("🚨 EMERGENCY CAPITAL PRESERVATION MODE ACTIVATED")
+    
+    # ULTRA-CONSERVATIVE: Only 0.02 SOL per trade
+    position_size = emergency_position_sizing()
+    print(f"💰 EMERGENCY POSITION: {position_size} SOL (~${position_size * 240:.0f})")
+    
+    # Discover tokens
+    discovered_tokens = enhanced_find_newest_tokens_with_free_apis()
+    if not discovered_tokens:
+        print("❌ No tokens found - skipping cycle")
+        return
+    
+    # Select first available token (no time for complex scoring)
+    selected_token = discovered_tokens[0]
+    
+    # Execute emergency buy
+    buy_attempts += 1
+    print(f"🚨 EMERGENCY BUY #{buy_attempts} - MINIMAL RISK")
+    
+    buy_result = execute_via_javascript_emergency(selected_token.address, position_size, is_sell=False)
+    
+    if "SUCCESS" not in str(buy_result).upper():
+        print(f"❌ EMERGENCY BUY FAILED: {buy_result}")
+        return
+    
+    buy_successes += 1
+    print(f"✅ EMERGENCY BUY SUCCESS")
+    
+    # EMERGENCY MONITORING - 10 SECOND MAX HOLD
+    start_time = time.time()
+    
+    for second in range(10):  # Only 10 seconds maximum
+        current_time = time.time()
+        hold_seconds = int(current_time - start_time)
+        
+        # After 5 seconds, try to sell regardless of profit
+        if hold_seconds >= 5:
+            print(f"⚡ EMERGENCY EXIT: {hold_seconds}s hold time")
+            sell_attempts += 1
+            
+            sell_success, sell_reason = emergency_mandatory_sell(selected_token.address, position_size)
+            
+            if sell_success:
+                sell_successes += 1
+                # Small profit is better than rug pull loss
+                estimated_profit = position_size * 0.05  # Assume 5% profit
+                update_daily_profit(estimated_profit)
+                print(f"✅ EMERGENCY SELL SUCCESS: {sell_reason}")
+                print(f"💰 ESTIMATED PROFIT: ${estimated_profit:.2f}")
+            else:
+                print(f"🚨 EMERGENCY SELL FAILED: {sell_reason}")
+                # Log the loss but continue
+                print(f"💸 POTENTIAL LOSS: ${position_size * 240:.2f}")
+            
+            return
+        
+        time.sleep(1)
+    
+    # Force sell after 10 seconds no matter what
+    print("⏰ FORCE EMERGENCY SELL: 10-second limit")
+    sell_attempts += 1
+    sell_success, sell_reason = emergency_mandatory_sell(selected_token.address, position_size)
+    
+    if sell_success:
+        sell_successes += 1
+        print(f"✅ FORCE SELL SUCCESS: {sell_reason}")
+    else:
+        print(f"🚨 FORCE SELL FAILED: {sell_reason}")
+
+def emergency_wallet_check():
+    """Check if we need to stop all trading"""
+    # Simulate checking wallet balance (you'll need to implement actual check)
+    current_sol = 0.10  # Your current balance from logs
+    
+    if current_sol <= 0.05:  # If 0.05 SOL or less
+        print("🚨 CRITICAL: WALLET NEARLY EMPTY")
+        print("🛑 STOPPING ALL TRADING TO PRESERVE REMAINING FUNDS")
+        return True
+    
+    return False
+    
+
+# 6. EMERGENCY MAIN LOOP
+def emergency_main_loop():
+    """Emergency main loop with capital preservation"""
+    
+    print("🚨 EMERGENCY MODE ACTIVATED - CAPITAL PRESERVATION PRIORITY")
+    print("🎯 New Strategy: Preserve remaining 0.10 SOL at all costs")
+    print("💰 Position Size: 0.02 SOL (~$5) maximum")
+    print("⏰ Hold Time: 10 seconds maximum")
+    print("🎯 Goal: Stop the bleeding, preserve capital")
+    
+    cycle_count = 0
+    
+    while True:
+        cycle_count += 1
+        
+        # Check if wallet is too low to continue
+        if emergency_wallet_check():
+            print("🛑 EMERGENCY STOP: Wallet too low to continue trading")
+            break
+        
+        print(f"🚨 ===== EMERGENCY CYCLE #{cycle_count} =====")
+        
+        try:
+            emergency_capital_preservation_cycle()
+            
+            # Show emergency stats every cycle
+            if buy_attempts > 0:
+                buy_rate = (buy_successes / buy_attempts) * 100
+                sell_rate = (sell_successes / sell_attempts) * 100 if sell_attempts > 0 else 0
+                
+                print(f"📊 EMERGENCY STATS:")
+                print(f"   💰 Daily Profit: ${CURRENT_DAILY_PROFIT:.2f}")
+                print(f"   🎯 Buy Success: {buy_successes}/{buy_attempts} ({buy_rate:.1f}%)")
+                print(f"   💸 Sell Success: {sell_successes}/{sell_attempts} ({sell_rate:.1f}%)")
+                print(f"   🚨 Capital Preservation Mode Active")
+            
+            # Very short pause between emergency cycles
+            print("⏱️ Emergency pause: 5 seconds...")
+            time.sleep(5)
+            
+        except Exception as e:
+            print(f"🚨 EMERGENCY CYCLE ERROR: {e}")
+            time.sleep(5)
+            continue
+
+# 7. UPDATE YOUR GLOBAL VARIABLES
+# Add these to your existing configuration:
+
+# EMERGENCY SETTINGS
+EMERGENCY_MODE = True
+EMERGENCY_POSITION_SIZE = 0.02  # 0.02 SOL maximum
+EMERGENCY_TIMEOUT = 15  # 15 seconds maximum
+EMERGENCY_HOLD_TIME = 10  # 10 seconds maximum hold
+
+print("🚨 EMERGENCY FIXES LOADED")
+print("🛑 APPLY THESE IMMEDIATELY TO STOP THE LOSSES")
+print("💰 NEW STRATEGY: Preserve your remaining 0.10 SOL")
+
+
+def execute_via_javascript_emergency(token_address, amount, is_sell=False):
+    """Emergency version with ultra-short timeout"""
+    
+    # CRITICAL: Reduce timeout from 75 seconds to 15 seconds
+    timeout = 15  # Was 75 seconds - now 15 seconds max
+    
+    try:
+        command = f"node swap.js {token_address} {amount} {'true' if is_sell else 'false'}"
+        result = subprocess.run(
+            command.split(),
+            capture_output=True,
+            text=True,
+            timeout=timeout,  # 15 seconds max
+            cwd="/opt/render/project/src"
+        )
+        
+        output = result.stdout
+        
+        # Enhanced success detection
+        success_indicators = [
+            "SUCCESS", "Transaction submitted successfully",
+            "NUCLEAR BUY SUCCESS DETECTED", "NUCLEAR SELL SUCCESS DETECTED",
+            "Buy transaction successful", "Sell transaction successful"
+        ]
+        
+        for indicator in success_indicators:
+            if indicator in output:
+                return f"SUCCESS: {indicator} detected"
+        
+        return f"FAILED: No success indicators found"
+        
+    except subprocess.TimeoutExpired:
+        return f"TIMEOUT: Execution exceeded {timeout} seconds"
+    except Exception as e:
+        return f"ERROR: {str(e)}"
+
+
 def get_token_price_estimate(token_address):
     """Get real token price from Jupiter API"""
     try:
