@@ -961,6 +961,7 @@ def add_token_to_monitoring(token_address, buy_price, amount, signature):
         logging.info(f"📊 Added {token_address[:8]} to monitoring (bought at ${buy_price:.6f})")
     except Exception as e:
         logging.error(f"Error adding token to monitoring: {str(e)}")
+        
 
 def remove_token_from_monitoring(token_address):
     """Remove token from monitoring list."""
@@ -1226,9 +1227,10 @@ def is_likely_rug_pull(token_address):
     except:
         return False  # If check fails, allow trade
 
-def emergency_position_sizing():
-    """Ultra-small positions to stop massive losses"""
-    return 0.02  # Only 0.02 SOL (~$5) per trade instead of 0.160 SOL
+
+def emergency_position_size():
+    """Emergency tiny positions to limit damage"""
+    return 0.01  # Only 0.01 SOL (~$2.40) per trade
 
 
 def emergency_mandatory_sell(token_address, position_size):
@@ -1259,6 +1261,38 @@ def emergency_mandatory_sell(token_address, position_size):
     print("🚨 ALL EMERGENCY SELL ATTEMPTS FAILED - LIKELY RUG PULL")
     return False, "All emergency attempts failed"
 
+
+def emergency_desperate_sell(token_address):
+    """Try every possible way to sell - NO EXCEPTIONS"""
+    
+    original_position = 0.160  # Your current position size
+    
+    # Try selling different amounts
+    sell_attempts = [
+        original_position,      # Full position
+        original_position * 0.9,  # 90%
+        original_position * 0.75, # 75% 
+        original_position * 0.5,  # 50%
+        original_position * 0.25, # 25%
+        original_position * 0.1,  # 10%
+        0.01,                    # Minimum amount
+    ]
+    
+    for i, amount in enumerate(sell_attempts):
+        print(f"🚨 DESPERATE SELL ATTEMPT {i+1}: {amount} SOL")
+        
+        result = execute_via_javascript_EMERGENCY(token_address, amount, is_sell=True)
+        
+        if "SUCCESS" in str(result).upper():
+            print(f"✅ EMERGENCY SELL SUCCESS: {amount} SOL sold")
+            return True, f"Sold {amount} SOL on attempt {i+1}"
+        
+        print(f"❌ Attempt {i+1} failed: {result}")
+        
+        # No pause - try immediately
+    
+    print("🚨 ALL DESPERATE SELL ATTEMPTS FAILED")
+    return False, "Complete sell failure - likely rug pull"
 
 def emergency_capital_preservation_cycle():
     """Emergency trading cycle focused on preserving remaining capital"""
@@ -1405,11 +1439,11 @@ print("🛑 APPLY THESE IMMEDIATELY TO STOP THE LOSSES")
 print("💰 NEW STRATEGY: Preserve your remaining 0.10 SOL")
 
 
-def execute_via_javascript_emergency(token_address, amount, is_sell=False):
-    """Emergency version with ultra-short timeout"""
+def execute_via_javascript_EMERGENCY(token_address, amount, is_sell=False):
+    """EMERGENCY version with 10-second timeout maximum"""
     
-    # CRITICAL: Reduce timeout from 75 seconds to 15 seconds
-    timeout = 15  # Was 75 seconds - now 15 seconds max
+    # CRITICAL: Reduce from 75 seconds to 10 seconds
+    timeout = 10  # Was 75 seconds - now 10 seconds MAXIMUM
     
     try:
         command = f"node swap.js {token_address} {amount} {'true' if is_sell else 'false'}"
@@ -1417,27 +1451,23 @@ def execute_via_javascript_emergency(token_address, amount, is_sell=False):
             command.split(),
             capture_output=True,
             text=True,
-            timeout=timeout,  # 15 seconds max
+            timeout=timeout,  # 10 seconds - NO EXCEPTIONS
             cwd="/opt/render/project/src"
         )
         
         output = result.stdout
         
-        # Enhanced success detection
-        success_indicators = [
-            "SUCCESS", "Transaction submitted successfully",
-            "NUCLEAR BUY SUCCESS DETECTED", "NUCLEAR SELL SUCCESS DETECTED",
-            "Buy transaction successful", "Sell transaction successful"
-        ]
+        # Look for ANY success indicator
+        success_words = ["SUCCESS", "success", "Success", "confirmed", "submitted"]
         
-        for indicator in success_indicators:
-            if indicator in output:
-                return f"SUCCESS: {indicator} detected"
+        for word in success_words:
+            if word in output:
+                return f"SUCCESS: {word} detected in output"
         
-        return f"FAILED: No success indicators found"
+        return f"FAILED: No success indicators in {len(output)} characters"
         
     except subprocess.TimeoutExpired:
-        return f"TIMEOUT: Execution exceeded {timeout} seconds"
+        return f"TIMEOUT: Exceeded {timeout} seconds - EMERGENCY ABORT"
     except Exception as e:
         return f"ERROR: {str(e)}"
 
