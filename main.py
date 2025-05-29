@@ -5171,74 +5171,55 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """Enhanced execution with optimized timeout and nuclear success detection."""
+    """EMERGENCY version with 10-second timeout maximum"""
     try:
-        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.144')
+        import subprocess
+        
+        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.01')  # REDUCED SIZE
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
         
-        print(f"🎯 Executing command: {command}")
+        print(f"🎯 EMERGENCY Executing: {command}")
         
         result = subprocess.run(
             command, 
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=75  # OPTIMIZED: 75 seconds (faster than 90, safer than 60)
+            timeout=10  # CRITICAL: Was 75 seconds, now 10 seconds
         )
         
-        # Get all output
         stdout_output = result.stdout if result.stdout else ""
         stderr_output = result.stderr if result.stderr else ""
         combined_output = stdout_output + stderr_output
         
-        print(f"📤 JavaScript output length: {len(combined_output)} characters")
+        print(f"📤 Output length: {len(combined_output)} characters")
         
-        # ENHANCED SUCCESS DETECTION - More aggressive detection
-        nuclear_success_indicators = [
+        # NUCLEAR SUCCESS DETECTION
+        success_indicators = [
             "SUCCESS" in combined_output,
             "BUY SUCCESS:" in combined_output,
-            "SELL SUCCESS:" in combined_output,  
-            "Transaction submitted successfully" in combined_output,
-            "Found recent transaction - StructError was non-critical" in combined_output,
-            "JavaScript execution successful!" in combined_output,
-            # Additional success indicators
+            "SELL SUCCESS:" in combined_output,
             "confirmed" in combined_output.lower(),
-            "submitted" in combined_output.lower() and "successfully" in combined_output.lower()
+            "submitted" in combined_output.lower()
         ]
         
-        # Extract transaction signatures using re
-        import re
-        transaction_signatures = re.findall(r'[A-Za-z0-9]{87,88}', combined_output)
-        has_valid_signature = len(transaction_signatures) > 0
+        is_successful = any(success_indicators)
         
-        # SUCCESS if ANY nuclear indicator OR valid signature found
-        is_successful = any(nuclear_success_indicators) or has_valid_signature
-        
-        # Extract the most recent transaction signature
-        transaction_signature = None
-        if transaction_signatures:
-            transaction_signature = transaction_signatures[-1]
-        
-        # Enhanced logging
         action = "SELL" if is_sell else "BUY"
         
         if is_successful:
-            print(f"✅ NUCLEAR {action} SUCCESS DETECTED: {token_address}")
-            if transaction_signature:
-                print(f"🔗 Transaction Signature: {transaction_signature}")
-                print(f"🔍 Solscan: https://solscan.io/tx/{transaction_signature}")
+            print(f"✅ EMERGENCY {action} SUCCESS: {token_address}")
             return True, combined_output
         else:
-            print(f"❌ NUCLEAR {action} FAILED: {token_address}")
-            print(f"🔍 Output sample: {combined_output[:200]}...")
+            print(f"❌ EMERGENCY {action} FAILED: {token_address}")
             return False, combined_output
             
     except subprocess.TimeoutExpired:
-        print(f"⏰ TIMEOUT: JavaScript execution exceeded 75 seconds for {token_address}")
-        return False, "Nuclear execution timeout"
+        print(f"⏰ EMERGENCY TIMEOUT: 10 seconds exceeded for {token_address}")
+        return False, "Emergency timeout after 10 seconds"
     except Exception as e:
-        print(f"❌ NUCLEAR EXECUTION ERROR: {e}")
-        return False, f"Nuclear execution error: {str(e)}"
+        print(f"❌ EMERGENCY ERROR: {e}")
+        return False, f"Emergency error: {str(e)}"
 
 def get_token_symbol(token_address):
     """Get symbol for token address, or return None if not found."""
