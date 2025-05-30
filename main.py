@@ -915,6 +915,40 @@ def calculate_hold_time(token_address, entry_time):
     
     return int(hold_time)
 
+def enhanced_profitable_main_loop():
+    """Enhanced main loop for profitable trading"""
+    global daily_profit
+    
+    print("🚀 STARTING PROFITABLE TRADING BOT")
+    print("💰 Fee-aware position sizing + Liquidity filtering active")
+    
+    target_daily = 50.0  # $50 daily target
+    cycle_count = 0
+    
+    while daily_profit < target_daily:
+        cycle_count += 1
+        print(f"\n💰 PROFITABLE CYCLE #{cycle_count} - Target: ${target_daily - daily_profit:.2f} remaining")
+        
+        try:
+            profitable_trading_cycle()
+            
+            # Show performance
+            buy_rate = (buy_successes / buy_attempts * 100) if buy_attempts > 0 else 0
+            sell_rate = (sell_successes / sell_attempts * 100) if sell_attempts > 0 else 0
+            
+            print(f"📊 Performance: Buy {buy_rate:.1f}% | Sell {sell_rate:.1f}% | Profit ${daily_profit:.2f}")
+            
+            time.sleep(15)  # Pause between cycles
+            
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+            break
+        except Exception as e:
+            print(f"❌ Main loop error: {e}")
+            time.sleep(10)
+    
+    print(f"\n🎯 TARGET ACHIEVED! Daily profit: ${daily_profit:.2f}")
+
 def profitable_trading_cycle():
     """Single profitable trading cycle with fee awareness"""
     global buy_attempts, buy_successes, sell_attempts, sell_successes, daily_profit
@@ -7484,44 +7518,36 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point with quick-flip strategy."""
-    logging.info("============ QUICK-FLIP BOT STARTING ============")
-    logging.info("Target: $1,000 daily profit with frequent 20% gains")
+    """Main entry point with profitable fee-aware trading."""
+    logging.info("============ PROFITABLE TRADING BOT STARTING ============")
+    logging.info("💰 Fee-aware position sizing + Smart liquidity filtering")
     
     # Check Solders version at startup
     solders_version = check_solders_version()
     logging.info(f"Solders version: {solders_version}")
     
     if initialize():
-        # Comment out the entire test section to eliminate the test_token error
-        # Quick test to verify JavaScript is working
-        # test_token = "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"  # BONK
-        # test_amount = 0.001  # Very small test amount
+        logging.info("✅ Initialization successful! Starting profitable trading...")
         
-        # logging.info(f"Testing JavaScript transaction with {test_amount} SOL...")
-        # try:
-            # Quick JS test
-            # success, signature = execute_via_javascript(test_token, test_amount)
-            
-            # if success:
-                # logging.info("JavaScript test successful! Starting Quick-Flip trading...")
-                # trading_loop()
-            # else:
-                # logging.error("JavaScript test failed. Cannot start trading.")
-                # logging.error("Please verify JavaScript setup and configuration.")
-        # except Exception as e:
-            # logging.error(f"Error during JavaScript test: {str(e)}")
-            # logging.error(traceback.format_exc())
+        # Show configuration
+        print("\n💰 PROFITABLE TRADING CONFIGURATION:")
+        print(f"   📏 Position Sizing: Dynamic based on balance")
+        print(f"   🔍 Liquidity Filter: ${CONFIG['LIQUIDITY_FILTER']['min_liquidity_usd']:,} minimum")
+        print(f"   ⏰ Hold Time: {CONFIG['HOLD_TIME']['base_hold_seconds']}-{CONFIG['HOLD_TIME']['max_hold_seconds']} seconds")
+        print(f"   🎯 Fee Buffer: {CONFIG['POSITION_SIZING']['fee_buffer']}x coverage")
         
-        # Skip test and go directly to trading
-        logging.info("Initialization successful! Starting Enhanced Quick-Flip trading...")
-        enhanced_main_loop()  # ENHANCED SYSTEM
+        try:
+            # Use the new profitable trading system
+            enhanced_profitable_main_loop()
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+        except Exception as e:
+            logging.error(f"❌ Fatal error in main loop: {e}")
+            logging.error(traceback.format_exc())
     else:
-        logging.error("Failed to initialize bot. Please check configurations.")
+        logging.error("❌ Failed to initialize bot. Please check configurations.")
 
+# Also update the bottom of your file:
 if __name__ == "__main__":
-    # EMERGENCY MODE - Back to proven settings
-    if initialize():
-        trading_loop()  # Original emergency settings that worked
-    else:
-        print("Failed to initialize")
+    # Use the profitable trading system
+    main()
