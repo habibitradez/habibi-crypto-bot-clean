@@ -1385,16 +1385,54 @@ def emergency_desperate_sell(token_address):
 
 
 def emergency_wallet_check():
-    """Check if we need to stop all trading"""
-    # Simulate checking wallet balance (you'll need to implement actual check)
-    current_sol = 0.10  # Your current balance from logs
-    
-    if current_sol <= 0.05:  # If 0.05 SOL or less
-        print("🚨 CRITICAL: WALLET NEARLY EMPTY")
-        print("🛑 STOPPING ALL TRADING TO PRESERVE REMAINING FUNDS")
+    """Enhanced wallet check with multiple safety levels"""
+    try:
+        # Get REAL wallet balance
+        if not CONFIG['SIMULATION_MODE']:
+            current_sol = wallet.get_balance()
+        else:
+            current_sol = 0.1  # Simulation fallback
+        
+        print(f"💰 Wallet Balance Check: {current_sol:.4f} SOL (${current_sol * 240:.2f})")
+        
+        # CRITICAL LEVEL - Stop all trading
+        if current_sol <= 0.05:
+            print("🚨 CRITICAL: WALLET NEARLY EMPTY")
+            print("🛑 STOPPING ALL TRADING TO PRESERVE REMAINING FUNDS")
+            return True  # Return True = STOP TRADING
+        
+        # WARNING LEVEL - Reduce position sizes
+        elif current_sol <= 0.1:
+            print("⚠️ WARNING: Low balance detected")
+            print("🔧 REDUCING position sizes to preserve capital")
+            
+            # Dynamically reduce position size based on balance
+            if current_sol > 0.08:
+                new_size = '0.008'
+            elif current_sol > 0.06:
+                new_size = '0.005'
+            else:
+                new_size = '0.003'
+            
+            os.environ['TRADE_AMOUNT_SOL'] = new_size
+            print(f"📏 Position size reduced to {new_size} SOL")
+            return False  # Continue trading with smaller positions
+        
+        # CAUTION LEVEL - Monitor closely
+        elif current_sol <= 0.2:
+            print("🟡 CAUTION: Balance getting low, monitoring closely")
+            # Keep current position size but warn
+            return False  # Continue trading normally
+        
+        # HEALTHY LEVEL - Normal operation
+        else:
+            print("✅ HEALTHY: Sufficient balance for normal operations")
+            return False  # Continue trading normally
+            
+    except Exception as e:
+        print(f"⚠️ Balance check error: {e}")
+        # On error, be conservative and stop trading
         return True
-    
-    return False
     
 
 
@@ -1430,6 +1468,18 @@ def execute_via_javascript_EMERGENCY(token_address, amount, is_sell=False):
     except Exception as e:
         return f"ERROR: {str(e)}"
 
+
+def get_safe_position_size(balance):
+    """Calculate position size that accounts for fees"""
+    
+    if balance > 0.3:
+        return 0.025  # Normal scaling
+    elif balance > 0.2:
+        return 0.015  # Conservative  
+    elif balance > 0.1:
+        return 0.01   # Emergency proven size
+    else:
+        return 0.005  # Ultra-safe
 
 def get_token_price_estimate(token_address):
     """Get real token price from Jupiter API"""
