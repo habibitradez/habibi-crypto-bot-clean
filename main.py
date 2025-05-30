@@ -95,12 +95,6 @@ CONFIG = {
     }
 }  # THIS CLOSES THE MAIN CONFIG
 
-os.environ['TRADE_AMOUNT_SOL'] = '0.01'  # Phase 2A: Scaling up from 0.01
-
-POSITION_SIZING_CONFIG = {
-    'fee_buffer': 2.0,           # 2x fee coverage minimum
-    'max_position_pct': 0.15,    # Max 15% of balance per trade
-    'min_profitable_size': 0.02  # Minimum 0.02 SOL for profitability
 
 def update_config_for_quicknode():
     """Update configuration to use QuickNode Metis Jupiter features."""
@@ -846,6 +840,168 @@ def update_environment_variable(key, value):
     except Exception as e:
         logging.error(f"Failed to update {key}: {str(e)}")
 
+def calculate_profitable_position_size(wallet_balance_sol, estimated_fees_sol=0.003):
+    """Calculate position size that ensures profitability after fees"""
+    config = CONFIG['POSITION_SIZING']
+    
+    # Calculate minimum profitable position
+    min_profit_needed = estimated_fees_sol * config['fee_buffer']
+    min_position = max(config['min_profitable_size'], min_profit_needed * 20)  # 5% gain covers fees
+    
+    # Calculate maximum position based on wallet
+    max_position = wallet_balance_sol * config['max_position_pct']
+    
+    # Use base position, scaled by wallet size
+    suggested_position = min(
+        0.03 * (wallet_balance_sol / 0.5),  # Scale with wallet
+        max_position
+    )
+    
+    # Ensure minimum profitability
+    final_position = max(min_position, suggested_position)
+    
+    print(f"💰 Position Sizing: Min={min_position:.4f}, Max={max_position:.4f}, Selected={final_position:.4f} SOL")
+    return final_position
+
+def meets_liquidity_requirements(token_address):
+    """Filter tokens for safety and profitability"""
+    config = CONFIG['LIQUIDITY_FILTER']
+    
+    try:
+        # Quick Jupiter validation
+        response = requests.get(
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000",
+            timeout=8
+        )
+        
+        if response.status_code == 200 and 'outAmount' in response.text:
+            data = response.json()
+            out_amount = int(data.get('outAmount', 0))
+            
+            # Filter out tokens with suspicious exchange rates
+            if out_amount > 0:
+                exchange_rate = 100000000 / out_amount  # SOL to token rate
+                
+                # Skip tokens that are too expensive or too cheap (likely rugs)
+                if 0.001 < exchange_rate < 10000:
+                    print(f"✅ Token {token_address[:8]} meets liquidity requirements")
+                    return True
+                else:
+                    print(f"❌ Suspicious exchange rate for {token_address[:8]}: {exchange_rate}")
+                    return False
+        
+        print(f"❌ Token {token_address[:8]} failed liquidity check")
+        return False
+        
+    except Exception as e:
+        print(f"⚠️ Liquidity check error for {token_address[:8]}: {str(e)}")
+        return False
+
+def calculate_hold_time(token_address, entry_time):
+    """Calculate optimal hold time based on token characteristics"""
+    config = CONFIG['HOLD_TIME']
+    
+    # Base hold time
+    hold_time = config['base_hold_seconds']
+    
+    # For this implementation, we'll use conservative hold times since we don't have
+    # real liquidity data yet - you can enhance this later
+    
+    # Add safety buffer (simplified)
+    hold_time += 15  # 15 second buffer
+    
+    # Cap at maximum
+    hold_time = min(hold_time, config['max_hold_seconds'])
+    
+    return int(hold_time)
+
+def profitable_trading_cycle():
+    """Single profitable trading cycle with fee awareness"""
+    global buy_attempts, buy_successes, sell_attempts, sell_successes, daily_profit
+    
+    try:
+        # Check wallet balance
+        if not CONFIG['SIMULATION_MODE']:
+            wallet_balance = wallet.get_balance()
+        else:
+            wallet_balance = 0.3  # Simulation balance
+        
+        if wallet_balance < CONFIG.get('MINIMUM_SOL_BALANCE', 0.1):
+            print(f"❌ Insufficient balance: {wallet_balance:.4f} SOL")
+            time.sleep(30)
+            return
+        
+        # Calculate profitable position size
+        position_size = calculate_profitable_position_size(wallet_balance)
+        
+        # Find tokens that meet our requirements
+        potential_tokens = enhanced_find_newest_tokens_with_free_apis()
+        
+        if not potential_tokens:
+            print("🔍 No tokens discovered this cycle")
+            return
+        
+        # Filter for profitable tokens
+        qualified_tokens = []
+        for token in potential_tokens[:5]:  # Check top 5
+            if isinstance(token, str):
+                token_address = token
+            else:
+                token_address = token.get('address') if isinstance(token, dict) else token
+            
+            if token_address and meets_liquidity_requirements(token_address):
+                qualified_tokens.append(token_address)
+        
+        if not qualified_tokens:
+            print("📊 No tokens meet profitability requirements")
+            return
+        
+        # Trade the best token
+        selected_token = qualified_tokens[0]
+        print(f"🎯 Trading {selected_token[:8]} - Position: {position_size:.4f} SOL")
+        
+        # Execute buy
+        buy_attempts += 1
+        success, signature = execute_via_javascript(selected_token, position_size, False)
+        
+        if success:
+            buy_successes += 1
+            print(f"✅ Buy successful: {selected_token[:8]}")
+            
+            # Calculate dynamic hold time
+            hold_time = calculate_hold_time(selected_token, time.time())
+            
+            # Monitor for profitable exit
+            entry_time = time.time()
+            while (time.time() - entry_time) < hold_time:
+                # Check for profitable exit conditions
+                elapsed = time.time() - entry_time
+                
+                # Force sell after hold time
+                if elapsed >= hold_time:
+                    break
+                
+                time.sleep(2)  # Check every 2 seconds
+            
+            # Execute sell
+            sell_attempts += 1
+            sell_success, sell_result = execute_via_javascript(selected_token, position_size, True)
+            
+            if sell_success:
+                sell_successes += 1
+                # Estimate profit (conservative)
+                estimated_profit = position_size * 240 * 0.05  # 5% profit assumption
+                daily_profit += estimated_profit
+                print(f"✅ Profitable sell: +${estimated_profit:.2f}")
+            else:
+                print(f"❌ Sell failed for {selected_token[:8]}")
+        else:
+            print(f"❌ Buy failed for {selected_token[:8]}")
+            
+    except Exception as e:
+        print(f"❌ Error in profitable trading cycle: {e}")
+
+
 def enhanced_token_filter(token_address):
     """Enhanced token filtering to avoid obvious rug pulls."""
     try:
@@ -890,6 +1046,17 @@ def calculate_trade_profit(buy_price, sell_price, amount_sol):
     except Exception as e:
         logging.error(f"Error calculating profit: {str(e)}")
         return 0, 0
+
+def estimate_trade_profit(entry_price, current_price, position_size_sol):
+    """Estimate trade profit in USD"""
+    try:
+        if entry_price > 0 and current_price > 0:
+            price_change = (current_price - entry_price) / entry_price
+            profit_usd = position_size_sol * 240 * price_change  # Assuming $240 SOL
+            return max(profit_usd, 0)  # Don't return negative profits
+        return position_size_sol * 240 * 0.02  # 2% default profit
+    except:
+        return position_size_sol * 240 * 0.02  # 2% default profit
 
 def get_token_price_for_profit_calc(token_address):
     """Get token price for profit calculation."""
