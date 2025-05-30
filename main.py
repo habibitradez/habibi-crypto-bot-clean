@@ -72,7 +72,7 @@ CONFIG = {
     'ZERO_BALANCE_TOKEN_CACHE': {},
     'ZERO_BALANCE_CACHE_EXPIRY': int(os.environ.get('ZERO_BALANCE_CACHE_EXPIRY', '3600'))
 }
-os.environ['TRADE_AMOUNT_SOL'] = '0.025'  # Phase 2A: Scaling up from 0.01
+os.environ['TRADE_AMOUNT_SOL'] = '0.01'  # Phase 2A: Scaling up from 0.01
 
 DAILY_PROFIT_TARGET = 1000  # $1000 daily target per bot
 CURRENT_DAILY_PROFIT = 0    # Current daily profit tracker
@@ -5826,11 +5826,16 @@ def phase_2a_trading_loop():
     
     while daily_profit < daily_target:
         cycle_count += 1
-        
+    
         print(f"\n💰 SCALING CYCLE #{cycle_count} - Target: ${daily_target - daily_profit:.2f} remaining")
-        
+    
         try:
-            # Check wallet balance first
+            # EMERGENCY WALLET CHECK - NEW!
+            if emergency_wallet_check():
+                print("🛑 Emergency wallet check triggered - stopping bot")
+                break  # Exit the trading loop
+        
+            # Additional balance info (optional)
             if not CONFIG.get('SIMULATION_MODE', False):
                 try:
                     balance = wallet.get_balance()
@@ -7001,8 +7006,8 @@ def main():
         logging.error("Failed to initialize bot. Please check configurations.")
 
 if __name__ == "__main__":
-    # PHASE 2A MODE - Scale to $50/day
+    # EMERGENCY MODE - Back to proven settings
     if initialize():
-        phase_2a_trading_loop()
+        trading_loop()  # Original emergency settings that worked
     else:
         print("Failed to initialize")
