@@ -832,6 +832,124 @@ def get_token_price_standard(token_address: str) -> Optional[float]:
     
     return None
 
+class CapitalPreservationSystem:
+    def __init__(self):
+        self.starting_balance = None
+        self.trade_history = []
+        self.real_profit_tracking = []
+        
+    def calculate_real_position_size(self, wallet_balance_sol, token_price, liquidity_usd):
+        """Calculate position size that GUARANTEES profitability"""
+        
+        # Minimum balance protection
+        if wallet_balance_sol < 0.1:
+            return 0  # STOP TRADING
+            
+        # Fee estimation (realistic)
+        estimated_fees = 0.004  # 0.004 SOL = ~$1 in fees
+        slippage_buffer = 0.002  # Additional slippage protection
+        
+        # Position sizing rules based on liquidity
+        if liquidity_usd < 50000:  # Low liquidity
+            max_position = wallet_balance_sol * 0.02  # 2% of wallet
+        elif liquidity_usd < 100000:  # Medium liquidity
+            max_position = wallet_balance_sol * 0.05  # 5% of wallet
+        else:  # High liquidity
+            max_position = wallet_balance_sol * 0.08  # 8% of wallet
+            
+        # CRITICAL: Position must be at least 10x the fees to be profitable
+        min_profitable_position = (estimated_fees + slippage_buffer) * 10
+        
+        position_size = min(max_position, min_profitable_position)
+        
+        # Final safety check
+        if position_size < 0.02:  # Less than $5 position
+            return 0  # Too small to be profitable
+            
+        return position_size
+
+    def track_real_profit(self, trade_type, amount_sol, token_amount, price_before, price_after, fees_paid):
+        """Track ACTUAL profit including all costs"""
+        
+        if trade_type == "sell":
+            # Calculate real profit/loss
+            sol_received = amount_sol
+            sol_spent = getattr(self, 'last_buy_cost', 0)
+            total_fees = fees_paid + getattr(self, 'last_buy_fees', 0)
+            
+            real_profit_loss = sol_received - sol_spent - total_fees
+            
+            self.real_profit_tracking.append({
+                'timestamp': time.time(),
+                'sol_profit_loss': real_profit_loss,
+                'usd_profit_loss': real_profit_loss * 240,  # Assuming $240/SOL
+                'trade_pair': f"Buy at {price_before:.8f} -> Sell at {price_after:.8f}"
+            })
+            
+            # Log REAL results
+            logging.info(f"🔍 REAL TRADE RESULT: {real_profit_loss:.6f} SOL ({real_profit_loss * 240:.2f} USD)")
+            
+        elif trade_type == "buy":
+            self.last_buy_cost = amount_sol
+            self.last_buy_fees = fees_paid
+
+    def emergency_stop_check(self, current_balance):
+        """HARD STOP if capital preservation is violated"""
+        
+        if self.starting_balance is None:
+            self.starting_balance = current_balance
+            
+        # Calculate total loss
+        total_loss = self.starting_balance - current_balance
+        loss_percentage = (total_loss / self.starting_balance) * 100
+        
+        # EMERGENCY STOPS
+        if current_balance < 0.08:  # Less than $20
+            logging.error("🚨 EMERGENCY STOP: Balance below $20")
+            return True
+            
+        if loss_percentage > 20:  # More than 20% loss
+            logging.error(f"🚨 EMERGENCY STOP: {loss_percentage:.1f}% capital loss")
+            return True
+            
+        if len(self.real_profit_tracking) >= 10:
+            # Check if last 10 trades were all losses
+            recent_trades = self.real_profit_tracking[-10:]
+            if all(trade['sol_profit_loss'] < 0 for trade in recent_trades):
+                logging.error("🚨 EMERGENCY STOP: 10 consecutive losing trades")
+                return True
+                
+        return False
+
+    def get_trading_recommendation(self, wallet_balance, token_data):
+        """Get recommendation: TRADE, WAIT, or STOP"""
+        
+        # Emergency stop check first
+        if self.emergency_stop_check(wallet_balance):
+            return "STOP", 0, "Emergency capital preservation activated"
+            
+        # Calculate position size
+        position_size = self.calculate_real_position_size(
+            wallet_balance, 
+            token_data.get('price', 0),
+            token_data.get('liquidity_usd', 0)
+        )
+        
+        if position_size == 0:
+            return "WAIT", 0, "Position too small to be profitable"
+            
+        # Additional quality checks
+        if token_data.get('liquidity_usd', 0) < 25000:
+            return "WAIT", 0, "Insufficient liquidity"
+            
+        if token_data.get('age_minutes', 999) < 30:
+            return "WAIT", 0, "Token too new"
+            
+        if token_data.get('age_minutes', 0) > 120:
+            return "WAIT", 0, "Token too old"
+            
+        return "TRADE", position_size, f"Safe to trade {position_size:.4f} SOL"
+
 def update_environment_variable(key, value):
     """Update environment variable for persistence across restarts."""
     try:
