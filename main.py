@@ -1033,39 +1033,53 @@ def calculate_hold_time(token_address, entry_time):
     
     return int(hold_time)
 
-def enhanced_profitable_main_loop():
-    """Enhanced main loop for profitable trading"""
-    global daily_profit
+def enhanced_profitable_trading_loop():
+    """The FINAL profitable trading loop with capital preservation"""
     
-    print("🚀 STARTING PROFITABLE TRADING BOT")
-    print("💰 Fee-aware position sizing + Liquidity filtering active")
+    capital_system = CapitalPreservationSystem()
+    consecutive_no_trades = 0
     
-    target_daily = 50.0  # $50 daily target
-    cycle_count = 0
-    
-    while daily_profit < target_daily:
-        cycle_count += 1
-        print(f"\n💰 PROFITABLE CYCLE #{cycle_count} - Target: ${target_daily - daily_profit:.2f} remaining")
-        
+    while True:
         try:
-            profitable_trading_cycle()
+            # Get current balance
+            current_balance = get_wallet_balance()
             
-            # Show performance
-            buy_rate = (buy_successes / buy_attempts * 100) if buy_attempts > 0 else 0
-            sell_rate = (sell_successes / sell_attempts * 100) if sell_attempts > 0 else 0
+            # Get token discovery
+            tokens = discover_new_tokens()
             
-            print(f"📊 Performance: Buy {buy_rate:.1f}% | Sell {sell_rate:.1f}% | Profit ${daily_profit:.2f}")
+            for token in tokens:
+                # Get trading recommendation
+                action, position_size, reason = capital_system.get_trading_recommendation(
+                    current_balance, token
+                )
+                
+                logging.info(f"🎯 Token {token['symbol']}: {action} - {reason}")
+                
+                if action == "STOP":
+                    logging.error("🚨 TRADING STOPPED FOR CAPITAL PRESERVATION")
+                    return
+                    
+                elif action == "TRADE":
+                    # Execute the trade with REAL profit tracking
+                    success = execute_profitable_trade(token, position_size, capital_system)
+                    if success:
+                        consecutive_no_trades = 0
+                        time.sleep(10)  # Brief pause after successful trade
+                        break
+                        
+            # If no trades executed
+            consecutive_no_trades += 1
+            if consecutive_no_trades > 100:  # If no trades for 100 cycles
+                logging.warning("⏰ No profitable opportunities found in 100 cycles")
+                time.sleep(60)  # Wait 1 minute before trying again
+                consecutive_no_trades = 0
+                
+            time.sleep(3)  # Standard loop delay
             
-            time.sleep(15)  # Pause between cycles
-            
-        except KeyboardInterrupt:
-            print("\n🛑 Bot stopped by user")
-            break
         except Exception as e:
-            print(f"❌ Main loop error: {e}")
+            logging.error(f"❌ Trading loop error: {e}")
             time.sleep(10)
-    
-    print(f"\n🎯 TARGET ACHIEVED! Daily profit: ${daily_profit:.2f}")
+
 
 def profitable_trading_cycle():
     """Single profitable trading cycle with fee awareness"""
