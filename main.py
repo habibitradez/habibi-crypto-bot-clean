@@ -93,6 +93,14 @@ CONFIG = {
     'max_hold_seconds': 120,
     'safety_multiplier': 0.1
     }
+
+    CAPITAL_PRESERVATION_CONFIG = {
+    'MIN_POSITION_SIZE': 0.02,
+    'MAX_LOSS_PERCENTAGE': 20,
+    'MIN_BALANCE_SOL': 0.08,
+    'POSITION_MULTIPLIER': 10,
+    'EMERGENCY_STOP_ENABLED': True
+}
 }  # THIS CLOSES THE MAIN CONFIG
 
 
@@ -1080,6 +1088,70 @@ def enhanced_profitable_trading_loop():
             logging.error(f"❌ Trading loop error: {e}")
             time.sleep(10)
 
+def execute_profitable_trade(token_data, position_size_sol, capital_system):
+    """Execute trade with REAL profit tracking"""
+    
+    try:
+        # BUY PHASE
+        logging.info(f"🛒 BUYING {position_size_sol:.4f} SOL of {token_data['symbol']}")
+        
+        buy_result = execute_buy_order(token_data['mint'], position_size_sol)
+        if not buy_result['success']:
+            return False
+            
+        buy_fees = buy_result.get('fees_paid', 0.002)
+        tokens_received = buy_result['tokens_received']
+        
+        # Track buy
+        capital_system.track_real_profit("buy", position_size_sol, tokens_received, 
+                                       token_data['price'], token_data['price'], buy_fees)
+        
+        # HOLD PHASE with dynamic timing
+        hold_time = calculate_optimal_hold_time(token_data)
+        logging.info(f"⏱️ Holding for {hold_time} seconds")
+        time.sleep(hold_time)
+        
+        # SELL PHASE
+        logging.info(f"💰 SELLING {tokens_received} tokens")
+        
+        sell_result = execute_sell_order(token_data['mint'], tokens_received)
+        if not sell_result['success']:
+            logging.error("❌ Sell failed - tokens might be stuck")
+            return False
+            
+        sell_fees = sell_result.get('fees_paid', 0.002)
+        sol_received = sell_result['sol_received']
+        
+        # Track REAL profit
+        capital_system.track_real_profit("sell", sol_received, tokens_received,
+                                       token_data['price'], sell_result['exit_price'], sell_fees)
+        
+        logging.info(f"✅ Trade completed: {position_size_sol:.4f} SOL -> {sol_received:.4f} SOL")
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ Trade execution failed: {e}")
+        return False
+
+def calculate_optimal_hold_time(token_data):
+    """Calculate hold time based on token safety"""
+    
+    liquidity = token_data.get('liquidity_usd', 0)
+    age_minutes = token_data.get('age_minutes', 0)
+    
+    # Base hold time
+    if liquidity > 100000:  # High liquidity
+        base_time = 45  # Hold longer for safer tokens
+    elif liquidity > 50000:  # Medium liquidity
+        base_time = 30
+    else:  # Lower liquidity
+        base_time = 15  # Quick exit
+        
+    # Age factor
+    if age_minutes < 60:
+        base_time *= 0.8  # Shorter hold for newer tokens
+        
+    return int(base_time)
 
 def profitable_trading_cycle():
     """Single profitable trading cycle with fee awareness"""
