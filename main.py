@@ -93,16 +93,15 @@ CONFIG = {
     'max_hold_seconds': 120,
     'safety_multiplier': 0.1
     }
+}  # THIS CLOSES THE MAIN CONFIG
 
-    CAPITAL_PRESERVATION_CONFIG = {
+ CAPITAL_PRESERVATION_CONFIG = {
     'MIN_POSITION_SIZE': 0.02,
     'MAX_LOSS_PERCENTAGE': 20,
     'MIN_BALANCE_SOL': 0.08,
     'POSITION_MULTIPLIER': 10,
     'EMERGENCY_STOP_ENABLED': True
 }
-}  # THIS CLOSES THE MAIN CONFIG
-
 
 def update_config_for_quicknode():
     """Update configuration to use QuickNode Metis Jupiter features."""
