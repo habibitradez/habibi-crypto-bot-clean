@@ -7650,26 +7650,15 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point with profitable fee-aware trading."""
-    logging.info("============ PROFITABLE TRADING BOT STARTING ============")
-    logging.info("💰 Fee-aware position sizing + Smart liquidity filtering")
-    
-    # Check Solders version at startup
-    solders_version = check_solders_version()
-    logging.info(f"Solders version: {solders_version}")
+    """Main entry point with capital preservation trading."""
+    logging.info("============ CAPITAL PRESERVATION BOT STARTING ============")
+    logging.info("💰 Real profit tracking + Emergency stops active")
     
     if initialize():
-        logging.info("✅ Initialization successful! Starting profitable trading...")
-        
-        # Show configuration
-        print("\n💰 PROFITABLE TRADING CONFIGURATION:")
-        print(f"   📏 Position Sizing: Dynamic based on balance")
-        print(f"   🔍 Liquidity Filter: ${CONFIG['LIQUIDITY_FILTER']['min_liquidity_usd']:,} minimum")
-        print(f"   ⏰ Hold Time: {CONFIG['HOLD_TIME']['base_hold_seconds']}-{CONFIG['HOLD_TIME']['max_hold_seconds']} seconds")
-        print(f"   🎯 Fee Buffer: {CONFIG['POSITION_SIZING']['fee_buffer']}x coverage")
+        logging.info("✅ Initialization successful! Starting capital preservation trading...")
         
         try:
-            # Use the new profitable trading system
+            # Use the capital preservation system
             enhanced_profitable_main_loop()
         except KeyboardInterrupt:
             print("\n🛑 Bot stopped by user")
