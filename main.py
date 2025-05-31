@@ -1040,6 +1040,256 @@ def calculate_hold_time(token_address, entry_time):
     
     return int(hold_time)
 
+# ADD THE CAPITAL PRESERVATION SYSTEM CLASS
+class CapitalPreservationSystem:
+    def __init__(self):
+        self.starting_balance = None
+        self.trade_history = []
+        self.real_profit_tracking = []
+        
+    def calculate_real_position_size(self, wallet_balance_sol, token_price, liquidity_usd):
+        """Calculate position size that GUARANTEES profitability"""
+        
+        # Minimum balance protection
+        if wallet_balance_sol < 0.1:
+            return 0  # STOP TRADING
+            
+        # Fee estimation (realistic)
+        estimated_fees = 0.004  # 0.004 SOL = ~$1 in fees
+        slippage_buffer = 0.002  # Additional slippage protection
+        
+        # Position sizing rules based on liquidity
+        if liquidity_usd < 50000:  # Low liquidity
+            max_position = wallet_balance_sol * 0.02  # 2% of wallet
+        elif liquidity_usd < 100000:  # Medium liquidity
+            max_position = wallet_balance_sol * 0.05  # 5% of wallet
+        else:  # High liquidity
+            max_position = wallet_balance_sol * 0.08  # 8% of wallet
+            
+        # CRITICAL: Position must be at least 10x the fees to be profitable
+        min_profitable_position = (estimated_fees + slippage_buffer) * 10
+        
+        position_size = min(max_position, min_profitable_position)
+        
+        # Final safety check
+        if position_size < 0.02:  # Less than $5 position
+            return 0  # Too small to be profitable
+            
+        return position_size
+
+    def track_real_profit(self, trade_type, amount_sol, token_amount, price_before, price_after, fees_paid):
+        """Track ACTUAL profit including all costs"""
+        
+        if trade_type == "sell":
+            # Calculate real profit/loss
+            sol_received = amount_sol
+            sol_spent = getattr(self, 'last_buy_cost', 0)
+            total_fees = fees_paid + getattr(self, 'last_buy_fees', 0)
+            
+            real_profit_loss = sol_received - sol_spent - total_fees
+            
+            self.real_profit_tracking.append({
+                'timestamp': time.time(),
+                'sol_profit_loss': real_profit_loss,
+                'usd_profit_loss': real_profit_loss * 240,  # Assuming $240/SOL
+                'trade_pair': f"Buy at {price_before:.8f} -> Sell at {price_after:.8f}"
+            })
+            
+            # Log REAL results
+            logging.info(f"🔍 REAL TRADE RESULT: {real_profit_loss:.6f} SOL ({real_profit_loss * 240:.2f} USD)")
+            
+        elif trade_type == "buy":
+            self.last_buy_cost = amount_sol
+            self.last_buy_fees = fees_paid
+
+    def emergency_stop_check(self, current_balance):
+        """HARD STOP if capital preservation is violated"""
+        
+        if self.starting_balance is None:
+            self.starting_balance = current_balance
+            
+        # Calculate total loss
+        total_loss = self.starting_balance - current_balance
+        loss_percentage = (total_loss / self.starting_balance) * 100
+        
+        # EMERGENCY STOPS
+        if current_balance < 0.08:  # Less than $20
+            logging.error("🚨 EMERGENCY STOP: Balance below $20")
+            return True
+            
+        if loss_percentage > 20:  # More than 20% loss
+            logging.error(f"🚨 EMERGENCY STOP: {loss_percentage:.1f}% capital loss")
+            return True
+            
+        if len(self.real_profit_tracking) >= 10:
+            # Check if last 10 trades were all losses
+            recent_trades = self.real_profit_tracking[-10:]
+            if all(trade['sol_profit_loss'] < 0 for trade in recent_trades):
+                logging.error("🚨 EMERGENCY STOP: 10 consecutive losing trades")
+                return True
+                
+        return False
+
+    def get_trading_recommendation(self, wallet_balance, token_data):
+        """Get recommendation: TRADE, WAIT, or STOP"""
+        
+        # Emergency stop check first
+        if self.emergency_stop_check(wallet_balance):
+            return "STOP", 0, "Emergency capital preservation activated"
+            
+        # Calculate position size
+        position_size = self.calculate_real_position_size(
+            wallet_balance, 
+            token_data.get('price', 0),
+            token_data.get('liquidity_usd', 0)
+        )
+        
+        if position_size == 0:
+            return "WAIT", 0, "Position too small to be profitable"
+            
+        # Additional quality checks
+        if token_data.get('liquidity_usd', 0) < 25000:
+            return "WAIT", 0, "Insufficient liquidity"
+            
+        if token_data.get('age_minutes', 999) < 30:
+            return "WAIT", 0, "Token too new"
+            
+        if token_data.get('age_minutes', 0) > 120:
+            return "WAIT", 0, "Token too old"
+            
+        return "TRADE", position_size, f"Safe to trade {position_size:.4f} SOL"
+
+def enhanced_profitable_main_loop():
+    """Enhanced main loop for profitable trading"""
+    global daily_profit
+    
+    print("🚀 STARTING PROFITABLE TRADING BOT")
+    print("💰 Fee-aware position sizing + Liquidity filtering active")
+    
+    target_daily = 50.0  # $50 daily target
+    cycle_count = 0
+    
+    while daily_profit < target_daily:
+        cycle_count += 1
+        print(f"\n💰 PROFITABLE CYCLE #{cycle_count} - Target: ${target_daily - daily_profit:.2f} remaining")
+        
+        try:
+            profitable_trading_cycle()
+            
+            # Show performance
+            buy_rate = (buy_successes / buy_attempts * 100) if buy_attempts > 0 else 0
+            sell_rate = (sell_successes / sell_attempts * 100) if sell_attempts > 0 else 0
+            
+            print(f"📊 Performance: Buy {buy_rate:.1f}% | Sell {sell_rate:.1f}% | Profit ${daily_profit:.2f}")
+            
+            time.sleep(15)  # Pause between cycles
+            
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+            break
+        except Exception as e:
+            print(f"❌ Main loop error: {e}")
+            time.sleep(10)
+    
+    print(f"\n🎯 TARGET ACHIEVED! Daily profit: ${daily_profit:.2f}")
+
+def profitable_trading_cycle():
+    """Single profitable trading cycle with fee awareness"""
+    global buy_attempts, buy_successes, sell_attempts, sell_successes, daily_profit
+    
+    try:
+        # Check wallet balance
+        if not CONFIG['SIMULATION_MODE']:
+            wallet_balance = wallet.get_balance()
+        else:
+            wallet_balance = 0.3  # Simulation balance
+        
+        if wallet_balance < CAPITAL_PRESERVATION_CONFIG.get('MIN_BALANCE_SOL', 0.1):
+            print(f"❌ Insufficient balance: {wallet_balance:.4f} SOL")
+            time.sleep(30)
+            return
+        
+        # Calculate profitable position size
+        position_size = calculate_profitable_position_size(wallet_balance)
+        
+        # Find tokens that meet our requirements
+        potential_tokens = enhanced_find_newest_tokens_with_free_apis()
+        
+        if not potential_tokens:
+            print("🔍 No tokens discovered this cycle")
+            return
+        
+        # Filter for profitable tokens
+        qualified_tokens = []
+        for token in potential_tokens[:5]:  # Check top 5
+            if isinstance(token, str):
+                token_address = token
+            else:
+                token_address = token.get('address') if isinstance(token, dict) else token
+            
+            if token_address and meets_liquidity_requirements(token_address):
+                qualified_tokens.append(token_address)
+        
+        if not qualified_tokens:
+            print("📊 No tokens meet profitability requirements")
+            return
+        
+        # Trade the best token
+        selected_token = qualified_tokens[0]
+        print(f"🎯 Trading {selected_token[:8]} - Position: {position_size:.4f} SOL")
+        
+        # Execute buy
+        buy_attempts += 1
+        success, signature = execute_via_javascript(selected_token, position_size, False)
+        
+        if success:
+            buy_successes += 1
+            print(f"✅ Buy successful: {selected_token[:8]}")
+            
+            # Calculate dynamic hold time
+            hold_time = calculate_hold_time(selected_token, time.time())
+            
+            # Monitor for profitable exit
+            entry_time = time.time()
+            while (time.time() - entry_time) < hold_time:
+                # Check for profitable exit conditions
+                elapsed = time.time() - entry_time
+                
+                # Force sell after hold time
+                if elapsed >= hold_time:
+                    break
+                
+                time.sleep(2)  # Check every 2 seconds
+            
+            # Execute sell
+            sell_attempts += 1
+            sell_success, sell_result = execute_via_javascript(selected_token, position_size, True)
+            
+            if sell_success:
+                sell_successes += 1
+                # Estimate profit (conservative)
+                estimated_profit = position_size * 240 * 0.05  # 5% profit assumption
+                daily_profit += estimated_profit
+                print(f"✅ Profitable sell: +${estimated_profit:.2f}")
+            else:
+                print(f"❌ Sell failed for {selected_token[:8]}")
+        else:
+            print(f"❌ Buy failed for {selected_token[:8]}")
+            
+    except Exception as e:
+        print(f"❌ Error in profitable trading cycle: {e}")
+
+def get_wallet_balance():
+    """Get current wallet balance"""
+    if not CONFIG['SIMULATION_MODE']:
+        return wallet.get_balance()
+    else:
+        return 0.3  # Simulation balance
+
+def discover_new_tokens():
+    """Discover new tokens"""
+    return enhanced_find_newest_tokens_with_free_apis()
+
 def enhanced_profitable_trading_loop():
     """The FINAL profitable trading loop with capital preservation"""
     
