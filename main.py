@@ -672,6 +672,27 @@ def get_token_price(token_address: str) -> Optional[float]:
     return get_token_price_fallback(token_address)
 
 
+def get_wallet_balance_sol():
+    """Get current wallet SOL balance"""
+    try:
+        # Use your existing wallet balance checking method
+        # Look for a function in your code that checks wallet balance
+        # It might be called check_wallet_balance() or get_balance() or similar
+        
+        # If you have an existing balance function, use it:
+        balance = check_wallet_balance()  # Replace with your actual function name
+        return float(balance)
+        
+        # OR if you don't have one, use this RPC call:
+        # wallet_address = "your_wallet_address_here"
+        # response = make_rpc_call("getBalance", [wallet_address])
+        # return response['result']['value'] / 1_000_000_000  # Convert lamports to SOL
+        
+    except Exception as e:
+        logging.error(f"Error getting wallet balance: {e}")
+        return 1.0  # Return 1.0 SOL as fallback to keep trading
+
+
 def get_token_price_standard(token_address: str) -> Optional[float]:
     """Standard method for getting token price - your original implementation."""
     # Check cache first if it's recent (less than 30 seconds old)
