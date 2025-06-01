@@ -1020,37 +1020,68 @@ def calculate_profitable_position_size(wallet_balance_sol, estimated_fees_sol=0.
     return final_position
 
 def meets_liquidity_requirements(token_address):
-    """Filter tokens for safety and profitability"""
-    config = CONFIG['LIQUIDITY_FILTER']
+    """Enhanced anti-rug protection with multiple safety layers"""
     
     try:
-        # Quick Jupiter validation
+        logging.info(f"🛡️ Anti-rug check for {token_address[:8]}...")
+        
+        # LAYER 1: Jupiter tradability
         response = requests.get(
-            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000",
+            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000&slippageBps=300",
             timeout=8
         )
         
-        if response.status_code == 200 and 'outAmount' in response.text:
-            data = response.json()
-            out_amount = int(data.get('outAmount', 0))
+        if response.status_code != 200:
+            logging.warning(f"🚨 Jupiter failed for {token_address[:8]}")
+            return False
             
-            # Filter out tokens with suspicious exchange rates
-            if out_amount > 0:
-                exchange_rate = 100000000 / out_amount  # SOL to token rate
-                
-                # Skip tokens that are too expensive or too cheap (likely rugs)
-                if 0.001 < exchange_rate < 10000:
-                    print(f"✅ Token {token_address[:8]} meets liquidity requirements")
-                    return True
-                else:
-                    print(f"❌ Suspicious exchange rate for {token_address[:8]}: {exchange_rate}")
-                    return False
+        data = response.json()
+        if not data.get('outAmount') or int(data.get('outAmount', 0)) <= 0:
+            logging.warning(f"🚨 No Jupiter quote for {token_address[:8]}")
+            return False
+            
+        # Check for suspicious exchange rates
+        out_amount = int(data['outAmount'])
+        exchange_rate = 100000000 / out_amount
+        if exchange_rate < 0.001 or exchange_rate > 10000:
+            logging.warning(f"🚨 Suspicious rate for {token_address[:8]}: {exchange_rate}")
+            return False
         
-        print(f"❌ Token {token_address[:8]} failed liquidity check")
-        return False
+        # LAYER 2: DexScreener verification
+        try:
+            dex_response = requests.get(
+                f"https://api.dexscreener.com/latest/dex/tokens/{token_address}",
+                timeout=10
+            )
+            
+            if dex_response.status_code == 200:
+                dex_data = dex_response.json()
+                pairs = dex_data.get('pairs', [])
+                
+                if pairs:
+                    pair = pairs[0]
+                    liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
+                    volume_24h = float(pair.get('volume', {}).get('h24', 0))
+                    
+                    # Enhanced requirements
+                    if liquidity_usd < 50000:
+                        logging.warning(f"🚨 Low liquidity: ${liquidity_usd:,.0f}")
+                        return False
+                    if volume_24h < 10000:
+                        logging.warning(f"🚨 Low volume: ${volume_24h:,.0f}")
+                        return False
+                    
+                    logging.info(f"✅ Safety check passed: {token_address[:8]}")
+                    return True
+                    
+        except Exception as e:
+            logging.warning(f"🚨 DexScreener check failed: {e}")
+        
+        logging.info(f"✅ Basic safety check passed: {token_address[:8]}")
+        return True
         
     except Exception as e:
-        print(f"⚠️ Liquidity check error for {token_address[:8]}: {str(e)}")
+        logging.error(f"🚨 Anti-rug check error: {e}")
         return False
 
 def calculate_hold_time(token_address, entry_time):
