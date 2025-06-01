@@ -1646,7 +1646,7 @@ def enhanced_profitable_trading_loop():
             current_balance = get_wallet_balance()
             
             # Get token discovery
-            tokens = discover_new_tokens()
+            tokens = aggressive_token_discovery()  # ✅ NEW NAME
             
             # PATCH: Handle both string and dict tokens from discovery
             logging.info(f"🔧 PATCHED: Discovered {len(tokens)} raw tokens")
