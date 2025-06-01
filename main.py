@@ -957,6 +957,37 @@ def calculate_real_position_size(self, wallet_balance_sol, token_price, liquidit
             
         return "TRADE", position_size, f"Safe to trade {position_size:.4f} SOL"
 
+# ENHANCED CAPITAL PRESERVATION - ADD AFTER EXISTING CapitalPreservationSystem
+class EnhancedCapitalPreservation:
+    def __init__(self):
+        self.starting_balance = None
+        self.trade_history = []
+        self.real_profit_tracking = []
+        
+    def get_safe_position_size(self, wallet_balance_sol):
+        """Get position size that guarantees profitability"""
+        if wallet_balance_sol < 0.3:
+            return 0
+            
+        # Use the enhanced calculate_profitable_position_size function
+        return calculate_profitable_position_size(wallet_balance_sol)
+    
+    def emergency_stop_check(self, current_balance):
+        """Check if emergency stop needed"""
+        if self.starting_balance is None:
+            self.starting_balance = current_balance
+            
+        if current_balance < 0.15:
+            logging.error("🚨 EMERGENCY: Balance below 0.15 SOL")
+            return True
+            
+        loss_pct = ((self.starting_balance - current_balance) / self.starting_balance) * 100
+        if loss_pct > 20:
+            logging.error(f"🚨 EMERGENCY: {loss_pct:.1f}% loss")
+            return True
+            
+        return False
+
 def update_environment_variable(key, value):
     """Update environment variable for persistence across restarts."""
     try:
