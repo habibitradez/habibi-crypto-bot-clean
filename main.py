@@ -849,35 +849,34 @@ class CapitalPreservationSystem:
         self.trade_history = []
         self.real_profit_tracking = []
         
-def calculate_real_position_size(self, wallet_balance_sol, token_price, liquidity_usd):
-    """Calculate position size that GUARANTEES profitability"""
+def calculate_aggressive_position_size(trade_source="discovery"):
+    """Increased position sizes for higher daily profits"""
     
-    # Minimum balance protection
-    if wallet_balance_sol < 0.1:
-        return 0  # STOP TRADING
-        
-    # Fee estimation (realistic)
-    estimated_fees = 0.004  # 0.004 SOL = ~$1 in fees
-    slippage_buffer = 0.002  # Additional slippage protection
+    wallet_balance = get_wallet_balance_sol()
     
-    # Position sizing rules based on liquidity
-    if liquidity_usd < 50000:  # Low liquidity
-        max_position = wallet_balance_sol * 0.02  # 2% of wallet
-    elif liquidity_usd < 100000:  # Medium liquidity
-        max_position = wallet_balance_sol * 0.05  # 5% of wallet
-    else:  # High liquidity
-        max_position = wallet_balance_sol * 0.08  # 8% of wallet
-        
-    # CRITICAL: Position must be at least 10x the fees to be profitable
-    min_profitable_position = (estimated_fees + slippage_buffer) * 10
+    if wallet_balance < 0.3:
+        return 0, "Insufficient balance for profitable trading"
     
-    position_size = min(max_position, min_profitable_position)
+    # INCREASED POSITION SIZES
+    if trade_source == "copy_trading":
+        if wallet_balance >= 1.0:    # $240+ wallet
+            return 0.25              # $60 positions (was 0.12)
+        elif wallet_balance >= 0.6:  # $144+ wallet  
+            return 0.20              # $48 positions
+        else:
+            return 0.15              # $36 positions
     
-    # Final safety check
-    if position_size < 0.02:  # Less than $5 position
-        return 0  # Too small to be profitable
-        
-    return position_size
+    else:  # discovery trades
+        if wallet_balance >= 1.0:    # $240+ wallet
+            return 0.30              # $72 positions (was 0.18)
+        elif wallet_balance >= 0.6:  # $144+ wallet
+            return 0.25              # $60 positions  
+        else:
+            return 0.20              # $48 positions
+
+# ================================
+# 5. REPLACE YOUR MAIN TRADING LOOP WITH THIS ENHANCED VERSION
+# ================================
 
     def track_real_profit(self, trade_type, amount_sol, token_amount, price_before, price_after, fees_paid):
         """Track ACTUAL profit including all costs"""
@@ -1218,6 +1217,40 @@ def calculate_hold_time(token_address, entry_time):
     
     return int(hold_time)
 
+def get_wallet_recent_trades(wallet_address, hours=2):
+    """Get recent trades from a wallet (simplified - you'll need proper API)"""
+    # This is a placeholder - implement with Solscan/Helius API
+    return []
+
+def get_wallet_recent_trades(wallet_address, hours=2):
+    """Get recent trades from a wallet (simplified - you'll need proper API)"""
+    # This is a placeholder - implement with Solscan/Helius API
+    return []
+
+def get_dex_new_listings(dex_name, limit=3):
+    """Get new token listings from DEX (simplified - you'll need proper API)"""
+    # This is a placeholder - implement with DEX APIs
+    return []
+
+def get_trending_social_tokens():
+    """Get trending tokens from social signals (simplified)"""
+    # This is a placeholder - implement with social APIs
+    return []
+
+def get_token_price(token_address):
+    """Get current token price"""
+    try:
+        # Use Jupiter API or DexScreener for price
+        response = requests.get(f"https://api.dexscreener.com/latest/dex/tokens/{token_address}")
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('pairs'):
+                return float(data['pairs'][0]['priceUsd'])
+    except:
+        pass
+    return 0
+
+
 # ADD THE CAPITAL PRESERVATION SYSTEM CLASS
 class CapitalPreservationSystem:
     def __init__(self):
@@ -1443,6 +1476,39 @@ def scan_multiple_dexs():
 # 4. REPLACE YOUR POSITION SIZING WITH THIS AGGRESSIVE VERSION
 # ================================
 
+
+def execute_enhanced_trade(token_address, position_size, trade_source):
+    """Enhanced trade execution with aggressive profit targets"""
+    
+    try:
+        # Execute the buy
+        buy_success = execute_via_javascript(token_address, position_size, 'buy')
+        if not buy_success:
+            return False
+        
+        # Set AGGRESSIVE profit targets based on trade source
+        if trade_source == "copy_trading":
+            profit_target = 150  # 150% for copy trades (following proven wallets)
+            stop_loss = 25       # 25% stop loss
+            max_hold_time = 7200 # 2 hours max
+        else:
+            profit_target = 120  # 120% for discovery trades  
+            stop_loss = 20       # 20% stop loss
+            max_hold_time = 10800 # 3 hours max
+        
+        # Schedule aggressive sell order
+        schedule_aggressive_sell(token_address, position_size, profit_target, stop_loss, max_hold_time)
+        
+        logging.info(f"🎯 TRADE EXECUTED: {token_address[:8]} | Size: {position_size} SOL | Target: {profit_target}%")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error executing enhanced trade: {e}")
+        return False
+
+# ================================
+# 7. ADD THIS AGGRESSIVE SELL SCHEDULING
+# ================================
 
 def profitable_trading_cycle():
     """Single profitable trading cycle with fee awareness"""
@@ -6643,6 +6709,68 @@ def get_token_symbol(token_address):
         logging.error(f"Error in get_token_symbol: {str(e)}")
         return token_address[:8]  # Return shortened address as fallback
 
+def schedule_aggressive_sell(token_address, position_size, profit_target, stop_loss, max_hold_time):
+    """Schedule aggressive sell orders for maximum daily profits"""
+    
+    entry_time = time.time()
+    entry_price = get_token_price(token_address)
+    
+    def monitor_and_sell():
+        while True:
+            try:
+                current_time = time.time()
+                current_price = get_token_price(token_address)
+                
+                if not current_price or current_price <= 0:
+                    time.sleep(30)
+                    continue
+                
+                # Calculate current profit
+                profit_percentage = ((current_price - entry_price) / entry_price) * 100
+                hold_time = current_time - entry_time
+                
+                # AGGRESSIVE SELL CONDITIONS
+                should_sell = False
+                sell_reason = ""
+                
+                if profit_percentage >= profit_target:
+                    should_sell = True
+                    sell_reason = f"✅ PROFIT TARGET HIT: {profit_percentage:.1f}%"
+                
+                elif profit_percentage <= -stop_loss:
+                    should_sell = True
+                    sell_reason = f"🛑 STOP LOSS: {profit_percentage:.1f}%"
+                
+                elif hold_time >= max_hold_time:
+                    should_sell = True
+                    sell_reason = f"⏰ TIME LIMIT: {hold_time/3600:.1f}h"
+                
+                # DYNAMIC PROFIT TAKING (NEW!)
+                elif profit_percentage >= 80 and hold_time >= 1800:  # 80%+ profit after 30 min
+                    should_sell = True
+                    sell_reason = f"💎 DYNAMIC PROFIT: {profit_percentage:.1f}%"
+                
+                if should_sell:
+                    logging.info(f"🔔 SELLING {token_address[:8]}: {sell_reason}")
+                    sell_success = execute_via_javascript(token_address, position_size, 'sell')
+                    
+                    if sell_success:
+                        final_profit = position_size * 240 * (profit_percentage / 100)  # $240 per SOL
+                        logging.info(f"💰 TRADE COMPLETE: ${final_profit:.2f} profit")
+                    break
+                
+                time.sleep(60)  # Check every minute
+                
+            except Exception as e:
+                logging.error(f"Error in sell monitoring: {e}")
+                time.sleep(60)
+    
+    # Start monitoring in background thread
+    import threading
+    sell_thread = threading.Thread(target=monitor_and_sell)
+    sell_thread.daemon = True
+    sell_thread.start()
+
 def force_sell_all_tokens():
     """Force sell all tokens in the wallet (one-time cleanup)."""
     logging.info("Starting force sell of all tokens in wallet")
@@ -7150,6 +7278,83 @@ def cleanup_memory():
         logging.info(f"Memory usage: {usage.ru_maxrss / 1024} MB")
     except (ImportError, AttributeError):
         pass
+
+def enhanced_trading_loop():
+    """Enhanced trading loop targeting $500+ daily profits"""
+    
+    logging.info("🚀 ENHANCED TRADING LOOP: Targeting $500+ daily profits")
+    
+    cycle_count = 0
+    daily_profit_target = 500  # $500 target
+    
+    while True:
+        try:
+            cycle_count += 1
+            logging.info(f"🔄 ENHANCED CYCLE {cycle_count} - Target: ${daily_profit_target}/day")
+            
+            # Get wallet balance
+            wallet_balance = get_wallet_balance_sol()
+            if wallet_balance < 0.3:
+                logging.warning("⚠️ Wallet balance too low, adding more SOL...")
+                time.sleep(300)  # Wait 5 minutes
+                continue
+            
+            # ENHANCED TOKEN DISCOVERY (8-12 tokens vs previous 4)
+            discovered_tokens = aggressive_token_discovery()
+            logging.info(f"🎯 DISCOVERED: {len(discovered_tokens)} tokens for evaluation")
+            
+            # Process each discovered token
+            successful_trades = 0
+            for i, token_address in enumerate(discovered_tokens):
+                try:
+                    # Determine trade source for position sizing
+                    if i < 8:  # First 8 are primary discoveries
+                        trade_source = "discovery"
+                        position_size = calculate_aggressive_position_size("discovery")
+                    else:      # Rest are copy/trend opportunities
+                        trade_source = "copy_trading"  
+                        position_size = calculate_aggressive_position_size("copy_trading")
+                    
+                    if position_size == 0:
+                        continue
+                    
+                    # Apply your existing safety checks
+                    is_safe, reason = meets_liquidity_requirements(token_address)
+                    if not is_safe:
+                        logging.info(f"❌ REJECTED {token_address[:8]}: {reason}")
+                        continue
+                    
+                    # Execute trade with larger position
+                    logging.info(f"💰 EXECUTING {trade_source.upper()}: {token_address[:8]} with {position_size} SOL")
+                    
+                    success = execute_enhanced_trade(token_address, position_size, trade_source)
+                    if success:
+                        successful_trades += 1
+                        
+                        # More aggressive trading - shorter delays
+                        time.sleep(30)  # 30 second delay vs previous longer delays
+                    
+                    # Limit to 6 trades per cycle for safety
+                    if successful_trades >= 6:
+                        logging.info(f"✅ CYCLE COMPLETE: {successful_trades} trades executed")
+                        break
+                        
+                except Exception as e:
+                    logging.error(f"Error processing token {token_address[:8]}: {e}")
+                    continue
+            
+            # Shorter cycle time for more opportunities
+            cycle_delay = 90 if successful_trades > 0 else 180  # 1.5-3 min vs previous 5 min
+            logging.info(f"⏰ Next cycle in {cycle_delay} seconds...")
+            time.sleep(cycle_delay)
+            
+        except Exception as e:
+            logging.error(f"Error in enhanced trading loop: {e}")
+            time.sleep(180)
+
+# ================================
+# 6. ADD THIS ENHANCED TRADE EXECUTION
+# ================================
 
 def phase_2a_trading_loop():
     """Phase 2A: Scale to $50/day with proven sell system"""
@@ -8502,5 +8707,5 @@ def main():
 
 # Also update the bottom of your file:
 if __name__ == "__main__":
-    # Use the profitable trading system
-    main()
+    # Replace your existing main() call with:
+    enhanced_trading_loop()
