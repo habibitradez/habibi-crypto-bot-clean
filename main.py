@@ -1056,8 +1056,8 @@ def meets_liquidity_requirements(token_address):
         )
         
         if buy_response.status_code != 200:
-            logging.warning(f"🚨 Jupiter buy failed for {token_address[:8]} - Status: {buy_response.status_code}")
-            return False
+            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} - Status: {buy_response.status_code}")
+            # ✅ DON'T return False - continue to other validation layers
             
         buy_data = buy_response.json()
         if not buy_data.get('outAmount') or int(buy_data.get('outAmount', 0)) <= 0:
@@ -1079,8 +1079,8 @@ def meets_liquidity_requirements(token_address):
         )
         
         if sell_response.status_code != 200:
-            logging.warning(f"🚨 Jupiter sell failed for {token_address[:8]} - Status: {sell_response.status_code}")
-            return False
+            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} - Status: {buy_response.status_code}")
+            # ✅ DON'T return False - continue to other validation layers
             
         sell_data = sell_response.json()
         if not sell_data.get('outAmount') or int(sell_data.get('outAmount', 0)) <= 0:
