@@ -1357,7 +1357,9 @@ def discover_new_tokens():
     return enhanced_find_newest_tokens_with_free_apis()
 
 def enhanced_profitable_trading_loop():
-    """The FINAL profitable trading loop with capital preservation"""
+    """The FINAL profitable trading loop with capital preservation - PATCHED VERSION"""
+    
+    logging.info("🔧 PATCHED: Starting enhanced profitable trading loop")
     
     capital_system = CapitalPreservationSystem()
     consecutive_no_trades = 0
@@ -1370,37 +1372,118 @@ def enhanced_profitable_trading_loop():
             # Get token discovery
             tokens = discover_new_tokens()
             
-            for token in tokens:
-                # Get trading recommendation
-                action, position_size, reason = capital_system.get_trading_recommendation(
-                    current_balance, token
-                )
-                
-                logging.info(f"🎯 Token {token['symbol']}: {action} - {reason}")
-                
-                if action == "STOP":
-                    logging.error("🚨 TRADING STOPPED FOR CAPITAL PRESERVATION")
-                    return
+            # PATCH: Handle both string and dict tokens from discovery
+            logging.info(f"🔧 PATCHED: Discovered {len(tokens)} raw tokens")
+            
+            # Convert all tokens to standardized format
+            processed_tokens = []
+            for i, token in enumerate(tokens):
+                try:
+                    if isinstance(token, str):
+                        # String token address - convert to dict format
+                        token_dict = {
+                            'symbol': f'TOKEN-{token[:4]}',
+                            'address': token,
+                            'mint': token,
+                            'price': 0.000001,  # Default price
+                            'liquidity_usd': 50000,  # Default liquidity
+                            'age_minutes': 60,  # Default age
+                            'source': 'helius_string'
+                        }
+                        processed_tokens.append(token_dict)
+                        logging.info(f"🔧 PATCHED: Converted string token {i}: {token[:8]}")
+                        
+                    elif isinstance(token, dict):
+                        # Dict token - ensure it has required fields
+                        if 'address' not in token and 'mint' in token:
+                            token['address'] = token['mint']
+                        elif 'mint' not in token and 'address' in token:
+                            token['mint'] = token['address']
+                            
+                        # Ensure required fields exist
+                        if 'symbol' not in token:
+                            token['symbol'] = f"TOKEN-{token.get('address', 'UNK')[:4]}"
+                        if 'price' not in token:
+                            token['price'] = 0.000001
+                        if 'liquidity_usd' not in token:
+                            token['liquidity_usd'] = 50000
+                        if 'age_minutes' not in token:
+                            token['age_minutes'] = 60
+                            
+                        processed_tokens.append(token)
+                        logging.info(f"🔧 PATCHED: Processed dict token {i}: {token.get('symbol', 'UNK')}")
+                        
+                    else:
+                        logging.warning(f"🔧 PATCHED: Unknown token type {i}: {type(token)}")
+                        continue
+                        
+                except Exception as e:
+                    logging.error(f"🔧 PATCHED: Error processing token {i}: {e}")
+                    continue
+            
+            logging.info(f"🔧 PATCHED: Successfully processed {len(processed_tokens)} tokens")
+            
+            if not processed_tokens:
+                logging.warning("🔧 PATCHED: No valid tokens after processing")
+                consecutive_no_trades += 1
+                time.sleep(5)
+                continue
+            
+            # Process each token with capital preservation
+            for token in processed_tokens:
+                try:
+                    # SAFETY: Ensure token is dict format
+                    if not isinstance(token, dict):
+                        logging.error(f"🔧 PATCHED: Token not in dict format: {type(token)}")
+                        continue
+                        
+                    # SAFETY: Ensure required fields exist
+                    if 'symbol' not in token:
+                        token['symbol'] = f"TOKEN-{token.get('address', 'UNK')[:4]}"
                     
-                elif action == "TRADE":
-                    # Execute the trade with REAL profit tracking
-                    success = execute_profitable_trade(token, position_size, capital_system)
-                    if success:
-                        consecutive_no_trades = 0
-                        time.sleep(10)  # Brief pause after successful trade
-                        break
+                    # Get trading recommendation
+                    action, position_size, reason = capital_system.get_trading_recommendation(
+                        current_balance, token
+                    )
+                    
+                    logging.info(f"🎯 PATCHED: Token {token['symbol']}: {action} - {reason}")
+                    
+                    if action == "STOP":
+                        logging.error("🚨 PATCHED: TRADING STOPPED FOR CAPITAL PRESERVATION")
+                        return
+                        
+                    elif action == "TRADE":
+                        # Execute the trade with REAL profit tracking
+                        logging.info(f"🚀 PATCHED: Executing trade for {token['symbol']} with {position_size} SOL")
+                        success = execute_profitable_trade(token, position_size, capital_system)
+                        if success:
+                            consecutive_no_trades = 0
+                            time.sleep(10)  # Brief pause after successful trade
+                            break
+                        else:
+                            logging.warning(f"🔧 PATCHED: Trade failed for {token['symbol']}")
+                    
+                    elif action == "WAIT":
+                        logging.info(f"⏸️ PATCHED: Waiting - {reason}")
+                        continue
+                        
+                except Exception as e:
+                    logging.error(f"🔧 PATCHED: Error processing individual token: {e}")
+                    logging.error(traceback.format_exc())
+                    continue
                         
             # If no trades executed
             consecutive_no_trades += 1
             if consecutive_no_trades > 100:  # If no trades for 100 cycles
-                logging.warning("⏰ No profitable opportunities found in 100 cycles")
+                logging.warning("⏰ PATCHED: No profitable opportunities found in 100 cycles")
                 time.sleep(60)  # Wait 1 minute before trying again
                 consecutive_no_trades = 0
                 
             time.sleep(3)  # Standard loop delay
             
         except Exception as e:
-            logging.error(f"❌ Trading loop error: {e}")
+            logging.error(f"❌ PATCHED: Trading loop error: {e}")
+            logging.error(traceback.format_exc())
             time.sleep(10)
 
 def execute_profitable_trade(token_data, position_size_sol, capital_system):
