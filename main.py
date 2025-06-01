@@ -7329,9 +7329,9 @@ def enhanced_trading_loop():
                         continue
                     
                     # Apply your existing safety checks
-                    is_safe, reason = meets_liquidity_requirements(token_address)
+                    is_safe = meets_liquidity_requirements(token_address)
                     if not is_safe:
-                        logging.info(f"❌ REJECTED {token_address[:8]}: {reason}")
+                        logging.info(f"❌ REJECTED {token_address[:8]}: Safety check failed")
                         continue
                     
                     # Execute trade with larger position
