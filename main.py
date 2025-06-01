@@ -3030,39 +3030,44 @@ def enhanced_find_newest_tokens():
         return []
 
 def smart_token_selection(potential_tokens):
-    """Intelligently select the best token to trade with enhanced scoring."""
+    """Intelligently select the best token to trade with enhanced scoring - PATCHED VERSION."""
     if not potential_tokens:
         return None
     
     try:
-        # Handle both string addresses and dict objects
-        normalized_tokens = []
-        
+        # PATCH: Convert all tokens to strings for Helius compatibility
+        string_tokens = []
         for token in potential_tokens:
-            if isinstance(token, dict):
-                # Extract address from dict format
-                address = token.get('address') or token.get('mint') or token.get('baseToken', {}).get('address')
-                if address:
-                    token_data = {
-                        'address': address,
-                        'source': token.get('source', 'unknown'),
-                        'symbol': token.get('symbol', 'Unknown'),
-                        'volume': token.get('volume', 0),
-                        'market_cap': token.get('market_cap', 0)
-                    }
-                    normalized_tokens.append(token_data)
-            elif isinstance(token, str) and len(token) > 40:
-                # String address format
+            if isinstance(token, str):
+                string_tokens.append(token)
+            elif isinstance(token, dict):
+                addr = token.get('address') or token.get('mint')
+                if addr:
+                    string_tokens.append(addr)
+            else:
+                logging.warning(f"Unknown token format: {type(token)}")
+                continue
+        
+        if not string_tokens:
+            logging.warning("No valid token addresses found after conversion")
+            return None
+        
+        # Convert string tokens back to normalized dict format for scoring
+        normalized_tokens = []
+        for token_address in string_tokens:
+            if isinstance(token_address, str) and len(token_address) > 40:
+                # Create dict format for scoring
                 token_data = {
-                    'address': token,
-                    'source': 'fallback',
-                    'symbol': 'Unknown',
+                    'address': token_address,
+                    'symbol': f'TOKEN-{token_address[:4]}',
+                    'source': 'helius',
                     'volume': 0,
                     'market_cap': 0
                 }
                 normalized_tokens.append(token_data)
         
         if not normalized_tokens:
+            logging.warning("No normalized tokens available")
             return None
         
         # Score each token
@@ -3070,52 +3075,87 @@ def smart_token_selection(potential_tokens):
         
         for token_data in normalized_tokens:
             score = 10  # Base score
+            token_address = token_data['address']
             
-            # Source-based scoring (prioritize premium sources)
-            if 'helius' in token_data['source'].lower():
-                score += 5  # Helius tokens get highest priority
-            elif 'dexscreener' in token_data['source'].lower():
+            # Factor 1: Not recently bought (higher score for longer gap)
+            if token_address in token_buy_timestamps:
+                minutes_since_buy = (time.time() - token_buy_timestamps[token_address]) / 60
+                if minutes_since_buy > 60:
+                    score += 3
+                elif minutes_since_buy > 30:
+                    score += 2
+                elif minutes_since_buy > 15:
+                    score += 1
+            else:
+                score += 10  # Never bought before gets highest score
+            
+            # Factor 2: Known good tokens get bonus
+            known_good = [
+                "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
+            ]
+            
+            if token_address in known_good:
+                score += 5  # Higher bonus for known good tokens
+            
+            # Factor 3: Source bonus - Helius gets high priority
+            source = token_data.get('source', 'unknown')
+            if 'helius' in source.lower():
+                score += 8  # High priority for Helius tokens
+            elif 'dexscreener' in source.lower():
                 score += 3
-            elif 'birdeye' in token_data['source'].lower():
+            elif 'birdeye' in source.lower():
                 score += 2
-            elif 'pump.fun' in token_data['source'].lower():
+            elif 'pump.fun' in source.lower():
                 score += 1
             
-            # Volume-based scoring
+            # Factor 4: Volume/Market Cap bonus (if available)
             volume = token_data.get('volume', 0)
-            if isinstance(volume, (int, float)) and volume > 100000:
-                score += 2
-            elif isinstance(volume, (int, float)) and volume > 50000:
-                score += 1
-            
-            # Market cap scoring (prefer smaller caps for meme coins)
             market_cap = token_data.get('market_cap', 0)
-            if isinstance(market_cap, (int, float)) and 100000 <= market_cap <= 10000000:
-                score += 2  # Sweet spot for meme coins
             
-            scored_tokens.append({
-                'token': token_data,
-                'score': score
-            })
+            if volume > 100000:  # $100k+ volume
+                score += 2
+            elif volume > 50000:  # $50k+ volume
+                score += 1
+                
+            if 10000 <= market_cap <= 1000000:  # Sweet spot market cap
+                score += 2
+            
+            scored_tokens.append((token_address, score, token_data))
         
         # Sort by score (highest first)
-        scored_tokens.sort(key=lambda x: x['score'], reverse=True)
+        scored_tokens.sort(key=lambda x: x[1], reverse=True)
         
-        # Return the highest-scoring token address
-        best_token = scored_tokens[0]['token']
+        if scored_tokens:
+            best_token_address, best_score, best_token_data = scored_tokens[0]
+            symbol = best_token_data.get('symbol', best_token_address[:8])
+            source = best_token_data.get('source', 'unknown')
+            
+            logging.info(f"🎯 PATCHED: Selected best token: {symbol} ({best_token_address[:8]}) from {source} (score: {best_score})")
+            return best_token_address
         
-        logging.info(f"🎯 Selected best token: {best_token['symbol']} ({best_token['address'][:8]}) from {best_token['source']} (score: {scored_tokens[0]['score']})")
+        # Fallback to first available token
+        if string_tokens:
+            fallback_token = string_tokens[0]
+            logging.info(f"🔄 PATCHED: Using fallback token: {fallback_token[:8]}")
+            return fallback_token
         
-        return best_token['address']
+        return None
         
     except Exception as e:
-        logging.error(f"Error in smart token selection: {str(e)}")
-        # Fallback to first valid token
+        logging.error(f"❌ PATCHED: Error in smart token selection: {str(e)}")
+        logging.error(traceback.format_exc())
+        
+        # Emergency fallback: return first available token
         if potential_tokens:
-            if isinstance(potential_tokens[0], dict):
-                return potential_tokens[0].get('address') or potential_tokens[0].get('mint')
-            else:
+            if isinstance(potential_tokens[0], str):
+                logging.info(f"🚨 PATCHED: Emergency fallback to: {potential_tokens[0][:8]}")
                 return potential_tokens[0]
+            elif isinstance(potential_tokens[0], dict):
+                addr = potential_tokens[0].get('address') or potential_tokens[0].get('mint')
+                if addr:
+                    logging.info(f"🚨 PATCHED: Emergency fallback to: {addr[:8]}")
+                    return addr
+        
         return None
 
 
