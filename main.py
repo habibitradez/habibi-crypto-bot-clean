@@ -1619,7 +1619,7 @@ def aggressive_token_discovery():
     discovered_tokens = []
     
     # Method 1: Your existing Helius (keep this)
-    helius_tokens = get_helius_new_tokens(limit=8)  # Increase from 4 to 8
+    helius_tokens = enhanced_find_newest_tokens_with_free_apis()[:8]  # Use your existing function
     discovered_tokens.extend(helius_tokens)
     
     # Method 2: ADD Copy Trading Monitoring
@@ -1653,7 +1653,7 @@ def enhanced_profitable_trading_loop():
     while True:
         try:
             # Get current balance
-            current_balance = get_wallet_balance()
+            current_balance = get_wallet_balance_sol()  # Use the SOL version
             
             # Get token discovery
             tokens = aggressive_token_discovery()  # ✅ NEW NAME
