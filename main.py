@@ -6923,40 +6923,41 @@ def schedule_aggressive_sell(token_address, position_size, profit_target, stop_l
                 current_price = get_token_price(token_address)
                 
                 if not current_price or current_price <= 0:
-                time.sleep(30)
-                continue
-
+                    time.sleep(30)
+                    continue
+                
                 # ✅ SAFETY CHECK - Prevent division by zero
                 if not entry_price or entry_price <= 0:
-                logging.warning(f"⚠️ Invalid entry price for {token_address[:8]}, forcing time exit")
-                should_sell = True
-                sell_reason = f"🔧 PRICE ERROR: Invalid entry price"
-            else:
-                # Safe calculation now
-                profit_percentage = ((current_price - entry_price) / entry_price) * 100
-                hold_time = current_time - entry_time
-                hold_time = current_time - entry_time
-                
-                # AGGRESSIVE SELL CONDITIONS
-                should_sell = False
-                sell_reason = ""
-                
-                if profit_percentage >= profit_target:
+                    logging.warning(f"⚠️ Invalid entry price for {token_address[:8]}, forcing time exit")
                     should_sell = True
-                    sell_reason = f"✅ PROFIT TARGET HIT: {profit_percentage:.1f}%"
-                
-                elif profit_percentage <= -stop_loss:
-                    should_sell = True
-                    sell_reason = f"🛑 STOP LOSS: {profit_percentage:.1f}%"
-                
-                elif hold_time >= max_hold_time:
-                    should_sell = True
-                    sell_reason = f"⏰ TIME LIMIT: {hold_time/3600:.1f}h"
-                
-                # DYNAMIC PROFIT TAKING (NEW!)
-                elif profit_percentage >= 80 and hold_time >= 1800:  # 80%+ profit after 30 min
-                    should_sell = True
-                    sell_reason = f"💎 DYNAMIC PROFIT: {profit_percentage:.1f}%"
+                    sell_reason = f"🔧 PRICE ERROR: Invalid entry price"
+                    profit_percentage = 0  # Set default for logging
+                else:
+                    # Safe calculation now
+                    profit_percentage = ((current_price - entry_price) / entry_price) * 100
+                    
+                    # AGGRESSIVE SELL CONDITIONS
+                    should_sell = False
+                    sell_reason = ""
+                    
+                    hold_time = current_time - entry_time
+                    
+                    if profit_percentage >= profit_target:
+                        should_sell = True
+                        sell_reason = f"✅ PROFIT TARGET HIT: {profit_percentage:.1f}%"
+                    
+                    elif profit_percentage <= -stop_loss:
+                        should_sell = True
+                        sell_reason = f"🛑 STOP LOSS: {profit_percentage:.1f}%"
+                    
+                    elif hold_time >= max_hold_time:
+                        should_sell = True
+                        sell_reason = f"⏰ TIME LIMIT: {hold_time/3600:.1f}h"
+                    
+                    # DYNAMIC PROFIT TAKING (NEW!)
+                    elif profit_percentage >= 80 and hold_time >= 1800:  # 80%+ profit after 30 min
+                        should_sell = True
+                        sell_reason = f"💎 DYNAMIC PROFIT: {profit_percentage:.1f}%"
                 
                 if should_sell:
                     logging.info(f"🔔 SELLING {token_address[:8]}: {sell_reason}")
@@ -6965,6 +6966,11 @@ def schedule_aggressive_sell(token_address, position_size, profit_target, stop_l
                     if sell_success:
                         final_profit = position_size * 240 * (profit_percentage / 100)  # $240 per SOL
                         logging.info(f"💰 TRADE COMPLETE: ${final_profit:.2f} profit")
+                        
+                        # Track daily profit
+                        track_daily_profit(final_profit)
+                    else:
+                        logging.warning(f"❌ Sell execution failed for {token_address[:8]}")
                     break
                 
                 time.sleep(60)  # Check every minute
