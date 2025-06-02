@@ -6923,11 +6923,18 @@ def schedule_aggressive_sell(token_address, position_size, profit_target, stop_l
                 current_price = get_token_price(token_address)
                 
                 if not current_price or current_price <= 0:
-                    time.sleep(30)
-                    continue
-                
-                # Calculate current profit
+                time.sleep(30)
+                continue
+
+                # ✅ SAFETY CHECK - Prevent division by zero
+                if not entry_price or entry_price <= 0:
+                logging.warning(f"⚠️ Invalid entry price for {token_address[:8]}, forcing time exit")
+                should_sell = True
+                sell_reason = f"🔧 PRICE ERROR: Invalid entry price"
+            else:
+                # Safe calculation now
                 profit_percentage = ((current_price - entry_price) / entry_price) * 100
+                hold_time = current_time - entry_time
                 hold_time = current_time - entry_time
                 
                 # AGGRESSIVE SELL CONDITIONS
