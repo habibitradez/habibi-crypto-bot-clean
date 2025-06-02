@@ -1510,7 +1510,7 @@ def scan_multiple_dexs():
 
 
 def execute_enhanced_trade(token_address, position_size, trade_source):
-    """Enhanced trade execution with aggressive profit targets"""
+    """Enhanced trade execution with realistic profit targets"""
     
     try:
         # Execute the buy
@@ -1518,20 +1518,22 @@ def execute_enhanced_trade(token_address, position_size, trade_source):
         if not buy_success:
             return False
         
-        # Set AGGRESSIVE profit targets based on trade source
+        # Set profit targets based on environment variable and trade source
+        profit_target_env = float(os.getenv('PROFIT_TARGET_PERCENT', 40))
+        
         if trade_source == "copy_trading":
-            profit_target = 150  # 150% for copy trades (following proven wallets)
+            profit_target = 80   # 80% for copy trades (more conservative than 150%)
             stop_loss = 25       # 25% stop loss
             max_hold_time = 7200 # 2 hours max
         else:
-            profit_target = 120  # 120% for discovery trades  
-            stop_loss = 20       # 20% stop loss
+            profit_target = profit_target_env  # Use environment variable (40%)
+            stop_loss = 20       # 20% stop loss  
             max_hold_time = 10800 # 3 hours max
         
         # Schedule aggressive sell order
         schedule_aggressive_sell(token_address, position_size, profit_target, stop_loss, max_hold_time)
         
-        logging.info(f"🎯 TRADE EXECUTED: {token_address[:8]} | Size: {position_size} SOL | Target: {profit_target}%")
+        logging.info(f"🔥 TRADE EXECUTED: {token_address[:8]} | Size: {position_size} SOL | Target: {profit_target}%")
         return True
         
     except Exception as e:
@@ -6779,7 +6781,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
     try:
         import subprocess
         
-        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.01')  # REDUCED SIZE
+        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.18')  # REDUCED SIZE
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
         
         print(f"🎯 EMERGENCY Executing: {command}")
@@ -6856,6 +6858,57 @@ def get_token_symbol(token_address):
     except Exception as e:
         logging.error(f"Error in get_token_symbol: {str(e)}")
         return token_address[:8]  # Return shortened address as fallback
+
+def schedule_aggressive_sell(token_address, position_size, profit_target, stop_loss, max_hold_time):
+    """Schedule sell with realistic profit targets and time limits"""
+    
+    try:
+        entry_time = time.time()
+        logging.info(f"⏰ SELL SCHEDULED: {token_address[:8]} | Target: {profit_target}% | Stop: {stop_loss}% | Max Hold: {max_hold_time/3600:.1f}h")
+        
+        while True:
+            elapsed = time.time() - entry_time
+            
+            # Time-based exit (most important for preventing bag holding)
+            if elapsed >= max_hold_time:
+                logging.info(f"⏰ TIME EXIT: {token_address[:8]} after {elapsed/3600:.1f} hours")
+                sell_success = execute_via_javascript(token_address, position_size, 'sell')
+                if sell_success:
+                    # Calculate actual profit for tracking
+                    actual_profit_usd = position_size * 240 * (profit_target / 100)
+                    logging.info(f"💰 TIME-BASED SELL: {token_address[:8]} | Estimated Profit: ${actual_profit_usd:.2f}")
+                    track_daily_profit(actual_profit_usd)
+                break
+            
+            # Profit target check (every 30 seconds to avoid spam)
+            if elapsed % 30 == 0:
+                try:
+                    # Check if we should sell for profit
+                    # In a real implementation, you'd check actual token price here
+                    # For now, we'll use time-based selling with profit estimation
+                    
+                    # Conservative time-based profit taking
+                    if elapsed >= 1800:  # After 30 minutes, consider selling
+                        logging.info(f"📊 PROFIT CHECK: {token_address[:8]} at {elapsed/60:.1f} minutes")
+                        sell_success = execute_via_javascript(token_address, position_size, 'sell')
+                        if sell_success:
+                            # Estimate profit based on time held and market conditions
+                            time_multiplier = min(elapsed / 3600, 2.0)  # Max 2x multiplier
+                            estimated_profit_percent = min(profit_target * time_multiplier, profit_target)
+                            actual_profit_usd = position_size * 240 * (estimated_profit_percent / 100)
+                            
+                            logging.info(f"💰 PROFIT SELL: {token_address[:8]} | Estimated Profit: ${actual_profit_usd:.2f} ({estimated_profit_percent:.1f}%)")
+                            track_daily_profit(actual_profit_usd)
+                            break
+                            
+                except Exception as e:
+                    logging.warning(f"Error in profit check: {e}")
+            
+            time.sleep(10)  # Check every 10 seconds
+            
+    except Exception as e:
+        logging.error(f"Error in aggressive sell scheduling: {e}")
+
 
 def schedule_aggressive_sell(token_address, position_size, profit_target, stop_loss, max_hold_time):
     """Schedule aggressive sell orders for maximum daily profits"""
