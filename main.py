@@ -681,6 +681,28 @@ def get_wallet_balance_sol():
         logging.error(f"Error getting wallet balance: {e}")
         return 1.0
 
+def convert_profits_to_usdc(profit_amount_usd):
+    """Convert profits to USDC when daily target hit"""
+    try:
+        if profit_amount_usd >= float(os.getenv('USDC_CONVERSION_THRESHOLD', 500)):
+            # Calculate SOL equivalent of profit
+            sol_to_convert = profit_amount_usd / 240  # Assuming $240/SOL
+            
+            # Keep reserve for trading
+            reserve_sol = float(os.getenv('RESERVE_TRADING_SOL', 2.0))
+            current_balance = get_wallet_balance_sol()
+            
+            if current_balance > (sol_to_convert + reserve_sol):
+                # Execute SOL → USDC swap
+                usdc_swap_result = execute_usdc_conversion(sol_to_convert)
+                if usdc_swap_result:
+                    logging.info(f"💰 PROFIT LOCKED: ${profit_amount_usd} converted to USDC")
+                    logging.info(f"🔄 CONTINUING TRADING: {reserve_sol} SOL reserved")
+                    return True
+        return False
+    except Exception as e:
+        logging.error(f"Error converting to USDC: {e}")
+        return False
 
 def get_token_price_standard(token_address: str) -> Optional[float]:
     """Standard method for getting token price - your original implementation."""
@@ -7289,6 +7311,23 @@ def cleanup_memory():
     except (ImportError, AttributeError):
         pass
 
+def track_daily_profit(trade_profit_sol):
+    """Track daily profits and trigger USDC conversion"""
+    global daily_profit_usd, trades_today
+    
+    profit_usd = trade_profit_sol * 240  # Convert SOL to USD
+    daily_profit_usd += profit_usd
+    trades_today += 1
+    
+    logging.info(f"📊 DAILY PROFIT: ${daily_profit_usd:.2f} | Trades: {trades_today}")
+    
+    # Check if we should convert to USDC
+    if daily_profit_usd >= float(os.getenv('DAILY_PROFIT_TARGET', 500)):
+        if os.getenv('AUTO_CONVERT_TO_USDC', 'false').lower() == 'true':
+            convert_profits_to_usdc(daily_profit_usd)
+    
+    return daily_profit_usd
+
 def enhanced_trading_loop():
     """Enhanced trading loop targeting $500+ daily profits"""
     
@@ -7296,6 +7335,8 @@ def enhanced_trading_loop():
     
     cycle_count = 0
     daily_profit_target = 500  # $500 target
+    daily_profit_usd = 0
+    trades_today = 0
     
     while True:
         try:
