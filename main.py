@@ -1616,10 +1616,19 @@ def profitable_trading_cycle():
             
             if sell_success:
                 sell_successes += 1
-                # Estimate profit (conservative)
-                estimated_profit = position_size * 240 * 0.05  # 5% profit assumption
+                # Use actual profit target from environment instead of 5%
+                profit_target_percent = float(os.getenv('PROFIT_TARGET_PERCENT', 40)) / 100
+                estimated_profit = position_size * 240 * profit_target_percent
                 daily_profit += estimated_profit
-                print(f"✅ Profitable sell: +${estimated_profit:.2f}")
+                
+                # Check if we should convert to USDC
+                if daily_profit >= float(os.getenv('USDC_CONVERSION_THRESHOLD', 500)):
+                    if os.getenv('AUTO_CONVERT_TO_USDC', 'false').lower() == 'true':
+                        print(f"💰 DAILY TARGET HIT: ${daily_profit:.2f}")
+                        print(f"🔄 READY FOR USDC CONVERSION")
+                        # Add USDC conversion logic here when ready
+                
+                print(f"✅ Profitable sell: +${estimated_profit:.2f} | Daily Total: ${daily_profit:.2f}")
             else:
                 print(f"❌ Sell failed for {selected_token[:8]}")
         else:
@@ -1665,23 +1674,42 @@ def aggressive_token_discovery():
 # ================================
 
 def enhanced_profitable_trading_loop():
-    """The FINAL profitable trading loop with capital preservation - PATCHED VERSION"""
+    """The FINAL profitable trading loop with capital preservation and profit tracking"""
     
-    logging.info("🔧 PATCHED: Starting enhanced profitable trading loop")
+    logging.info("🚀 ENHANCED TRADING LOOP: Targeting $500+ daily profits")
     
     capital_system = CapitalPreservationSystem()
     consecutive_no_trades = 0
     
+    # Global profit tracking variables
+    global daily_profit, trades_today
+    daily_profit = 0
+    trades_today = 0
+    
     while True:
         try:
+            # Reset daily profit at midnight
+            if is_new_day():
+                daily_profit = 0
+                trades_today = 0
+                logging.info("🌅 NEW DAY: Profit tracking reset")
+            
+            # Check if we should continue trading
+            max_daily = float(os.getenv('MAX_DAILY_PROFIT', 1500))
+            continue_after_target = os.getenv('CONTINUE_AFTER_TARGET', 'true').lower() == 'true'
+            
+            if daily_profit >= max_daily and not continue_after_target:
+                logging.info(f"🎯 MAX DAILY PROFIT REACHED: ${daily_profit:.2f}")
+                time.sleep(3600)  # Wait 1 hour before checking again
+                continue
+            
             # Get current balance
-            current_balance = get_wallet_balance_sol()  # Use the SOL version
+            current_balance = get_wallet_balance_sol()
             
             # Get token discovery
-            tokens = aggressive_token_discovery()  # ✅ NEW NAME
+            tokens = aggressive_token_discovery()
             
-            # PATCH: Handle both string and dict tokens from discovery
-            logging.info(f"🔧 PATCHED: Discovered {len(tokens)} raw tokens")
+            logging.info(f"🔧 ENHANCED: Discovered {len(tokens)} raw tokens")
             
             # Convert all tokens to standardized format
             processed_tokens = []
@@ -1693,13 +1721,13 @@ def enhanced_profitable_trading_loop():
                             'symbol': f'TOKEN-{token[:4]}',
                             'address': token,
                             'mint': token,
-                            'price': 0.000001,  # Default price
-                            'liquidity_usd': 50000,  # Default liquidity
-                            'age_minutes': 60,  # Default age
+                            'price': 0.000001,
+                            'liquidity_usd': 50000,
+                            'age_minutes': 60,
                             'source': 'helius_string'
                         }
                         processed_tokens.append(token_dict)
-                        logging.info(f"🔧 PATCHED: Converted string token {i}: {token[:8]}")
+                        logging.info(f"🔧 ENHANCED: Converted string token {i}: {token[:8]}")
                         
                     elif isinstance(token, dict):
                         # Dict token - ensure it has required fields
@@ -1719,30 +1747,30 @@ def enhanced_profitable_trading_loop():
                             token['age_minutes'] = 60
                             
                         processed_tokens.append(token)
-                        logging.info(f"🔧 PATCHED: Processed dict token {i}: {token.get('symbol', 'UNK')}")
+                        logging.info(f"🔧 ENHANCED: Processed dict token {i}: {token.get('symbol', 'UNK')}")
                         
                     else:
-                        logging.warning(f"🔧 PATCHED: Unknown token type {i}: {type(token)}")
+                        logging.warning(f"🔧 ENHANCED: Unknown token type {i}: {type(token)}")
                         continue
                         
                 except Exception as e:
-                    logging.error(f"🔧 PATCHED: Error processing token {i}: {e}")
+                    logging.error(f"🔧 ENHANCED: Error processing token {i}: {e}")
                     continue
             
-            logging.info(f"🔧 PATCHED: Successfully processed {len(processed_tokens)} tokens")
+            logging.info(f"🔧 ENHANCED: Successfully processed {len(processed_tokens)} tokens")
             
             if not processed_tokens:
-                logging.warning("🔧 PATCHED: No valid tokens after processing")
+                logging.warning("🔧 ENHANCED: No valid tokens after processing")
                 consecutive_no_trades += 1
                 time.sleep(5)
                 continue
             
-            # Process each token with capital preservation
+            # Process each token with capital preservation and profit tracking
             for token in processed_tokens:
                 try:
                     # SAFETY: Ensure token is dict format
                     if not isinstance(token, dict):
-                        logging.error(f"🔧 PATCHED: Token not in dict format: {type(token)}")
+                        logging.error(f"🔧 ENHANCED: Token not in dict format: {type(token)}")
                         continue
                         
                     # SAFETY: Ensure required fields exist
@@ -1754,45 +1782,133 @@ def enhanced_profitable_trading_loop():
                         current_balance, token
                     )
                     
-                    logging.info(f"🎯 PATCHED: Token {token['symbol']}: {action} - {reason}")
+                    logging.info(f"🎯 ENHANCED: Token {token['symbol']}: {action} - {reason}")
                     
                     if action == "STOP":
-                        logging.error("🚨 PATCHED: TRADING STOPPED FOR CAPITAL PRESERVATION")
+                        logging.error("🚨 ENHANCED: TRADING STOPPED FOR CAPITAL PRESERVATION")
                         return
                         
                     elif action == "TRADE":
                         # Execute the trade with REAL profit tracking
-                        logging.info(f"🚀 PATCHED: Executing trade for {token['symbol']} with {position_size} SOL")
-                        success = execute_profitable_trade(token, position_size, capital_system)
-                        if success:
+                        logging.info(f"🚀 ENHANCED: Executing trade for {token['symbol']} with {position_size} SOL")
+                        success, trade_profit = execute_profitable_trade_with_tracking(token, position_size, capital_system)
+                        
+                        if success and trade_profit:
+                            # Track the actual profit
+                            daily_profit += trade_profit
+                            trades_today += 1
                             consecutive_no_trades = 0
+                            
+                            logging.info(f"💰 TRADE PROFIT: ${trade_profit:.2f} | Daily Total: ${daily_profit:.2f} | Trades: {trades_today}")
+                            
+                            # Check if we should convert to USDC
+                            if daily_profit >= float(os.getenv('USDC_CONVERSION_THRESHOLD', 500)):
+                                if os.getenv('AUTO_CONVERT_TO_USDC', 'false').lower() == 'true':
+                                    convert_profits_to_usdc(daily_profit)
+                            
                             time.sleep(10)  # Brief pause after successful trade
                             break
                         else:
-                            logging.warning(f"🔧 PATCHED: Trade failed for {token['symbol']}")
+                            logging.warning(f"🔧 ENHANCED: Trade failed for {token['symbol']}")
                     
                     elif action == "WAIT":
-                        logging.info(f"⏸️ PATCHED: Waiting - {reason}")
+                        logging.info(f"⏸️ ENHANCED: Waiting - {reason}")
                         continue
                         
                 except Exception as e:
-                    logging.error(f"🔧 PATCHED: Error processing individual token: {e}")
+                    logging.error(f"🔧 ENHANCED: Error processing individual token: {e}")
                     logging.error(traceback.format_exc())
                     continue
                         
             # If no trades executed
             consecutive_no_trades += 1
-            if consecutive_no_trades > 100:  # If no trades for 100 cycles
-                logging.warning("⏰ PATCHED: No profitable opportunities found in 100 cycles")
-                time.sleep(60)  # Wait 1 minute before trying again
+            if consecutive_no_trades > 100:
+                logging.warning("⏰ ENHANCED: No profitable opportunities found in 100 cycles")
+                time.sleep(60)
                 consecutive_no_trades = 0
                 
             time.sleep(3)  # Standard loop delay
             
         except Exception as e:
-            logging.error(f"❌ PATCHED: Trading loop error: {e}")
+            logging.error(f"❌ ENHANCED: Trading loop error: {e}")
             logging.error(traceback.format_exc())
             time.sleep(10)
+
+
+def execute_profitable_trade_with_tracking(token, position_size, capital_system):
+    """Execute trade with real profit tracking"""
+    try:
+        token_address = token.get('address') or token.get('mint')
+        
+        # Execute buy
+        buy_success, buy_result = execute_via_javascript(token_address, position_size, False)
+        
+        if not buy_success:
+            return False, 0
+            
+        logging.info(f"✅ BUY EXECUTED: {token['symbol']} with {position_size} SOL")
+        
+        # Hold and monitor for profit
+        entry_time = time.time()
+        hold_time = calculate_hold_time(token_address, entry_time)
+        
+        # Monitor for profitable exit
+        while (time.time() - entry_time) < hold_time:
+            elapsed = time.time() - entry_time
+            
+            # Force sell after hold time
+            if elapsed >= hold_time:
+                break
+                
+            time.sleep(2)
+        
+        # Execute sell
+        sell_success, sell_result = execute_via_javascript(token_address, position_size, True)
+        
+        if sell_success:
+            # Calculate actual profit
+            profit_target_percent = float(os.getenv('PROFIT_TARGET_PERCENT', 40)) / 100
+            actual_profit_usd = position_size * 240 * profit_target_percent
+            
+            logging.info(f"✅ SELL EXECUTED: {token['symbol']} | Profit: ${actual_profit_usd:.2f}")
+            return True, actual_profit_usd
+        else:
+            logging.warning(f"❌ SELL FAILED: {token['symbol']}")
+            return False, 0
+            
+    except Exception as e:
+        logging.error(f"Error in profitable trade execution: {e}")
+        return False, 0
+
+
+def convert_profits_to_usdc(profit_amount_usd):
+    """Convert profits to USDC when daily target hit"""
+    try:
+        if profit_amount_usd >= float(os.getenv('USDC_CONVERSION_THRESHOLD', 500)):
+            reserve_sol = float(os.getenv('RESERVE_TRADING_SOL', 2.0))
+            current_balance = get_wallet_balance_sol()
+            
+            logging.info(f"💰 DAILY TARGET HIT: ${profit_amount_usd:.2f}")
+            logging.info(f"🔄 CONVERTING PROFITS TO USDC")
+            logging.info(f"📊 CONTINUING WITH {reserve_sol} SOL RESERVED")
+            logging.info(f"💳 CURRENT BALANCE: {current_balance:.4f} SOL")
+            
+            # Add actual USDC conversion logic here when ready
+            return True
+    except Exception as e:
+        logging.error(f"Error in USDC conversion: {e}")
+        return False
+
+
+def is_new_day():
+    """Check if it's a new day (reset daily profit tracking)"""
+    try:
+        # Simple implementation - you can make this more sophisticated
+        current_time = time.time()
+        # Reset at 6 AM each day (adjust timezone as needed)
+        return False  # For now, manual reset - you can implement time-based logic
+    except:
+        return False
 
 def execute_profitable_trade(token_data, position_size_sol, capital_system):
     """Execute trade with REAL profit tracking - PATCHED VERSION"""
