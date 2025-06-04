@@ -7290,125 +7290,120 @@ def force_sell_stale_tokens():
         # Add delay between sells
         time.sleep(5)
 
-def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
-    """Execute optimized sell transaction with better handling for small tokens."""
-    global sell_attempts, sell_successes
+#def execute_optimized_sell(token_address: str, percentage: int = 100) -> Tuple[bool, Optional[str]]:
+    #"""Execute optimized sell transaction with better handling for small tokens."""
+    #global sell_attempts, sell_successes
     
-    sell_attempts += 1
-    logging.info(f"Starting optimized sell for {token_address} - Percentage: {percentage}%")
+    #sell_attempts += 1
+    #logging.info(f"Starting optimized sell for {token_address} - Percentage: {percentage}%")
     
-    if CONFIG['SIMULATION_MODE']:
-        logging.info(f"[SIMULATION] Sold {percentage}% of {token_address}")
-        sell_successes += 1
+    #if CONFIG['SIMULATION_MODE']:
+        #logging.info(f"[SIMULATION] Sold {percentage}% of {token_address}")
+        #sell_successes += 1
         
         # If selling 100%, remove from monitored tokens
-        if percentage == 100 and token_address in monitored_tokens:
-            del monitored_tokens[token_address]
+        #if percentage == 100 and token_address in monitored_tokens:
+            #del monitored_tokens[token_address]
             
-        return True, "simulation-signature"
+        #return True, "simulation-signature"
     
     # Maximum number of sell attempts
-    max_retries = 5
-    
-    for attempt in range(max_retries):
-        try:
+    ##for attempt in range(max_retries):
+        #try:
             # Check token balance
-            token_accounts = wallet.get_token_accounts(token_address)
-            if not token_accounts:
-                logging.error(f"No token accounts found for {token_address} - Attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
-                    time.sleep((attempt+1)*5)
-                    continue
-                else:
+            #token_accounts = wallet.get_token_accounts(token_address)
+            #if not token_accounts:
+                #logging.error(f"No token accounts found for {token_address} - Attempt {attempt+1}/{max_retries}")
+                #if attempt < max_retries - 1:
+                    #logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
+                    #time.sleep((attempt+1)*5)
+                    #continue
+               # else:
                     # On final attempt, mark as sold anyway
-                    logging.warning(f"Could not find token accounts after {max_retries} attempts. Marking as sold.")
-                    if token_address in monitored_tokens:
-                        del monitored_tokens[token_address]
-                    return True, None  # Return true to stop retrying
+                    ##if token_address in monitored_tokens:
+                        #del monitored_tokens[token_address]
+                    #return True, None  # Return true to stop retrying
             
-            token_amount = 0
-            for account in token_accounts:
+            #token_amount = 0
+            #for account in token_accounts:
                 # Parse token amount from account data
-                parsed_data = account['account']['data']['parsed']
-                if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
-                    token_amount += int(parsed_data['info']['tokenAmount']['amount'])
+               # parsed_data = account['account']['data']['parsed']
+                #if 'info' in parsed_data and 'tokenAmount' in parsed_data['info']:
+                 #   token_amount += int(parsed_data['info']['tokenAmount']['amount'])
             
-            if token_amount == 0:
-                logging.error(f"Zero balance for {token_address} - Attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
-                    time.sleep((attempt+1)*5)
-                    continue
-                else:
+            #if token_amount == 0:
+             #   logging.error(f"Zero balance for {token_address} - Attempt {attempt+1}/{max_retries}")
+              #  if attempt < max_retries - 1:
+               #     logging.info(f"Waiting {(attempt+1)*5} seconds before retry...")
+                #    time.sleep((attempt+1)*5)
+                 #   continue
+                #else:
                     # On final attempt, mark as sold anyway
-                    logging.warning(f"Zero token balance after {max_retries} attempts. Marking as sold.")
-                    if token_address in monitored_tokens:
-                        del monitored_tokens[token_address]
-                    return True, None  # Return true to stop retrying
+                 #   logging.warning(f"Zero token balance after {max_retries} attempts. Marking as sold.")
+                  #  if token_address in monitored_tokens:
+                   #     del monitored_tokens[token_address]
+                    #return True, None  # Return true to stop retrying
                 
-            logging.info(f"Found token balance: {token_amount} - Attempt {attempt+1}/{max_retries}")
+          #  logging.info(f"Found token balance: {token_amount} - Attempt {attempt+1}/{max_retries}")
             
             # For very small balances, try a different approach
-            if token_amount < 1000:
-                logging.info(f"Small token balance detected ({token_amount}). Using special small token handling.")
-                success = handle_small_token_sell(token_address, token_amount)
-                if success:
-                    sell_successes += 1
-                    if token_address in monitored_tokens:
-                        del monitored_tokens[token_address]
-                    return True, "small-token-cleanup"
+           # if token_amount < 1000:
+            #    logging.info(f"Small token balance detected ({token_amount}). Using special small token handling.")
+             #   success = handle_small_token_sell(token_address, token_amount)
+              #  if success:
+               #     sell_successes += 1
+                #    if token_address in monitored_tokens:
+                 #       del monitored_tokens[token_address]
+                  #  return True, "small-token-cleanup"
             
             # Calculate amount to sell based on percentage
-            amount_to_sell = int(token_amount * percentage / 100)
-            logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
+        #    amount_to_sell = int(token_amount * percentage / 100)
+         #   logging.info(f"Selling {amount_to_sell} tokens ({percentage}% of {token_amount})")
             
             # Use JavaScript for selling with exponential retry delay
-            success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
+          #  success, signature = execute_via_javascript(token_address, 0.001, is_sell=True)
             
-            if success:
-                sell_successes += 1
+          #  if success:
+             #   sell_successes += 1
                 
                 # If we're selling 100%, remove from monitored tokens
-                if percentage == 100 and token_address in monitored_tokens:
-                    logging.info(f"Removing {token_address} from monitored tokens after complete sell")
-                    del monitored_tokens[token_address]
+                #if percentage == 100 and token_address in monitored_tokens:
+                   # logging.info(f"Removing {token_address} from monitored tokens after complete sell")
+                    #del monitored_tokens[token_address]
                 
-                logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
-                return True, signature
-            else:
-                logging.error(f"Sell transaction failed on attempt {attempt+1}/{max_retries}")
-                if attempt < max_retries - 1:
-                    wait_time = 5 * (attempt + 1)
-                    logging.info(f"Waiting {wait_time} seconds before retry...")
-                    time.sleep(wait_time)
-                    continue
-                else:
+                #logging.info(f"✅ Sell successful! Token: {token_address}, Percentage: {percentage}%")
+               # return True, signature
+           # else:
+                #logging.error(f"Sell transaction failed on attempt {attempt+1}/{max_retries}")
+                ##   wait_time = 5 * (attempt + 1)
+                   # logging.info(f"Waiting {wait_time} seconds before retry...")
+                   # time.sleep(wait_time)
+                   # continue
+               # else:
                     # On final attempt, mark as sold anyway
-                    logging.warning(f"Failed to sell after {max_retries} attempts. Marking as sold to avoid being stuck.")
-                    if token_address in monitored_tokens:
-                        del monitored_tokens[token_address]
-                    return True, None  # Return true to stop retrying
+                   # logging.warning(f"Failed to sell after {max_retries} attempts. Marking as sold to avoid being stuck.")
+                   # if token_address in monitored_tokens:
+                       # del monitored_tokens[token_address]
+                   # return True, None  # Return true to stop retrying
                 
-        except Exception as e:
-            logging.error(f"Error executing sell (attempt {attempt+1}/{max_retries}): {str(e)}")
-            logging.error(traceback.format_exc())
-            if attempt < max_retries - 1:
-                wait_time = 5 * (attempt + 1)
-                logging.info(f"Waiting {wait_time} seconds before retry...")
-                time.sleep(wait_time)
-                continue
-            else:
+       # except Exception as e:
+            #logging.error(f"Error executing sell (attempt {attempt+1}/{max_retries}): {str(e)}")
+            ## if attempt < max_retries - 1:
+              #  wait_time = 5 * (attempt + 1)
+              #  logging.info(f"Waiting {wait_time} seconds before retry...")
+               # time.sleep(wait_time)
+         #       continue
+          #  else:
                 # On final attempt, mark as sold anyway
-                logging.warning(f"Error selling after {max_retries} attempts. Marking as sold to avoid being stuck.")
-                if token_address in monitored_tokens:
-                    del monitored_tokens[token_address]
-                return True, None  # Return true to stop retrying
+           #     logging.warning(f"Error selling after {max_retries} attempts. Marking as sold to avoid being stuck.")
+            #    if token_address in monitored_tokens:
+             #       del monitored_tokens[token_address]
+              #  return True, None  # Return true to stop retrying
     
     # If we reach here, all retries failed - still remove from monitoring
-    if token_address in monitored_tokens:
-        del monitored_tokens[token_address]
-    return True, None  # Return true to prevent further retries
+   # if token_address in monitored_tokens:
+    #    del monitored_tokens[token_address]
+   # return True, None  # Return true to prevent further retries
 
 def handle_small_token_sell(token_address, token_amount):
     """Special handling for very small token balances that might be hard to sell."""
@@ -7740,246 +7735,6 @@ def track_daily_profit(trade_profit_sol):
     
     return daily_profit_usd
 
-def enhanced_trading_loop():
-    """Enhanced trading loop targeting $500+ daily profits"""
-    
-    logging.info("🚀 ENHANCED TRADING LOOP: Targeting $500+ daily profits")
-    
-    cycle_count = 0
-    daily_profit_target = 500  # $500 target
-    daily_profit_usd = 0
-    trades_today = 0
-    
-    while True:
-        try:
-            cycle_count += 1
-            logging.info(f"🔄 ENHANCED CYCLE {cycle_count} - Target: ${daily_profit_target}/day")
-            
-            # Get wallet balance
-            wallet_balance = get_wallet_balance_sol()
-            if wallet_balance < 0.3:
-                logging.warning("⚠️ Wallet balance too low, adding more SOL...")
-                time.sleep(300)  # Wait 5 minutes
-                continue
-            
-            # ENHANCED TOKEN DISCOVERY (8-12 tokens vs previous 4)
-            discovered_tokens = aggressive_token_discovery()
-            logging.info(f"🎯 DISCOVERED: {len(discovered_tokens)} tokens for evaluation")
-            
-            # Process each discovered token
-            successful_trades = 0
-            for i, token_address in enumerate(discovered_tokens):
-                try:
-                    # Determine trade source for position sizing
-                    if i < 8:  # First 8 are primary discoveries
-                        trade_source = "discovery"
-                        position_size = calculate_aggressive_position_size("discovery")
-                    else:      # Rest are copy/trend opportunities
-                        trade_source = "copy_trading"  
-                        position_size = calculate_aggressive_position_size("copy_trading")
-                    
-                    if position_size == 0:
-                        continue
-                    
-                    # Apply your existing safety checks
-                    is_safe = meets_liquidity_requirements(token_address)
-                    if not is_safe:
-                        logging.info(f"❌ REJECTED {token_address[:8]}: Safety check failed")
-                        continue
-                    
-                    # Execute trade with larger position
-                    logging.info(f"💰 EXECUTING {trade_source.upper()}: {token_address[:8]} with {position_size} SOL")
-                    
-                    success = execute_enhanced_trade(token_address, position_size, trade_source)
-                    if success:
-                        successful_trades += 1
-                        
-                        # More aggressive trading - shorter delays
-                        time.sleep(30)  # 30 second delay vs previous longer delays
-                    
-                    # Limit to 6 trades per cycle for safety
-                    if successful_trades >= 6:
-                        logging.info(f"✅ CYCLE COMPLETE: {successful_trades} trades executed")
-                        break
-                        
-                except Exception as e:
-                    logging.error(f"Error processing token {token_address[:8]}: {e}")
-                    continue
-            
-            # Shorter cycle time for more opportunities
-            cycle_delay = 90 if successful_trades > 0 else 180  # 1.5-3 min vs previous 5 min
-            logging.info(f"⏰ Next cycle in {cycle_delay} seconds...")
-            time.sleep(cycle_delay)
-            
-        except Exception as e:
-            logging.error(f"Error in enhanced trading loop: {e}")
-            time.sleep(180)
-
-# ================================
-# 6. ADD THIS ENHANCED TRADE EXECUTION
-# ================================
-
-def phase_2a_trading_loop():
-    """Phase 2A: Scale to $50/day with proven sell system"""
-    global buy_attempts, buy_successes, sell_attempts, sell_successes, daily_profit
-    
-    # SCALING CONFIGURATION - CONSERVATIVE GROWTH
-    SCALING_SCHEDULE = {
-        'day_1': {'position_size': 0.025, 'target_profit': 15.00},  # 2.5x scale
-        'day_2': {'position_size': 0.040, 'target_profit': 25.00},  # 4x scale  
-        'day_3': {'position_size': 0.065, 'target_profit': 50.00},  # 6.5x scale
-    }
-    
-    # You can manually set this based on your testing day
-    current_day = 'day_1'  # Start with day_1, then progress
-    
-    config = SCALING_SCHEDULE[current_day]
-    position_size = config['position_size']
-    daily_target = config['target_profit']
-    
-    # Apply scaling settings
-    os.environ['TRADE_AMOUNT_SOL'] = str(position_size)
-    
-    print("💰" * 20)
-    print("PHASE 2A: SCALING TO $50/DAY")
-    print("💰" * 20)
-    print(f"✅ 100% Sell Success Rate PROVEN!")
-    print(f"💰 Position Size: {position_size} SOL (${position_size * 240:.2f} per trade)")
-    print(f"🎯 Daily Target: ${daily_target}")
-    print(f"📈 Max Concurrent: 3 tokens")
-    print(f"⏰ Max Hold Time: 15 seconds (PROVEN)")
-    
-    cycle_count = 0
-    
-    while daily_profit < daily_target:
-        cycle_count += 1
-    
-        print(f"\n💰 SCALING CYCLE #{cycle_count} - Target: ${daily_target - daily_profit:.2f} remaining")
-    
-        try:
-            # EMERGENCY WALLET CHECK - NEW!
-            if emergency_wallet_check():
-                print("🛑 Emergency wallet check triggered - stopping bot")
-                break  # Exit the trading loop
-        
-            # Additional balance info (optional)
-            if not CONFIG.get('SIMULATION_MODE', False):
-                try:
-                    balance = wallet.get_balance()
-                    print(f"💰 Current Balance: {balance:.4f} SOL (${balance * 240:.2f})")
-                    
-                    if balance < (position_size * 5):  # Need 5x position size as buffer
-                        print(f"⚠️ WARNING: Low balance. Need {position_size * 5:.3f} SOL minimum")
-                        position_size = min(position_size, balance / 5)  # Reduce if needed
-                except Exception as e:
-                    print(f"⚠️ Balance check failed: {e}")
-            
-            # PROVEN SELL MONITORING - Same logic that achieved 100% success
-            tokens_to_remove = []
-            for token_address in list(monitored_tokens.keys()):
-                token_data = monitored_tokens[token_address]
-                seconds_held = time.time() - token_data['buy_time']
-                
-                if seconds_held >= 15:  # Force sell after 15 seconds (PROVEN)
-                    print(f"⏰ SCALING FORCE SELL after {seconds_held:.1f}s: {token_address[:8]}...")
-                    
-                    # Use EXACT SAME emergency sell logic that got 100% success
-                    success, result = execute_via_javascript(
-                        token_address, 
-                        position_size, 
-                        is_sell=True
-                    )
-                    
-                    sell_attempts += 1
-                    
-                    if success:
-                        sell_successes += 1
-                        # Scale profit with position size
-                        profit_per_trade = position_size * 240 * 0.15  # Assume 15% average profit
-                        daily_profit += profit_per_trade
-                        print(f"✅ SCALING SELL SUCCESS! Profit: +${profit_per_trade:.2f}")
-                    else:
-                        print(f"❌ SCALING SELL FAILED - Investigating...")
-                    
-                    tokens_to_remove.append(token_address)
-            
-            # Remove sold tokens
-            for token_address in tokens_to_remove:
-                if token_address in monitored_tokens:
-                    del monitored_tokens[token_address]
-                if token_address in token_buy_timestamps:
-                    del token_buy_timestamps[token_address]
-            
-            # PROVEN BUY SYSTEM - Scale up positions
-            if len(monitored_tokens) < 3:  # Allow 3 concurrent tokens
-                print("💰 SCALING TOKEN SEARCH...")
-                
-                try:
-                    potential_tokens = enhanced_find_newest_tokens_with_free_apis()
-                    
-                    if potential_tokens:
-                        selected_token = potential_tokens[0]
-                        print(f"💰 SCALING BUY: {selected_token[:8]}... with {position_size} SOL")
-                        
-                        # Use proven buy system
-                        success, result = execute_via_javascript(
-                            selected_token, 
-                            position_size, 
-                            is_sell=False
-                        )
-                        
-                        buy_attempts += 1
-                        
-                        if success:
-                            buy_successes += 1
-                            print(f"✅ SCALING BUY SUCCESS!")
-                            
-                            monitored_tokens[selected_token] = {
-                                'initial_price': 0.000001,
-                                'highest_price': 0.000001,
-                                'buy_time': time.time(),
-                                'position_size': position_size,
-                                'scaling_mode': True
-                            }
-                            
-                            token_buy_timestamps[selected_token] = time.time()
-                        else:
-                            print(f"❌ SCALING BUY FAILED")
-                            
-                except Exception as e:
-                    print(f"💰 SCALING TOKEN ERROR: {e}")
-            
-            # Performance monitoring
-            buy_rate = (buy_successes / buy_attempts * 100) if buy_attempts > 0 else 0
-            sell_rate = (sell_successes / sell_attempts * 100) if sell_attempts > 0 else 0
-            
-            print(f"\n📊 SCALING PERFORMANCE:")
-            print(f"   🎯 Buy Success: {buy_successes}/{buy_attempts} ({buy_rate:.1f}%)")
-            print(f"   💸 Sell Success: {sell_successes}/{sell_attempts} ({sell_rate:.1f}%)")
-            print(f"   💰 Daily Profit: ${daily_profit:.2f} / ${daily_target}")
-            print(f"   📈 Progress: {(daily_profit/daily_target)*100:.1f}%")
-            print(f"   🔥 Active Tokens: {len(monitored_tokens)}")
-            
-            # Performance assessment
-            if sell_rate >= 95:
-                print("🚀 EXCELLENT: Sell rate maintained - continue scaling!")
-            elif sell_rate >= 85:
-                print("✅ GOOD: Sell rate acceptable - monitor closely")
-            elif sell_rate < 80:
-                print("⚠️ WARNING: Sell rate dropping - may need to reduce position size")
-                position_size *= 0.8  # Reduce position size by 20%
-                print(f"🔧 ADJUSTED: Position size reduced to {position_size:.3f} SOL")
-            
-            time.sleep(10)  # Scaling cycle pause
-            
-        except Exception as e:
-            print(f"💰 SCALING CYCLE ERROR: {e}")
-            time.sleep(8)
-    
-    print(f"\n🎯 PHASE 2A TARGET ACHIEVED!")
-    print(f"💰 Daily Profit: ${daily_profit:.2f}")
-    print(f"📊 Final Sell Rate: {(sell_successes/sell_attempts*100) if sell_attempts > 0 else 0:.1f}%")
-    print(f"🚀 READY FOR PHASE 2B: Multi-Bot Deployment!")
 
 def profitable_trading_loop():
     """Enhanced trading loop with fee-aware position sizing and smart filtering"""
