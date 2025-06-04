@@ -2618,8 +2618,9 @@ def remove_token_from_monitoring(token_address):
     except Exception as e:
         logging.error(f"Error removing token from monitoring: {str(e)}")
 
+
 def get_high_confidence_tokens():
-    """Only trade tokens with multiple buy signals"""
+    """Only trade tokens with multiple buy signals AND full security validation"""
     
     all_signals = {}
     
@@ -2639,13 +2640,59 @@ def get_high_confidence_tokens():
     for token in volume_tokens:
         all_signals[token] = all_signals.get(token, 0) + 25
     
-    # Only trade tokens with 50+ combined signal strength
-    high_confidence = [
-        token for token, strength in all_signals.items() 
+    # Get tokens with 50+ signal strength
+    candidate_tokens = [
+        token for token, strength in all_signals.items()
         if strength >= 50
     ]
     
-    return high_confidence[:5]  # Top 5 only
+    # ✅ NOW ADD SECURITY VALIDATION
+    validated_tokens = []
+    
+    for token in candidate_tokens:
+        logging.info(f"🛡️ LEVEL 5 SECURITY CHECK: {token[:8]}")
+        
+        # Security Check 1: Liquidity requirements
+        try:
+            if not meets_liquidity_requirements(token):
+                logging.info(f"❌ Failed liquidity check: {token[:8]}")
+                continue
+        except Exception as e:
+            logging.warning(f"⚠️ Liquidity check error for {token[:8]}: {e}")
+            continue
+        
+        # Security Check 2: Honeypot detection
+        try:
+            if is_likely_honeypot(token):
+                logging.info(f"🍯 HONEYPOT DETECTED: {token[:8]}")
+                continue
+        except Exception as e:
+            logging.warning(f"⚠️ Honeypot check error for {token[:8]}: {e}")
+            continue
+        
+        # Security Check 3: Rug pull detection
+        try:
+            if is_likely_rug_pull(token):
+                logging.info(f"🚩 RUG PULL RISK DETECTED: {token[:8]}")
+                continue
+        except Exception as e:
+            logging.warning(f"⚠️ Rug pull check error for {token[:8]}: {e}")
+            continue
+        
+        # Security Check 4: Additional validation (if you have more functions)
+        # Add any other security checks here
+        
+        logging.info(f"✅ ALL SECURITY CHECKS PASSED: {token[:8]}")
+        validated_tokens.append(token)
+        
+        # Limit to prevent overload
+        if len(validated_tokens) >= 3:
+            break
+    
+    logging.info(f"🛡️ Security validation complete: {len(validated_tokens)}/{len(candidate_tokens)} tokens passed")
+    
+    return validated_tokens[:5]  # Top 5 secure tokens only
+
 
 def find_volume_surge_tokens():
     """Find tokens with volume surges - simplified version"""
@@ -2656,6 +2703,7 @@ def find_volume_surge_tokens():
     except Exception as e:
         logging.error(f"Volume surge detection error: {e}")
         return []
+
 
 def enhanced_find_newest_tokens_with_free_apis():
     """
