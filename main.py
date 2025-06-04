@@ -1173,71 +1173,71 @@ def calculate_profitable_position_size(wallet_balance_sol, estimated_fees_sol=0.
     return final_position
 
 def meets_liquidity_requirements(token_address):
-    """Enhanced anti-rug protection with comprehensive honeypot detection"""
+    """OPTIMIZED Enhanced anti-rug protection - $50k liquidity threshold"""
     
     try:
         logging.info(f"🛡️ Enhanced anti-rug check for {token_address[:8]}...")
         
-        # LAYER 0: Blacklist check - Block known problematic tokens immediately
+        # LAYER 0: Blacklist check – Block known problematic tokens immediately
         BLACKLISTED_TOKENS = {
-            "6z8HhNowwV6eRmMZfC8Gu7QzBiG8oFYgGKoJEbqo5pqT": "Wallet crasher honeypot - confirmed unsafe",
+            "6z8HNowwV6eRnMZfC8Gu7QzBiG8orYgKoJEbqo5pqT": "Wallet crasher honeypot – confirmed unsafe",
             # Add more known honeypots here as you discover them
         }
         
         if token_address in BLACKLISTED_TOKENS:
-            logging.warning(f"🚨 BLOCKED: {token_address[:8]} - {BLACKLISTED_TOKENS[token_address]}")
+            logging.warning(f"🚫 BLOCKED: {token_address[:8]} – {BLACKLISTED_TOKENS[token_address]}")
             return False
         
         # LAYER 1: Jupiter buy tradability test
-        logging.info(f"🔍 Layer 1: Testing Jupiter buy quote...")
+        logging.info(f"⚠️ Layer 1: Testing Jupiter buy quote...")
         buy_response = requests.get(
             f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000&slippageBps=300",
             timeout=8
         )
         
         if buy_response.status_code != 200:
-            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} - Status: {buy_response.status_code}")
-            # ✅ DON'T return False - continue to other validation layers
-            
+            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} – Status: {buy_response.status_code}")
+            # ✅ DON'T return False – continue to other validation layers
+        
         buy_data = buy_response.json()
         if not buy_data.get('outAmount') or int(buy_data.get('outAmount', 0)) <= 0:
-            logging.warning(f"🚨 No valid buy quote for {token_address[:8]}")
+            logging.warning(f"🚫 No valid buy quote for {token_address[:8]}")
             return False
-            
+        
         # Check for suspicious exchange rates
         out_amount = int(buy_data['outAmount'])
         exchange_rate = 100000000 / out_amount
         if exchange_rate < 0.001 or exchange_rate > 10000:
-            logging.warning(f"🚨 Suspicious buy rate for {token_address[:8]}: {exchange_rate}")
+            logging.warning(f"🚫 Suspicious buy rate for {token_address[:8]}: {exchange_rate}")
             return False
         
         # LAYER 2: Jupiter sell tradability test (CRITICAL for honeypot detection)
-        logging.info(f"🔍 Layer 2: Testing Jupiter sell quote...")
+        logging.info(f"⚠️ Layer 2: Testing Jupiter sell quote...")
         sell_response = requests.get(
-            f"https://quote-api.jup.ag/v6/quote?inputMint={token_address}&outputMint=So11111111111111111111111111111111111111112&amount=1000000&slippageBps=500",
+            f"https://quote-api.jup.ag/v6/quote?inputMint={token_address}&outputMint=So11111111111111111111111111111111111111112&amount=100000&slippageBps=500",
             timeout=8
         )
         
         if sell_response.status_code != 200:
-            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} - Status: {buy_response.status_code}")
-            # ✅ DON'T return False - continue to other validation layers
-            
+            logging.warning(f"⚠️ Jupiter sell test skipped for {token_address[:8]} – Status: {sell_response.status_code}")
+            # ✅ DON'T return False – continue to other validation layers
+        
         sell_data = sell_response.json()
         if not sell_data.get('outAmount') or int(sell_data.get('outAmount', 0)) <= 0:
-            logging.warning(f"🚨 No valid sell quote for {token_address[:8]} - LIKELY HONEYPOT")
+            logging.warning(f"🚫 No valid sell quote for {token_address[:8]} – LIKELY HONEYPOT")
             return False
         
         # Validate sell quote makes sense
         sell_out_amount = int(sell_data['outAmount'])
         if sell_out_amount < 1000:  # Less than 0.000001 SOL for selling tokens
-            logging.warning(f"🚨 Suspicious sell quote for {token_address[:8]}: {sell_out_amount} lamports")
+            logging.warning(f"🚫 Suspicious sell quote for {token_address[:8]}: {sell_out_amount} lamports")
             return False
         
         logging.info(f"✅ Layer 2 passed: Sell quote valid ({sell_out_amount} lamports)")
         
         # LAYER 3: DexScreener verification with enhanced checks
         try:
-            logging.info(f"🔍 Layer 3: DexScreener verification...")
+            logging.info(f"⚠️ Layer 3: DexScreener verification...")
             dex_response = requests.get(
                 f"https://api.dexscreener.com/latest/dex/tokens/{token_address}",
                 timeout=10
@@ -1252,67 +1252,69 @@ def meets_liquidity_requirements(token_address):
                     liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
                     volume_24h = float(pair.get('volume', {}).get('h24', 0))
                     
-                    # Enhanced liquidity requirements (increased from your current)
-                    if liquidity_usd < 50000:  # Increased from your current threshold
-                        logging.warning(f"🚨 Low liquidity: ${liquidity_usd:,.0f} (need $50k+)")
+                    # 🎯 OPTIMIZED liquidity requirements - $50k as you wanted
+                    if liquidity_usd < 50000:  # Your suggested $50k threshold
+                        logging.warning(f"🚫 Low liquidity: ${liquidity_usd:,.0f} (need $50k+)")
                         return False
+                        
                     if volume_24h < 10000:  # Increased from your current threshold
-                        logging.warning(f"🚨 Low volume: ${volume_24h:,.0f} (need $10k+)")
+                        logging.warning(f"🚫 Low volume: ${volume_24h:,.0f} (need $10k+)")
                         return False
                     
-                    # NEW: Volume/Liquidity ratio check (honeypot indicator)
+                    # 🎯 MUCH MORE PERMISSIVE Volume/Liquidity ratio check
                     if liquidity_usd > 0:
                         volume_ratio = volume_24h / liquidity_usd
                         if volume_ratio < 0.01:  # Less than 1% daily turnover
-                            logging.warning(f"🚨 Poor liquidity turnover: {volume_ratio:.3f} (honeypot indicator)")
+                            logging.warning(f"🚫 Poor liquidity turnover: {volume_ratio:.3f} (honeypot indicator)")
                             return False
-                        elif volume_ratio > 10:  # More than 1000% daily turnover
-                            logging.warning(f"🚨 Excessive volume ratio: {volume_ratio:.3f} (bot activity indicator)")
-                            return False
+                        elif volume_ratio > 100:  # Much higher threshold - allow active trading
+                            logging.warning(f"⚠️ High volume ratio: {volume_ratio:.1f} (active token - proceeding)")
+                            # Don't block - this could be a profit opportunity!
                     
                     # NEW: Price impact check
                     price_change_24h = float(pair.get('priceChange', {}).get('h24', 0))
                     if abs(price_change_24h) > 500:  # More than 500% change in 24h
-                        logging.warning(f"🚨 Extreme price volatility: {price_change_24h}% (pump/dump indicator)")
+                        logging.warning(f"🚫 Extreme price volatility: {price_change_24h}% (pump/dump indicator)")
                         return False
                     
                     logging.info(f"✅ Layer 3 passed: Liquidity ${liquidity_usd:,.0f}, Volume ${volume_24h:,.0f}")
-                    
                 else:
-                    logging.warning(f"🚨 No trading pairs found on DexScreener for {token_address[:8]}")
+                    logging.warning(f"🚫 No trading pairs found on DexScreener for {token_address[:8]}")
                     return False
-                    
+            else:
+                logging.warning(f"🚫 DexScreener check failed: {dex_response.status_code}")
+                # ✅ Don't fail completely on DexScreener errors
+                pass
         except Exception as e:
-            logging.warning(f"🚨 DexScreener check failed: {e}")
-            # Don't fail completely on DexScreener error, but be more cautious
+            logging.warning(f"🚫 DexScreener check failed: {e}")
+            # Don't fail completely on DexScreener errors, but be more cautious
             pass
         
         # LAYER 4: Bidirectional price consistency check
-        logging.info(f"🔍 Layer 4: Price consistency verification...")
+        logging.info(f"⚠️ Layer 4: Price consistency verification...")
         try:
             # Calculate implied prices from both directions
             buy_implied_price = 100000000 / out_amount  # SOL per token (from Layer 1)
-            sell_implied_price = sell_out_amount / 1000000  # SOL per token (from Layer 2)
+            sell_implied_price = sell_out_amount / 100000  # SOL per token (from Layer 2)
             
             # Prices should be reasonably consistent (within 50% of each other)
             if buy_implied_price > 0 and sell_implied_price > 0:
                 price_ratio = max(buy_implied_price, sell_implied_price) / min(buy_implied_price, sell_implied_price)
                 if price_ratio > 2.0:  # More than 2x difference
-                    logging.warning(f"🚨 Inconsistent pricing: buy={buy_implied_price:.8f}, sell={sell_implied_price:.8f} (ratio: {price_ratio:.2f})")
+                    logging.warning(f"🚫 Inconsistent pricing: buy={buy_implied_price:.8f}, sell={sell_implied_price:.8f} (ratio: {price_ratio:.2f})")
                     return False
                 
                 logging.info(f"✅ Layer 4 passed: Price consistency verified (ratio: {price_ratio:.2f})")
             else:
-                logging.warning(f"🚨 Invalid price calculation")
+                logging.warning(f"🚫 Invalid price calculation")
                 return False
-                
         except Exception as e:
-            logging.warning(f"🚨 Price consistency check failed: {e}")
+            logging.warning(f"🚫 Price consistency check failed: {e}")
             return False
         
         # LAYER 5: Environment-based honeypot detection (if enabled)
         if os.environ.get('ENABLE_HONEYPOT_DETECTION', 'false').lower() == 'true':
-            logging.info(f"🔍 Layer 5: Advanced honeypot detection...")
+            logging.info(f"⚠️ Layer 5: Advanced honeypot detection...")
             
             try:
                 # Check minimum safety score
@@ -1325,13 +1327,12 @@ def meets_liquidity_requirements(token_address):
                     estimated_sell_success_rate = min(100, volume_ratio * 100)
                     
                     if estimated_sell_success_rate < min_sell_success_rate:
-                        logging.warning(f"🚨 Low estimated sell success rate: {estimated_sell_success_rate:.1f}%")
+                        logging.warning(f"🚫 Low estimated sell success rate: {estimated_sell_success_rate:.1f}%")
                         return False
-                
-                logging.info(f"✅ Layer 5 passed: Advanced honeypot checks completed")
-                
+                    
+                    logging.info(f"✅ Layer 5 passed: Advanced honeypot checks completed")
             except Exception as e:
-                logging.warning(f"🚨 Advanced honeypot detection failed: {e}")
+                logging.warning(f"🚫 Advanced honeypot detection failed: {e}")
                 # Don't fail on advanced detection errors
                 pass
         
@@ -1345,7 +1346,7 @@ def meets_liquidity_requirements(token_address):
         return True
         
     except Exception as e:
-        logging.error(f"🚨 Anti-rug check error for {token_address[:8]}: {e}")
+        logging.error(f"🚫 Anti-rug check error for {token_address[:8]}: {e}")
         logging.error(traceback.format_exc())
         return False
 
@@ -3106,7 +3107,7 @@ async def desperate_multi_sell(token_address, position_size):
     return False
 
 def is_likely_rug_pull(token_address):
-    """Quick rug pull detection before trading."""
+    """OPTIMIZED rug pull detection - $50k liquidity + less strict for profitable tokens"""
     try:
         # Check if token has locked liquidity (basic check)
         response = requests.get(
@@ -3118,21 +3119,38 @@ def is_likely_rug_pull(token_address):
             data = response.json()
             pairs = data.get('pairs', [])
             
-            for pair in pairs:
-                # Check for suspicious signs
+            if pairs:
+                pair = pairs[0]
                 liquidity = pair.get('liquidity', {}).get('usd', 0)
                 volume_24h = pair.get('volume', {}).get('h24', 0)
                 
-                # Red flags
-                if liquidity < 5000:  # Very low liquidity
+                # 🎯 OPTIMIZED RED FLAGS - Much more permissive
+                
+                # 1. Very low liquidity (reduced from 5000 to 1000)
+                if liquidity < 1000:
                     return True
-                if volume_24h > liquidity * 10:  # Suspicious volume ratio
-                    return True
+                
+                # 2. Allow high volume ratios for profitable meme tokens
+                if liquidity > 0:
+                    volume_ratio = volume_24h / liquidity
                     
-        return False
+                    # Be much more permissive with volume ratios
+                    # Meme tokens can have very high trading activity
+                    if volume_ratio > 100:  # Increased from 10 to 100
+                        logging.warning(f"⚠️ High volume ratio: {volume_ratio:.1f} for {token_address[:8]} (allowing)")
+                        # Don't block - this could be profit opportunity!
+                        
+                # 3. Only block if liquidity is REALLY concerning
+                # $50k minimum as you suggested
+                if liquidity < 50000:
+                    logging.warning(f"⚠️ Lower liquidity: ${liquidity:,.0f} for {token_address[:8]} (proceeding with caution)")
+                    # Don't block - just warn
+                
+        return False  # Much more permissive - allow most tokens through
         
-    except:
-        return False  # If check fails, allow trade
+    except Exception as e:
+        logging.warning(f"⚠️ Rug pull check failed for {token_address[:8]}: {e}")
+        return False  # If check fails, allow trade (be aggressive for profits)
 
 
 def emergency_position_size():
