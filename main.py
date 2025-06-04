@@ -1026,33 +1026,116 @@ class EnhancedCapitalPreservation:
         return False
 
 def get_high_confidence_tokens():
-    """Only trade tokens with multiple buy signals"""
+    """
+    FULLY PATCHED VERSION - Only trade tokens with multiple buy signals AND comprehensive security validation
     
+    This version includes:
+    - Signal aggregation from multiple sources
+    - Full security pipeline using your existing meets_liquidity_requirements()
+    - Error handling and fallbacks
+    - Performance optimization
+    - Proper logging for debugging
+    """
+    
+    logging.info("🔍 Starting high-confidence token discovery...")
     all_signals = {}
     
-    # Signal 1: Copy trading
-    copy_signals = monitor_profitable_wallets_enhanced()
-    for signal in copy_signals:
-        token = signal['token']
-        all_signals[token] = all_signals.get(token, 0) + signal['signal_strength']
-    
-    # Signal 2: New listings
-    new_tokens = enhanced_find_newest_tokens_with_free_apis()
-    for token in new_tokens[:10]:
-        all_signals[token] = all_signals.get(token, 0) + 30
-    
-    # Signal 3: Volume surge
-    volume_tokens = find_volume_surge_tokens()
-    for token in volume_tokens:
-        all_signals[token] = all_signals.get(token, 0) + 25
-    
-    # Only trade tokens with 50+ combined signal strength
-    high_confidence = [
-        token for token, strength in all_signals.items() 
-        if strength >= 50
-    ]
-    
-    return high_confidence[:5]  # Top 5 only
+    try:
+        # Signal 1: Copy trading signals
+        logging.info("📊 Collecting copy trading signals...")
+        try:
+            copy_signals = monitor_profitable_wallets_enhanced()
+            for signal in copy_signals:
+                token = signal['token']
+                all_signals[token] = all_signals.get(token, 0) + signal['signal_strength']
+            logging.info(f"✅ Found {len(copy_signals)} copy trading signals")
+        except Exception as e:
+            logging.warning(f"⚠️ Copy trading signals failed: {e}")
+        
+        # Signal 2: New listings
+        logging.info("🆕 Collecting new token listings...")
+        try:
+            new_tokens = enhanced_find_newest_tokens_with_free_apis()
+            for token in new_tokens[:10]:  # Limit to top 10 newest
+                all_signals[token] = all_signals.get(token, 0) + 30
+            logging.info(f"✅ Found {len(new_tokens[:10])} new token signals")
+        except Exception as e:
+            logging.warning(f"⚠️ New token discovery failed: {e}")
+        
+        # Signal 3: Volume surge detection
+        logging.info("📈 Collecting volume surge signals...")
+        try:
+            volume_tokens = find_volume_surge_tokens()
+            for token in volume_tokens:
+                all_signals[token] = all_signals.get(token, 0) + 25
+            logging.info(f"✅ Found {len(volume_tokens)} volume surge signals")
+        except Exception as e:
+            logging.warning(f"⚠️ Volume surge detection failed: {e}")
+        
+        # Filter tokens by signal strength (minimum 50 points)
+        candidate_tokens = [
+            token for token, strength in all_signals.items()
+            if strength >= 50
+        ]
+        
+        logging.info(f"🎯 Found {len(candidate_tokens)} candidate tokens with 50+ signal strength")
+        
+        if not candidate_tokens:
+            logging.info("❌ No tokens meet minimum signal requirements")
+            return []
+        
+        # Sort by signal strength (highest first)
+        candidate_tokens.sort(key=lambda t: all_signals[t], reverse=True)
+        
+        # ✅ SECURITY VALIDATION PIPELINE
+        logging.info(f"🛡️ Starting comprehensive security validation for {len(candidate_tokens)} candidates...")
+        validated_tokens = []
+        
+        for i, token in enumerate(candidate_tokens):
+            signal_strength = all_signals[token]
+            logging.info(f"🛡️ SECURITY CHECK #{i+1}: {token[:8]} (strength: {signal_strength})")
+            
+            try:
+                # Use your existing comprehensive security function
+                # This includes ALL layers: blacklist, Jupiter quotes, DexScreener, price consistency, honeypot detection
+                if meets_liquidity_requirements(token):
+                    logging.info(f"✅ ALL SECURITY LAYERS PASSED: {token[:8]} - SAFE TO TRADE")
+                    validated_tokens.append(token)
+                else:
+                    logging.info(f"❌ SECURITY FAILED: {token[:8]} - BLOCKED")
+                
+            except Exception as e:
+                logging.warning(f"⚠️ Security check error for {token[:8]}: {e}")
+                # Skip this token if security check fails
+                continue
+            
+            # Limit to top 3 validated tokens for performance
+            if len(validated_tokens) >= 3:
+                logging.info("🎯 Reached maximum of 3 validated tokens")
+                break
+        
+        # Final results
+        total_candidates = len(candidate_tokens)
+        total_validated = len(validated_tokens)
+        
+        logging.info(f"🛡️ SECURITY VALIDATION COMPLETE:")
+        logging.info(f"   📊 Candidates: {total_candidates}")
+        logging.info(f"   ✅ Validated: {total_validated}")
+        logging.info(f"   🛡️ Success Rate: {(total_validated/total_candidates*100) if total_candidates > 0 else 0:.1f}%")
+        
+        if validated_tokens:
+            logging.info(f"🎯 FINAL HIGH-CONFIDENCE TOKENS:")
+            for i, token in enumerate(validated_tokens):
+                logging.info(f"   {i+1}. {token[:8]} (strength: {all_signals[token]})")
+        else:
+            logging.info("❌ NO TOKENS PASSED SECURITY VALIDATION")
+        
+        return validated_tokens[:5]  # Return top 5 maximum
+        
+    except Exception as e:
+        logging.error(f"❌ Critical error in get_high_confidence_tokens: {e}")
+        logging.error(traceback.format_exc())
+        return []  # Fail safely
 
 def update_environment_variable(key, value):
     """Update environment variable for persistence across restarts."""
