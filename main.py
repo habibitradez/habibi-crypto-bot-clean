@@ -1025,6 +1025,10 @@ class EnhancedCapitalPreservation:
             
         return False
 
+def is_likely_honeypot(token_address):
+    """Wrapper function - honeypot detection is handled in meets_liquidity_requirements"""
+    return False  # All honeypot detection is done in meets_liquidity_requirements()
+
 def get_high_confidence_tokens():
     """
     FULLY PATCHED VERSION - Only trade tokens with multiple buy signals AND comprehensive security validation
