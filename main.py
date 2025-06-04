@@ -42,7 +42,7 @@ CONFIG = {
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
-    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '20')),  # 2x return
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '8')),  # 2x return
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '12')),  # Adding this for backward compatibility
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Adding this for backward compatibility
@@ -53,7 +53,7 @@ CONFIG = {
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.10')),  # Reduced to 0.10 SOL
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Reduced to 0.10 SOL
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
@@ -185,6 +185,8 @@ last_circuit_reset_time = time.time()
 MAX_ERRORS_BEFORE_PAUSE = 10
 ERROR_WINDOW_SECONDS = 300  # 5 minutes
 CIRCUIT_BREAKER_COOLDOWN = 600  # 10 minutes
+daily_profit_usd = 0  # Track daily profit in USD
+trades_today = 0      # Track number of trades today
 # --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
@@ -2616,7 +2618,34 @@ def remove_token_from_monitoring(token_address):
     except Exception as e:
         logging.error(f"Error removing token from monitoring: {str(e)}")
 
-
+def get_high_confidence_tokens():
+    """Only trade tokens with multiple buy signals"""
+    
+    all_signals = {}
+    
+    # Signal 1: Copy trading
+    copy_signals = monitor_profitable_wallets_enhanced()
+    for signal in copy_signals:
+        token = signal['token']
+        all_signals[token] = all_signals.get(token, 0) + signal['signal_strength']
+    
+    # Signal 2: New listings
+    new_tokens = enhanced_find_newest_tokens_with_free_apis()
+    for token in new_tokens[:10]:
+        all_signals[token] = all_signals.get(token, 0) + 30
+    
+    # Signal 3: Volume surge
+    volume_tokens = find_volume_surge_tokens()
+    for token in volume_tokens:
+        all_signals[token] = all_signals.get(token, 0) + 25
+    
+    # Only trade tokens with 50+ combined signal strength
+    high_confidence = [
+        token for token, strength in all_signals.items() 
+        if strength >= 50
+    ]
+    
+    return high_confidence[:5]  # Top 5 only
 
 def enhanced_find_newest_tokens_with_free_apis():
     """
@@ -3417,6 +3446,78 @@ def enhanced_main_loop():
             print(f"🔄 Quick recovery in 5 seconds...")
             time.sleep(5)  # Faster recovery
 
+
+def consistent_profit_trading_loop():
+    """The $500/day consistent profit machine"""
+    
+    logging.info("💰 CONSISTENT $500/DAY MODE ACTIVATED")
+    logging.info("🎯 Target: 25 trades × $20 = $500")
+    
+    # Initialize daily tracking
+    global daily_profit_usd, trades_today
+    daily_profit_usd = 0
+    trades_today = 0
+    start_time = time.time()
+    
+    while daily_profit_usd < 500:
+        try:
+            # Show progress
+            hours_elapsed = (time.time() - start_time) / 3600
+            hourly_rate = daily_profit_usd / hours_elapsed if hours_elapsed > 0 else 0
+            
+            logging.info(f"\n💰 CYCLE {trades_today + 1} | Progress: ${daily_profit_usd:.2f}/$500")
+            logging.info(f"⏰ Rate: ${hourly_rate:.2f}/hour | Projected 24h: ${hourly_rate * 24:.2f}")
+            
+            # Get high-confidence tokens only
+            tokens = get_high_confidence_tokens()
+            
+            if not tokens:
+                logging.info("⏳ No high-confidence tokens - waiting 30s...")
+                time.sleep(30)
+                continue
+            
+            # Trade the best token
+            best_token = tokens[0]
+            
+            # Fixed position size for consistency
+            position_size = 0.15  # $36 position
+            
+            logging.info(f"🎯 TRADING: {best_token[:8]} with {position_size} SOL")
+            
+            # Execute trade using your existing execute_via_javascript
+            success, result = execute_via_javascript(best_token, position_size, False)
+            
+            if success:
+                # Add to monitoring with $20 target
+                monitored_tokens[best_token] = {
+                    'initial_price': get_token_price(best_token) or 0.000001,
+                    'buy_time': time.time(),
+                    'position_size': position_size,
+                    'target_profit_usd': 20
+                }
+                
+                logging.info("✅ Trade executed - monitoring for $20 profit...")
+            
+            # Monitor all positions
+            for token in list(monitored_tokens.keys()):
+                monitor_token_price_for_consistent_profits(token)
+            
+            # Prevent overwhelming the system
+            time.sleep(10)
+            
+        except Exception as e:
+            logging.error(f"Cycle error: {e}")
+            time.sleep(15)
+    
+    # Daily target reached!
+    total_hours = (time.time() - start_time) / 3600
+    
+    logging.info("🎉 DAILY TARGET ACHIEVED! 🎉")
+    logging.info(f"💰 Total Profit: ${daily_profit_usd:.2f}")
+    logging.info(f"📊 Total Trades: {trades_today}")
+    logging.info(f"⏰ Time Taken: {total_hours:.1f} hours")
+    logging.info(f"📈 Average per trade: ${daily_profit_usd/trades_today:.2f}")
+    
 
 def update_performance_stats(success, profit_amount=0, token_address=""):
     """Update performance statistics with proper profit tracking."""
@@ -9047,4 +9148,4 @@ def main():
 # Also update the bottom of your file:
 if __name__ == "__main__":
     # Replace your existing main() call with:
-    enhanced_trading_loop()
+    consistent_profit_trading_loop()
