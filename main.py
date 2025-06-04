@@ -2647,6 +2647,16 @@ def get_high_confidence_tokens():
     
     return high_confidence[:5]  # Top 5 only
 
+def find_volume_surge_tokens():
+    """Find tokens with volume surges - simplified version"""
+    try:
+        # Use your existing token discovery
+        tokens = enhanced_find_newest_tokens_with_free_apis()
+        return tokens[:5]  # Return top 5
+    except Exception as e:
+        logging.error(f"Volume surge detection error: {e}")
+        return []
+
 def enhanced_find_newest_tokens_with_free_apis():
     """
     Complete enhanced token discovery using Helius DEVELOPER + free API fallbacks
