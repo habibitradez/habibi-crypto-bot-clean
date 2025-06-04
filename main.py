@@ -3495,7 +3495,7 @@ def consistent_profit_trading_loop():
             logging.info(f"🎯 TRADING: {best_token[:8]} with {position_size} SOL")
             
             # Execute trade using your existing execute_via_javascript
-            success, result = execute_via_javascript(best_token, position_size, False)
+            success, result = execute_optimized_trade(best_token, position_size)
             
             if success:
                 # Add to monitoring with $20 target
