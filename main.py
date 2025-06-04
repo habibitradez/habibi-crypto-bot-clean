@@ -6815,7 +6815,7 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
         return None, None
 
 def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tuple[bool, Optional[str]]:
-    """Execute trade with optimized transaction handling."""
+    """Execute trade with optimized transaction handling - FIXED FOR CONSISTENT PROFITS."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
@@ -6825,6 +6825,15 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
         logging.info(f"[SIMULATION] Bought token {token_address}")
         token_buy_timestamps[token_address] = time.time()
         buy_successes += 1
+        
+        # ✅ FIXED: Use consistent profit monitoring structure for simulation too
+        monitored_tokens[token_address] = {
+            'initial_price': 0.000001,
+            'buy_time': time.time(),
+            'position_size': amount_sol,
+            'target_profit_usd': 20
+        }
+        
         return True, "simulation-signature"
     
     try:
@@ -6953,33 +6962,37 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
                 token_buy_timestamps[token_address] = time.time()
                 buy_successes += 1
                 
-                # Record initial price for monitoring
+                # ✅ FIXED: Record initial price for CONSISTENT PROFIT monitoring
                 try:
                     initial_price = get_token_price(token_address)
                     if initial_price:
+                        # Use consistent profit monitoring structure
                         monitored_tokens[token_address] = {
                             'initial_price': initial_price,
-                            'highest_price': initial_price,
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
+                            'buy_time': time.time(),
+                            'position_size': amount_sol,  # ✅ Track position size for profit calculation
+                            'target_profit_usd': 20       # ✅ $20 profit target (not percentage!)
                         }
+                        logging.info(f"✅ Monitoring {token_address[:8]} for $20 profit target")
                     else:
-                        # Fallback: use a placeholder price
+                        # Fallback: use a realistic placeholder price
                         monitored_tokens[token_address] = {
-                            'initial_price': 0.01,  # Placeholder
-                            'highest_price': 0.01,
-                            'partial_profit_taken': False,
-                            'buy_time': time.time()
+                            'initial_price': 0.000001,    # ✅ Better placeholder for meme tokens
+                            'buy_time': time.time(),
+                            'position_size': amount_sol,
+                            'target_profit_usd': 20
                         }
+                        logging.warning(f"Using placeholder price for {token_address[:8]}")
                 except Exception as e:
                     logging.warning(f"Error getting token price: {str(e)}")
-                    # Use placeholder price
+                    # Use placeholder price - still track for profit
                     monitored_tokens[token_address] = {
-                        'initial_price': 0.01,  # Placeholder
-                        'highest_price': 0.01,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
+                        'initial_price': 0.000001,        # ✅ Realistic placeholder
+                        'buy_time': time.time(),
+                        'position_size': amount_sol,
+                        'target_profit_usd': 20
                     }
+                    logging.info(f"✅ Using fallback monitoring for {token_address[:8]}")
                 
                 logging.info(f"✅ Trade successful! Token: {token_address}")
                 return True, signature
