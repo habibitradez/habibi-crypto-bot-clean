@@ -1031,14 +1031,8 @@ def is_likely_honeypot(token_address):
 
 def get_high_confidence_tokens():
     """
-    FULLY PATCHED VERSION - Only trade tokens with multiple buy signals AND comprehensive security validation
-    
-    This version includes:
-    - Signal aggregation from multiple sources
-    - Full security pipeline using your existing meets_liquidity_requirements()
-    - Error handling and fallbacks
-    - Performance optimization
-    - Proper logging for debugging
+    COMPLETE VERSION - Only trade tokens with multiple buy signals AND comprehensive security validation
+    Includes rate limiting to prevent Jupiter API errors
     """
     
     logging.info("🔍 Starting high-confidence token discovery...")
@@ -1091,7 +1085,7 @@ def get_high_confidence_tokens():
         # Sort by signal strength (highest first)
         candidate_tokens.sort(key=lambda t: all_signals[t], reverse=True)
         
-        # ✅ SECURITY VALIDATION PIPELINE
+        # ✅ SECURITY VALIDATION PIPELINE WITH RATE LIMITING
         logging.info(f"🛡️ Starting comprehensive security validation for {len(candidate_tokens)} candidates...")
         validated_tokens = []
         
@@ -1112,6 +1106,11 @@ def get_high_confidence_tokens():
                 logging.warning(f"⚠️ Security check error for {token[:8]}: {e}")
                 # Skip this token if security check fails
                 continue
+            
+            # ✅ RATE LIMITING - Prevent Jupiter API overload
+            if i < len(candidate_tokens) - 1:  # Don't delay after last token
+                logging.info("⏳ Rate limiting: 3 second delay before next check...")
+                time.sleep(3)  # 3 second delay between security checks
             
             # Limit to top 3 validated tokens for performance
             if len(validated_tokens) >= 3:
@@ -7063,7 +7062,6 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tupl
             "quoteResponse": quote_data,
             "userPublicKey": str(keypair.pubkey()),
             "wrapUnwrapSOL": True,  # Correct parameter name
-            "computeUnitPriceMicroLamports": 1000,  # Add priority fee
             "prioritizationFeeLamports": 10000,  # Additional priority
             "asLegacyTransaction": True,  # Use legacy format
             "blockhash": blockhash  # Include fresh blockhash
