@@ -3647,7 +3647,7 @@ def consistent_profit_trading_loop():
             logging.info(f"🎯 TRADING: {best_token[:8]} with {position_size} SOL")
             
             # Execute trade using your existing execute_via_javascript
-            success, result = execute_via_javascript(best_token, position_size, False)
+            success, result = execute_optimized_trade(best_token, position_size)
             
             if success:
                 # Add to monitoring with $20 target
@@ -8989,21 +8989,24 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point with enhanced capital preservation."""
-    logging.info("============ ENHANCED PROFITABLE BOT STARTING ============")
-    logging.info("💰 Anti-rug protection + Capital preservation active")
+    """Main entry point for consistent $500/day profit trading."""
+    logging.info("============ CONSISTENT PROFIT BOT STARTING ============")
+    logging.info("💰 Target: 25 trades × $20 = $500 daily")
+    logging.info("📊 Position size: 0.15 SOL per trade")
     
     if initialize():
         logging.info("✅ Initialization successful!")
         
         try:
-            # Initialize enhanced capital preservation
-            capital_system = EnhancedCapitalPreservation()
+            # Start the consistent profit trading loop
+            consistent_profit_trading_loop()
             
-            # Use your existing profitable trading loop with enhancements
-            enhanced_profitable_trading_loop()
         except KeyboardInterrupt:
-            print("\n🛑 Bot stopped by user")
+            logging.info("\n🛑 Bot stopped by user")
+            # Log final daily stats
+            logging.info(f"💰 Final daily profit: ${daily_profit_usd:.2f}")
+            logging.info(f"📊 Total trades today: {trades_today}")
+            
         except Exception as e:
             logging.error(f"❌ Fatal error: {e}")
             logging.error(traceback.format_exc())
@@ -9012,10 +9015,4 @@ def main():
 
 # Also update the bottom of your file:
 if __name__ == "__main__":
-    logging.info("🚀 Starting bot with wallet initialization...")
-    
-    if initialize():  # This creates the wallet!
-        logging.info("✅ Initialization successful!")
-        consistent_profit_trading_loop()  # Now this will work
-    else:
-        logging.error("❌ Initialization failed.")
+    main()
