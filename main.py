@@ -9014,5 +9014,10 @@ def main():
 
 # Also update the bottom of your file:
 if __name__ == "__main__":
-    # Replace your existing main() call with:
-    consistent_profit_trading_loop()
+    logging.info("🚀 Starting bot with wallet initialization...")
+    
+    if initialize():  # This creates the wallet!
+        logging.info("✅ Initialization successful!")
+        consistent_profit_trading_loop()  # Now this will work
+    else:
+        logging.error("❌ Initialization failed.")
