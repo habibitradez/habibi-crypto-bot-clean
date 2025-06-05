@@ -6966,248 +6966,36 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
         logging.error(traceback.format_exc())
         return None, None
 
-def execute_optimized_trade(token_address: str, amount_sol: float = 0.1) -> Tuple[bool, Optional[str]]:
-    """Execute trade with optimized transaction handling - FULLY PATCHED VERSION."""
+def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tuple[bool, Optional[str]]:
+    """Wrapper that uses the WORKING execute_via_javascript but returns the expected format."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
-    logging.info(f"Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
+    logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
     
-    # ✅ WALLET VALIDATION - Prevent NoneType errors
-    if wallet is None:
-        logging.error("❌ Wallet not initialized - cannot execute trade")
-        logging.error("Check your wallet initialization in main startup")
-        return False, None
+    # Use your WORKING execute_via_javascript function!
+    success, result = execute_via_javascript(token_address, amount_sol, False)  # False = buy
     
-    if CONFIG['SIMULATION_MODE']:
-        logging.info(f"[SIMULATION] Bought token {token_address}")
-        token_buy_timestamps[token_address] = time.time()
+    if success:
         buy_successes += 1
+        logging.info(f"✅ Buy successful using JavaScript executor")
         
-        # ✅ FIXED: Use consistent profit monitoring structure for simulation too
+        # Set up the $20 profit monitoring
+        initial_price = get_token_price(token_address) or 0.000001
+        
         monitored_tokens[token_address] = {
-            'initial_price': 0.000001,
+            'initial_price': initial_price,
             'buy_time': time.time(),
             'position_size': amount_sol,
-            'target_profit_usd': 20
+            'target_profit_usd': 20  # $20 profit target for consistent profits
         }
         
-        return True, "simulation-signature"
-    
-    try:
-        # ✅ ENHANCED WALLET BALANCE CHECK with error handling
-        try:
-            balance = wallet.get_balance()
-            if balance is None:
-                logging.error("❌ Could not retrieve wallet balance")
-                return False, None
-        except Exception as e:
-            logging.error(f"❌ Wallet balance check failed: {e}")
-            return False, None
-            
-        if balance < amount_sol + 0.05:  # Include buffer for fees
-            logging.error(f"❌ Insufficient balance: {balance} SOL (need {amount_sol + 0.05} SOL)")
-            return False, None
-            
-        logging.info(f"💰 Wallet balance: {balance} SOL")
+        token_buy_timestamps[token_address] = time.time()
         
-        # 1. Get secure keypair
-        keypair = get_secure_keypair()
-        if keypair is None:
-            logging.error("❌ Failed to get secure keypair")
-            return False, None
-        
-        # 2. Get fresh blockhash (critical for success)
-        try:
-            blockhash = wallet.get_latest_blockhash()
-            if not blockhash:
-                logging.error("❌ Failed to get latest blockhash")
-                return False, None
-        except Exception as e:
-            logging.error(f"❌ Blockhash retrieval failed: {e}")
-            return False, None
-        
-        # 3. Get Jupiter quote with proper parameters
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(int(amount_sol * 1000000000)),
-            "slippageBps": "100",  # Use string format
-            "onlyDirectRoutes": "true"  # Use string format
-        }
-        
-        # Get quote from Jupiter
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        try:
-            quote_response = requests.get(quote_url, params=quote_params, timeout=15)
-        except Exception as e:
-            logging.error(f"❌ Jupiter quote request failed: {e}")
-            return False, None
-        
-        if quote_response.status_code != 200:
-            logging.error(f"❌ Failed to get Jupiter quote: {quote_response.status_code}")
-            logging.error(f"Response: {quote_response.text}")
-            return False, None
-            
-        try:
-            quote_data = quote_response.json()
-        except Exception as e:
-            logging.error(f"❌ Failed to parse Jupiter quote: {e}")
-            return False, None
-            
-        logging.info(f"✅ Got Jupiter quote. Output amount: {quote_data.get('outAmount', 'unknown')}")
-        
-        # 4. Prepare swap with critical parameter fixes
-        swap_params = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(keypair.pubkey()),
-            "wrapUnwrapSOL": True,  # Correct parameter name
-            "prioritizationFeeLamports": 10000,  # Additional priority
-            "asLegacyTransaction": True,  # Use legacy format
-            "blockhash": blockhash  # Include fresh blockhash
-        }
-        
-        # Get swap transaction from Jupiter
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        try:
-            swap_response = requests.post(
-                swap_url,
-                json=swap_params,
-                headers={"Content-Type": "application/json"},
-                timeout=15
-            )
-        except Exception as e:
-            logging.error(f"❌ Jupiter swap request failed: {e}")
-            return False, None
-        
-        if swap_response.status_code != 200:
-            logging.error(f"❌ Failed to get swap transaction: {swap_response.status_code}")
-            logging.error(f"Response: {swap_response.text}")
-            return False, None
-            
-        try:
-            swap_data = swap_response.json()
-        except Exception as e:
-            logging.error(f"❌ Failed to parse swap response: {e}")
-            return False, None
-        
-        if "swapTransaction" not in swap_data:
-            logging.error(f"❌ Swap response missing transaction data: {list(swap_data.keys())}")
-            return False, None
-        
-        # 5. Get transaction and submit
-        tx_base64 = swap_data["swapTransaction"]
-        
-        # 6. Submit with optimized parameters
-        try:
-            response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 5,
-                    "preflightCommitment": "processed"
-                }
-            ])
-        except Exception as e:
-            logging.error(f"❌ Transaction submission failed: {e}")
-            return False, None
-        
-        # 7. Handle response
-        if "result" in response:
-            signature = response["result"]
-            
-            # Check for all 1's pattern
-            if signature == "1" * len(signature):
-                logging.warning("⚠️ Got all 1's signature, attempting alternate submission")
-                # Try again with different parameters
-                try:
-                    alt_response = wallet._rpc_call("sendTransaction", [
-                        tx_base64,
-                        {
-                            "encoding": "base64",
-                            "skipPreflight": False,  # Try with skipPreflight=false
-                            "maxRetries": 10,
-                            "preflightCommitment": "confirmed"
-                        }
-                    ])
-                    
-                    if "result" in alt_response:
-                        alt_signature = alt_response["result"]
-                        if alt_signature == "1" * len(alt_signature):
-                            logging.error("❌ Still got all 1's signature on alternate submission")
-                            return False, None
-                        
-                        signature = alt_signature
-                    else:
-                        logging.error(f"❌ Alternate submission failed: {alt_response.get('error')}")
-                        return False, None
-                except Exception as e:
-                    logging.error(f"❌ Alternate submission exception: {e}")
-                    return False, None
-                
-            # Verify success
-            logging.info(f"📤 Transaction submitted with signature: {signature}")
-            
-            # Check transaction status
-            try:
-                success = check_transaction_status(signature, max_attempts=8)
-            except Exception as e:
-                logging.error(f"❌ Transaction status check failed: {e}")
-                return False, None
-            
-            if success:
-                logging.info(f"✅ Transaction confirmed successfully!")
-                
-                # Record transaction success
-                token_buy_timestamps[token_address] = time.time()
-                buy_successes += 1
-                
-                # ✅ FIXED: Record initial price for CONSISTENT PROFIT monitoring
-                try:
-                    initial_price = get_token_price(token_address)
-                    if initial_price and initial_price > 0:
-                        # Use consistent profit monitoring structure
-                        monitored_tokens[token_address] = {
-                            'initial_price': initial_price,
-                            'buy_time': time.time(),
-                            'position_size': amount_sol,  # ✅ Track position size for profit calculation
-                            'target_profit_usd': 20       # ✅ $20 profit target (not percentage!)
-                        }
-                        logging.info(f"✅ Monitoring {token_address[:8]} for $20 profit target (entry: ${initial_price:.8f})")
-                    else:
-                        # Fallback: use a realistic placeholder price
-                        monitored_tokens[token_address] = {
-                            'initial_price': 0.000001,    # ✅ Better placeholder for meme tokens
-                            'buy_time': time.time(),
-                            'position_size': amount_sol,
-                            'target_profit_usd': 20
-                        }
-                        logging.warning(f"⚠️ Using placeholder price for {token_address[:8]} monitoring")
-                except Exception as e:
-                    logging.warning(f"⚠️ Error getting token price: {str(e)}")
-                    # Use placeholder price - still track for profit
-                    monitored_tokens[token_address] = {
-                        'initial_price': 0.000001,        # ✅ Realistic placeholder
-                        'buy_time': time.time(),
-                        'position_size': amount_sol,
-                        'target_profit_usd': 20
-                    }
-                    logging.info(f"✅ Using fallback monitoring for {token_address[:8]}")
-                
-                logging.info(f"🎉 Trade successful! Token: {token_address}")
-                return True, signature
-            else:
-                logging.error(f"❌ Transaction failed or could not be confirmed")
-                return False, None
-        else:
-            error_message = response.get("error", {}).get("message", "Unknown error")
-            logging.error(f"❌ Transaction submission failed: {error_message}")
-            return False, None
-            
-    except Exception as e:
-        logging.error(f"❌ Critical error executing trade: {str(e)}")
-        logging.error(traceback.format_exc())
+        # Return in the format consistent_profit_trading_loop expects
+        return True, result
+    else:
+        logging.error(f"❌ Buy failed via JavaScript executor")
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
