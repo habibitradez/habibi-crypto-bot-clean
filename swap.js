@@ -41,16 +41,16 @@ process.stderr.write = function(chunk, encoding, callback) {
 };
 
 // Rate limiting constants
-const MAX_RETRIES = 7;
-const INITIAL_RETRY_DELAY = 3000;
+const MAX_RETRIES = 10; // INCREASED from 7
+const INITIAL_RETRY_DELAY = 2000; // REDUCED from 3000
 
-// New slippage and priority fee constants
-const MIN_SLIPPAGE_FOR_BUYS = 100;
-const MIN_SLIPPAGE_FOR_SELLS = 500;
-const MIN_SLIPPAGE_FOR_SMALL = 2000;
-const MIN_PRIORITY_FEE_BUYS = 250000;
-const MIN_PRIORITY_FEE_SELLS = 1500000;
-const MIN_PRIORITY_FEE_SMALL = 3000000;
+// OPTIMIZED SLIPPAGE AND PRIORITY FEES FOR $500/DAY CONSISTENCY
+const MIN_SLIPPAGE_FOR_BUYS = 300;     // CHANGED: 3% instead of 1%
+const MIN_SLIPPAGE_FOR_SELLS = 800;    // CHANGED: 8% instead of 5%
+const MIN_SLIPPAGE_FOR_SMALL = 2000;   // KEEP: 20% for small positions
+const MIN_PRIORITY_FEE_BUYS = 500000;   // DOUBLED: 0.0005 SOL for speed
+const MIN_PRIORITY_FEE_SELLS = 2000000; // INCREASED: 0.002 SOL priority
+const MIN_PRIORITY_FEE_SMALL = 3000000; // KEEP: 0.003 SOL for urgency
 
 // QuickNode Metis configuration - UPDATED TO USE CORRECT ENVIRONMENT VARIABLES
 const USE_QUICKNODE_METIS = process.env.USE_QUICKNODE_METIS === 'true';
@@ -173,7 +173,7 @@ async function throttledRpcCall(connection, method, params) {
   }
   
   lastRpcCallTimestamps[method].push(now);
-  await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 100 : 200));
+  await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 50 : 100)); // FASTER
   
   try {
     console.log(`Making throttled RPC call: ${method} (${lastRpcCallTimestamps[method].length}/${rateLimit.max})`);
@@ -214,7 +214,7 @@ function canMakeRequest() {
   if (idealNextTime > now) {
     timeToWait = idealNextTime - now + 50;
   } else {
-    timeToWait = 1000;
+    timeToWait = 500; // REDUCED from 1000
   }
   
   console.log(`Distributing requests evenly. Waiting ${timeToWait}ms before next API call`);
@@ -254,7 +254,7 @@ async function getQuoteViaQuickNode(inputMint, outputMint, amount, slippageBps) 
   
   const response = await axios.get(quoteUrl, {
     params: params,
-    timeout: 15000,
+    timeout: 12000, // REDUCED from 15000
     headers: getQuickNodeHeaders()
   });
   
@@ -287,7 +287,7 @@ async function getSwapInstructionsViaQuickNode(quoteResponse, userPublicKey, pri
   console.log(`QuickNode Jupiter Swap Instructions URL: ${swapInstructionsUrl}`);
   
   const response = await axios.post(swapInstructionsUrl, swapRequest, {
-    timeout: 20000,
+    timeout: 15000, // REDUCED from 20000
     headers: getQuickNodeHeaders()
   });
   
@@ -324,7 +324,7 @@ async function getSwapTransactionViaQuickNode(quoteResponse, userPublicKey, prio
   console.log(`Request format matches QuickNode documentation`);
   
   const response = await axios.post(swapUrl, swapRequest, {
-    timeout: 20000,
+    timeout: 15000, // REDUCED from 20000
     headers: getQuickNodeHeaders()
   });
   
@@ -366,8 +366,8 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
           jupiterRateLimitResetTime = Math.max(jupiterRateLimitResetTime, resetTime);
           console.log(`Rate limit will reset at: ${new Date(jupiterRateLimitResetTime).toISOString()}`);
         } else {
-          jupiterRateLimitResetTime = Date.now() + (USE_QUICKNODE_METIS ? 10000 : 30000);
-          console.log(`Setting cooldown for ${USE_QUICKNODE_METIS ? 10 : 30} seconds`);
+          jupiterRateLimitResetTime = Date.now() + (USE_QUICKNODE_METIS ? 8000 : 25000); // REDUCED
+          console.log(`Setting cooldown for ${USE_QUICKNODE_METIS ? 8 : 25} seconds`);
         }
         
         retries++;
@@ -384,7 +384,7 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
       
       if (retries < maxRetries) {
         retries++;
-        const delay = initialDelay * Math.pow(1.5, retries - 1);
+        const delay = initialDelay * Math.pow(1.3, retries - 1); // REDUCED exponential factor
         console.log(`Error: ${error.message}. Retry ${retries}/${maxRetries} after ${Math.round(delay)}ms`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
@@ -407,9 +407,9 @@ async function executeSwap() {
     
     // ENHANCED CONNECTION SETUP with better error handling
     const connection = new Connection(RPC_URL, {
-      commitment: 'confirmed',
+      commitment: 'processed', // CHANGED: faster confirmation
       disableRetryOnRateLimit: false,
-      confirmTransactionInitialTimeout: 90000, // Increased timeout
+      confirmTransactionInitialTimeout: 60000, // REDUCED from 90000
       wsEndpoint: undefined, // Disable WebSocket to avoid connection issues
       httpHeaders: {
         'Content-Type': 'application/json',
@@ -641,7 +641,7 @@ async function executeSwap() {
             'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
           },
-          timeout: 20000
+          timeout: 15000 // REDUCED from 20000
         });
       });
     }
@@ -657,7 +657,7 @@ async function executeSwap() {
     
     console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
     
-    await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 500 : 1000));
+    await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 300 : 500)); // REDUCED
     
     // Step 2: Get swap transaction (Try QuickNode with corrected format first)
     let swapResponse;
@@ -666,7 +666,7 @@ async function executeSwap() {
     if (USE_QUICKNODE_METIS) {
       // Try QuickNode Metis with corrected request format
       console.log(`💎 Trying QuickNode Metis Jupiter API with correct request format...`);
-      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 20 : 12; // INCREASED
       
       try {
         swapResponse = await retryWithBackoff(async () => {
@@ -699,7 +699,7 @@ async function executeSwap() {
               'Content-Type': 'application/json',
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
             },
-            timeout: 20000
+            timeout: 15000 // REDUCED from 20000
           });
         }, maxRetries);
         
@@ -718,14 +718,14 @@ async function executeSwap() {
         dynamicSlippage: { maxBps: parseInt(slippageBps) }
       };
       
-      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 15 : 7;
+      const maxRetries = (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) ? 20 : 12; // INCREASED
       swapResponse = await retryWithBackoff(async () => {
         return await axios.post(swapUrl, swapRequest, {
           headers: { 
             'Content-Type': 'application/json',
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
           },
-          timeout: 20000
+          timeout: 15000 // REDUCED from 20000
         });
       }, maxRetries);
     }
@@ -798,7 +798,7 @@ async function executeSwap() {
       const submitParams = {
         skipPreflight: false, // Enable preflight for better error detection
         preflightCommitment: 'processed',
-        maxRetries: IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL ? 15 : 12,
+        maxRetries: IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL ? 20 : 15, // INCREASED
         minContextSlot: undefined
       };
       
@@ -817,7 +817,7 @@ async function executeSwap() {
       // NUCLEAR SUBMISSION with StructError handling
       let txSignature;
       let submitAttempts = 0;
-      const maxSubmitAttempts = 3;
+      const maxSubmitAttempts = 5; // INCREASED from 3
       
       while (submitAttempts < maxSubmitAttempts) {
         try {
@@ -833,7 +833,7 @@ async function executeSwap() {
                 console.log('⚠️ StructError during submission - checking if transaction actually succeeded...');
                 
                 // Wait a moment and try to find the transaction
-                await new Promise(r => setTimeout(r, 2000));
+                await new Promise(r => setTimeout(r, 1500)); // REDUCED from 2000
                 
                 try {
                   // Try to get recent signatures to see if our transaction went through
@@ -861,7 +861,7 @@ async function executeSwap() {
           
           // Execute with timeout
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Transaction submission timeout')), 30000);
+            setTimeout(() => reject(new Error('Transaction submission timeout')), 25000); // REDUCED from 30000
           });
           
           txSignature = await Promise.race([submitTransaction(), timeoutPromise]);
@@ -881,7 +881,7 @@ async function executeSwap() {
             console.log('⚠️ StructError detected - using alternative verification...');
             
             // Wait and check if the transaction actually succeeded despite the error
-            await new Promise(r => setTimeout(r, 3000));
+            await new Promise(r => setTimeout(r, 2000)); // REDUCED from 3000
             
             try {
               const recentSignatures = await connection.getSignaturesForAddress(
@@ -913,7 +913,7 @@ async function executeSwap() {
           }
           
           // Brief wait before retry
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 1500)); // REDUCED from 2000
         }
       }
       
