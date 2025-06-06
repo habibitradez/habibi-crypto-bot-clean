@@ -1025,6 +1025,33 @@ class EnhancedCapitalPreservation:
             
         return False
 
+def validate_token_still_tradeable(token_address):
+    """Final check before trading to ensure token is still valid"""
+    try:
+        # Quick Jupiter quote check
+        response = requests.get(
+            "https://quote-api.jup.ag/v6/quote",
+            params={
+                "inputMint": "So11111111111111111111111111111111111111112",
+                "outputMint": token_address,
+                "amount": "1000000",  # 0.001 SOL test
+                "slippageBps": "300"
+            },
+            timeout=5
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('outAmount') and int(data['outAmount']) > 0:
+                return True
+        
+        logging.warning(f"❌ Token {token_address[:8]} failed final tradability check")
+        return False
+        
+    except Exception as e:
+        logging.error(f"❌ Error validating token {token_address[:8]}: {e}")
+        return False
+
 def is_likely_honeypot(token_address):
     """Wrapper function - honeypot detection is handled in meets_liquidity_requirements"""
     return False  # All honeypot detection is done in meets_liquidity_requirements()
@@ -6973,6 +7000,11 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tup
     buy_attempts += 1
     logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
     
+    # VALIDATE TOKEN IS STILL TRADEABLE
+    if not validate_token_still_tradeable(token_address):
+        logging.error(f"❌ Token {token_address[:8]} no longer tradeable - skipping")
+        return False, None
+    
     # Fresh balance check - FIXED VERSION
     try:
         # Use your existing balance check function
@@ -6985,7 +7017,7 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tup
             
     except Exception as e:
         logging.error(f"❌ Error checking fresh balance: {e}")
-        # Continue anyway, let the trade fail if balance is actually insufficient
+        # Continue anyway
     
     # Log the exact command being executed
     logging.info(f"📞 Calling execute_via_javascript({token_address}, {amount_sol}, False)")
