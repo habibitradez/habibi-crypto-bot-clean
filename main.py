@@ -7469,6 +7469,32 @@ def find_newest_tokens():
         logging.error(f"Error in find_newest_tokens: {str(e)}")
         return []
 
+def execute_optimized_sell(token_address: str) -> bool:
+    """Execute sell for a token"""
+    try:
+        # Get token balance to sell
+        token_balance = get_token_balance(token_address)
+        if not token_balance or token_balance == 0:
+            logging.warning(f"No balance to sell for {token_address}")
+            return False
+            
+        # Execute sell via JavaScript
+        success, result = execute_via_javascript(token_address, token_balance, True)  # True = sell
+        
+        if success:
+            logging.info(f"✅ SELL SUCCESS: {token_address}")
+            # Remove from monitoring
+            if token_address in monitored_tokens:
+                del monitored_tokens[token_address]
+            return True
+        else:
+            logging.error(f"❌ SELL FAILED: {token_address}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in execute_optimized_sell: {e}")
+        return False
+
 def monitor_token_peak_price(token_address):
     """Track token peak price and sell if it drops significantly after gains."""
     global daily_profit
