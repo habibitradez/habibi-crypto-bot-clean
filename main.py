@@ -80,11 +80,11 @@ CONFIG = {
     },
 
     'LIQUIDITY_FILTER': {
-    'min_liquidity_usd': 25000,
-    'min_age_minutes': 30,
-    'max_age_minutes': 120,
+    'min_liquidity_usd': 20000,
+    'min_age_minutes': 5,
+    'max_age_minutes': 180,
     'min_holders': 50,
-    'min_volume_usd': 5000
+    'min_volume_usd': 2000
     },
 
     'HOLD_TIME': {
