@@ -7513,23 +7513,23 @@ def monitor_token_price_for_consistent_profits(token_address):
     current_gain_pct = ((current_price - initial_price) / initial_price) * 100
     current_profit_usd = position_value_usd * (current_gain_pct / 100)
     
-    # ONLY SELL AT $20 PROFIT
+    # 1. Hit $20 profit? SELL IMMEDIATELY
     if current_profit_usd >= 20:
         logging.info(f"💰 TARGET HIT: ${current_profit_usd:.2f} profit - SELLING!")
         execute_optimized_sell(token_address)
         update_daily_stats(20)
         return
     
-    # STOP LOSS AT -$10
-    if current_profit_usd <= -10:
-        logging.info(f"🛑 STOP LOSS: ${current_profit_usd:.2f} loss - SELLING!")
+    # 2. Stop loss at EITHER -12% OR -$10 (whichever comes first)
+    if current_gain_pct <= -12 or current_profit_usd <= -10:
+        logging.info(f"🛑 STOP LOSS: {current_gain_pct:.1f}% (${current_profit_usd:.2f}) - SELLING!")
         execute_optimized_sell(token_address)
         update_daily_stats(current_profit_usd)
         return
     
-    # NO TIME-BASED EXITS! Just log progress
+    # 3. Just log progress - NO TIME-BASED SELLING
     seconds_held = time.time() - token_data['buy_time']
-    if seconds_held % 30 == 0:  # Log every 30 seconds
+    if int(seconds_held) % 30 == 0:  # Log every 30 seconds
         logging.info(f"📊 {token_address[:8]}: ${current_profit_usd:.2f} profit ({current_gain_pct:.1f}%) after {seconds_held/60:.1f} min")
 
 def update_daily_stats(profit_usd):
