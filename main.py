@@ -6973,20 +6973,13 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tup
     buy_attempts += 1
     logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
     
-    # FRESH BALANCE CHECK - Add this section
+    # Fresh balance check - FIXED VERSION
     try:
-        # Force a fresh RPC call for accurate balance
-        connection = create_rpc_connection()
-        wallet_pubkey = PublicKey(WALLET_PUBLIC_KEY)
-        
-        # Get SOL balance
-        balance_lamports = connection.get_balance(wallet_pubkey)
-        actual_balance = balance_lamports / LAMPORTS_PER_SOL
-        
+        # Use your existing balance check function
+        actual_balance = get_wallet_balance_sol()  # This function should already exist
         logging.info(f"💰 Fresh balance check: {actual_balance:.6f} SOL")
         
-        # Check if we have enough
-        if actual_balance < amount_sol + 0.01:  # 0.01 SOL buffer for fees
+        if actual_balance < amount_sol + 0.01:
             logging.error(f"❌ Insufficient balance: {actual_balance:.6f} SOL < {amount_sol + 0.01} SOL needed")
             return False, None
             
