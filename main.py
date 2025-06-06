@@ -6967,18 +6967,40 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
         return None, None
 
 def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tuple[bool, Optional[str]]:
-    """Wrapper that uses the WORKING execute_via_javascript but returns the expected format."""
+    """Wrapper that uses the WORKING execute_via_javascript but with better debugging."""
     global buy_attempts, buy_successes
     
     buy_attempts += 1
     logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
     
-    # Use your WORKING execute_via_javascript function!
-    success, result = execute_via_javascript(token_address, amount_sol, False)  # False = buy
+    # Check wallet balance first
+    try:
+        balance = get_wallet_balance_sol()
+        logging.info(f"💰 Current wallet balance: {balance} SOL")
+        
+        if balance < amount_sol + 0.01:  # Include small buffer for fees
+            logging.error(f"❌ Insufficient balance: {balance} SOL < {amount_sol + 0.01} SOL needed")
+            return False, None
+    except Exception as e:
+        logging.error(f"❌ Error checking balance: {e}")
+    
+    # Log the exact command being executed
+    logging.info(f"📟 Calling execute_via_javascript({token_address}, {amount_sol}, False)")
+    
+    # Use your execute_via_javascript function
+    try:
+        success, result = execute_via_javascript(token_address, amount_sol, False)  # False = buy
+        
+        # Log the raw result
+        logging.info(f"📤 JavaScript executor returned: success={success}, result={result[:100] if result else 'None'}")
+        
+    except Exception as e:
+        logging.error(f"❌ Exception in execute_via_javascript: {e}")
+        return False, None
     
     if success:
         buy_successes += 1
-        logging.info(f"✅ Buy successful using JavaScript executor")
+        logging.info(f"✅ Buy successful via JavaScript executor")
         
         # Set up the $20 profit monitoring
         initial_price = get_token_price(token_address) or 0.000001
@@ -6987,42 +7009,43 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tup
             'initial_price': initial_price,
             'buy_time': time.time(),
             'position_size': amount_sol,
-            'target_profit_usd': 20  # $20 profit target for consistent profits
+            'target_profit_usd': 20  # $20 profit target
         }
         
         token_buy_timestamps[token_address] = time.time()
         
-        # Return in the format consistent_profit_trading_loop expects
         return True, result
     else:
         logging.error(f"❌ Buy failed via JavaScript executor")
+        logging.error(f"📋 Failure details: {result}")
         return False, None
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """EMERGENCY version with 10-second timeout maximum"""
+    """Execute trade via JavaScript with proper amount handling"""
     try:
         import subprocess
         
-        trade_amount = os.environ.get('TRADE_AMOUNT_SOL', '0.18')  # REDUCED SIZE
+        # USE THE ACTUAL AMOUNT PARAMETER!
+        trade_amount = str(amount)  # Use the amount passed to the function
         command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
         
-        print(f"🎯 EMERGENCY Executing: {command}")
+        logging.info(f"🎯 Executing: {command}")
         
         result = subprocess.run(
             command, 
             shell=True, 
             capture_output=True, 
             text=True, 
-            timeout=10  # CRITICAL: Was 75 seconds, now 10 seconds
+            timeout=30  # Give it more time - 10 seconds might be too short
         )
         
         stdout_output = result.stdout if result.stdout else ""
         stderr_output = result.stderr if result.stderr else ""
         combined_output = stdout_output + stderr_output
         
-        print(f"📤 Output length: {len(combined_output)} characters")
+        logging.info(f"📤 Output length: {len(combined_output)} characters")
         
-        # NUCLEAR SUCCESS DETECTION
+        # SUCCESS DETECTION
         success_indicators = [
             "SUCCESS" in combined_output,
             "BUY SUCCESS:" in combined_output,
@@ -7036,18 +7059,19 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         action = "SELL" if is_sell else "BUY"
         
         if is_successful:
-            print(f"✅ EMERGENCY {action} SUCCESS: {token_address}")
+            logging.info(f"✅ {action} SUCCESS: {token_address}")
             return True, combined_output
         else:
-            print(f"❌ EMERGENCY {action} FAILED: {token_address}")
+            logging.error(f"❌ {action} FAILED: {token_address}")
+            logging.error(f"Output: {combined_output[:500]}")  # Show first 500 chars of output
             return False, combined_output
             
     except subprocess.TimeoutExpired:
-        print(f"⏰ EMERGENCY TIMEOUT: 10 seconds exceeded for {token_address}")
-        return False, "Emergency timeout after 10 seconds"
+        logging.error(f"⏰ TIMEOUT: 30 seconds exceeded for {token_address}")
+        return False, "Timeout after 30 seconds"
     except Exception as e:
-        print(f"❌ EMERGENCY ERROR: {e}")
-        return False, f"Emergency error: {str(e)}"
+        logging.error(f"❌ ERROR: {e}")
+        return False, f"Error: {str(e)}"
 
 def get_token_symbol(token_address):
     """Get symbol for token address, or return None if not found."""
