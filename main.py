@@ -7498,63 +7498,39 @@ def monitor_token_price_for_consistent_profits(token_address):
     
     if token_address not in monitored_tokens:
         return
-        
+    
     token_data = monitored_tokens[token_address]
     position_size_sol = token_data.get('position_size', 0.15)
     position_value_usd = position_size_sol * 240  # $36 at 0.15 SOL
     
-    # Target just $20 profit (not percentage based!)
     TARGET_PROFIT_USD = 20
-    required_percentage = (TARGET_PROFIT_USD / position_value_usd) * 100
-    
-    # This is only ~55% gain needed on a $36 position!
-    # Most meme coins move 50%+ in minutes
     
     current_price = get_token_price(token_address)
     if not current_price:
         return
-        
+    
     initial_price = token_data['initial_price']
     current_gain_pct = ((current_price - initial_price) / initial_price) * 100
     current_profit_usd = position_value_usd * (current_gain_pct / 100)
     
-    # SIMPLE EXIT RULES FOR CONSISTENCY:
-    
-    # 1. Hit $20 profit? SELL IMMEDIATELY
+    # ONLY SELL AT $20 PROFIT
     if current_profit_usd >= 20:
         logging.info(f"💰 TARGET HIT: ${current_profit_usd:.2f} profit - SELLING!")
         execute_optimized_sell(token_address)
-        update_daily_stats(20)  # Track the $20 profit
+        update_daily_stats(20)
         return
-        
-    # 2. Small profit after 60 seconds? TAKE IT
-    seconds_held = time.time() - token_data['buy_time']
-    if seconds_held >= 60 and current_profit_usd >= 10:
-        logging.info(f"⏱️ QUICK PROFIT: ${current_profit_usd:.2f} after {seconds_held}s - SELLING!")
-        execute_optimized_sell(token_address)
-        update_daily_stats(current_profit_usd)
-        return
-        
-    # 3. ANY profit after 2 minutes? TAKE IT
-    if seconds_held >= 120 and current_profit_usd > 0:
-        logging.info(f"⏰ TIME EXIT: ${current_profit_usd:.2f} profit - SELLING!")
-        execute_optimized_sell(token_address)
-        update_daily_stats(current_profit_usd)
-        return
-        
-    # 4. Stop loss at -$10 (protect capital)
+    
+    # STOP LOSS AT -$10
     if current_profit_usd <= -10:
         logging.info(f"🛑 STOP LOSS: ${current_profit_usd:.2f} loss - SELLING!")
         execute_optimized_sell(token_address)
         update_daily_stats(current_profit_usd)
         return
-        
-    # 5. Force exit after 5 minutes regardless
-    if seconds_held >= 300:
-        logging.info(f"🚫 FORCE EXIT: After 5 minutes - SELLING!")
-        execute_optimized_sell(token_address)
-        update_daily_stats(current_profit_usd)
-        return
+    
+    # NO TIME-BASED EXITS! Just log progress
+    seconds_held = time.time() - token_data['buy_time']
+    if seconds_held % 30 == 0:  # Log every 30 seconds
+        logging.info(f"📊 {token_address[:8]}: ${current_profit_usd:.2f} profit ({current_gain_pct:.1f}%) after {seconds_held/60:.1f} min")
 
 def update_daily_stats(profit_usd):
     """Track progress toward $500 daily goal"""
