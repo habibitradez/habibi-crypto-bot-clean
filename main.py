@@ -6973,19 +6973,29 @@ def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tup
     buy_attempts += 1
     logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
     
-    # Check wallet balance first
+    # FRESH BALANCE CHECK - Add this section
     try:
-        balance = get_wallet_balance_sol()
-        logging.info(f"💰 Current wallet balance: {balance} SOL")
+        # Force a fresh RPC call for accurate balance
+        connection = create_rpc_connection()
+        wallet_pubkey = PublicKey(WALLET_PUBLIC_KEY)
         
-        if balance < amount_sol + 0.01:  # Include small buffer for fees
-            logging.error(f"❌ Insufficient balance: {balance} SOL < {amount_sol + 0.01} SOL needed")
+        # Get SOL balance
+        balance_lamports = connection.get_balance(wallet_pubkey)
+        actual_balance = balance_lamports / LAMPORTS_PER_SOL
+        
+        logging.info(f"💰 Fresh balance check: {actual_balance:.6f} SOL")
+        
+        # Check if we have enough
+        if actual_balance < amount_sol + 0.01:  # 0.01 SOL buffer for fees
+            logging.error(f"❌ Insufficient balance: {actual_balance:.6f} SOL < {amount_sol + 0.01} SOL needed")
             return False, None
+            
     except Exception as e:
-        logging.error(f"❌ Error checking balance: {e}")
+        logging.error(f"❌ Error checking fresh balance: {e}")
+        # Continue anyway, let the trade fail if balance is actually insufficient
     
     # Log the exact command being executed
-    logging.info(f"📟 Calling execute_via_javascript({token_address}, {amount_sol}, False)")
+    logging.info(f"📞 Calling execute_via_javascript({token_address}, {amount_sol}, False)")
     
     # Use your execute_via_javascript function
     try:
