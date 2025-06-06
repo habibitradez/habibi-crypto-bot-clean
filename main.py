@@ -1252,11 +1252,11 @@ def meets_liquidity_requirements(token_address):
                     volume_24h = float(pair.get('volume', {}).get('h24', 0))
                     
                     # 🎯 OPTIMIZED liquidity requirements - $50k as you wanted
-                    if liquidity_usd < 50000:  # Your suggested $50k threshold
+                    if liquidity_usd < CONFIG['LIQUIDITY_FILTER']['min_liquidity_usd']:  # Use your config value
                         logging.warning(f"🚫 Low liquidity: ${liquidity_usd:,.0f} (need $50k+)")
                         return False
                         
-                    if volume_24h < 10000:  # Increased from your current threshold
+                    if volume_24h < CONFIG['LIQUIDITY_FILTER']['min_volume_usd']:  # Use your config value
                         logging.warning(f"🚫 Low volume: ${volume_24h:,.0f} (need $10k+)")
                         return False
                     
@@ -6881,7 +6881,7 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
     """Get Jupiter quote and swap data with better error handling."""
     try:
         # 1. Prepare quote parameters
-        slippage = "100" if is_buy else "500"  # Lower slippage for buys, higher for sells
+        slippage = "300" if is_buy else "500"  # Lower slippage for buys, higher for sells
         
         quote_params = {
             "inputMint": input_mint,
