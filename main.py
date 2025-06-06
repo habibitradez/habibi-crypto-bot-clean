@@ -3045,6 +3045,32 @@ def enhanced_find_newest_tokens_with_free_apis():
         ]
 
 
+def execute_optimized_sell(token_address: str) -> bool:
+    """Execute sell for a token"""
+    try:
+        # Get token balance to sell
+        token_balance = get_token_balance(token_address)
+        if not token_balance or token_balance == 0:
+            logging.warning(f"No balance to sell for {token_address}")
+            return False
+            
+        # Execute sell via JavaScript
+        success, result = execute_via_javascript(token_address, token_balance, True)  # True = sell
+        
+        if success:
+            logging.info(f"✅ SELL SUCCESS: {token_address}")
+            # Remove from monitoring
+            if token_address in monitored_tokens:
+                del monitored_tokens[token_address]
+            return True
+        else:
+            logging.error(f"❌ SELL FAILED: {token_address}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Error in execute_optimized_sell: {e}")
+        return False
+
 def execute_with_hard_timeout(command, timeout_seconds=8):
     """Execute command with HARD timeout that KILLS the process - SELL OPERATIONS ONLY"""
     
@@ -7469,32 +7495,6 @@ def find_newest_tokens():
         logging.error(f"Error in find_newest_tokens: {str(e)}")
         return []
 
-def execute_optimized_sell(token_address: str) -> bool:
-    """Execute sell for a token"""
-    try:
-        # Get token balance to sell
-        token_balance = get_token_balance(token_address)
-        if not token_balance or token_balance == 0:
-            logging.warning(f"No balance to sell for {token_address}")
-            return False
-            
-        # Execute sell via JavaScript
-        success, result = execute_via_javascript(token_address, token_balance, True)  # True = sell
-        
-        if success:
-            logging.info(f"✅ SELL SUCCESS: {token_address}")
-            # Remove from monitoring
-            if token_address in monitored_tokens:
-                del monitored_tokens[token_address]
-            return True
-        else:
-            logging.error(f"❌ SELL FAILED: {token_address}")
-            return False
-            
-    except Exception as e:
-        logging.error(f"Error in execute_optimized_sell: {e}")
-        return False
-
 def monitor_token_peak_price(token_address):
     """Track token peak price and sell if it drops significantly after gains."""
     global daily_profit
@@ -7567,21 +7567,40 @@ def monitor_token_price_for_consistent_profits(token_address):
     # 1. Hit $20 profit? SELL IMMEDIATELY
     if current_profit_usd >= 20:
         logging.info(f"💰 TARGET HIT: ${current_profit_usd:.2f} profit - SELLING!")
-        execute_optimized_sell(token_address)
-        update_daily_stats(20)
+        try:
+            execute_optimized_sell(token_address)
+            update_daily_stats(20)
+        except NameError:
+            logging.warning("execute_optimized_sell not found, using fallback...")
+            success, result = execute_via_javascript(token_address, position_size_sol, True)
+            if success:
+                logging.info(f"✅ FALLBACK SELL SUCCESS: {token_address[:8]}")
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
+                update_daily_stats(20)
         return
     
     # 2. Stop loss at EITHER -12% OR -$10 (whichever comes first)
     if current_gain_pct <= -12 or current_profit_usd <= -10:
         logging.info(f"🛑 STOP LOSS: {current_gain_pct:.1f}% (${current_profit_usd:.2f}) - SELLING!")
-        execute_optimized_sell(token_address)
-        update_daily_stats(current_profit_usd)
+        try:
+            execute_optimized_sell(token_address)
+            update_daily_stats(current_profit_usd)
+        except NameError:
+            logging.warning("execute_optimized_sell not found, using fallback...")
+            success, result = execute_via_javascript(token_address, position_size_sol, True)
+            if success:
+                logging.info(f"✅ FALLBACK STOP LOSS SELL: {token_address[:8]}")
+                if token_address in monitored_tokens:
+                    del monitored_tokens[token_address]
+                update_daily_stats(current_profit_usd)
         return
     
     # 3. Just log progress - NO TIME-BASED SELLING
     seconds_held = time.time() - token_data['buy_time']
     if int(seconds_held) % 30 == 0:  # Log every 30 seconds
         logging.info(f"📊 {token_address[:8]}: ${current_profit_usd:.2f} profit ({current_gain_pct:.1f}%) after {seconds_held/60:.1f} min")
+
 
 def update_daily_stats(profit_usd):
     """Track progress toward $500 daily goal"""
