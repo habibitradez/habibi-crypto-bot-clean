@@ -2852,7 +2852,7 @@ def find_high_momentum_tokens(max_tokens: int = 3) -> List[str]:
     
     try:
         # 1. Get new tokens from multiple sources
-        helius_tokens = get_helius_new_tokens(limit=20)  # Your existing function
+        helius_tokens = enhanced_find_newest_tokens_with_free_apis()[:20]  # Use your existing function
         
         # 2. Quick pre-filter
         for token_data in helius_tokens:
