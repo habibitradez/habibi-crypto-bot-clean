@@ -34,6 +34,17 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
+daily_stats = {
+    'trades_executed': 0,
+    'trades_successful': 0,
+    'total_profit_usd': 0,
+    'total_fees_paid': 0,
+    'best_trade': 0,
+    'worst_trade': 0,
+    'start_time': time.time(),
+    'last_reset': time.time()
+}
+
 # Configuration from environment variables with fallbacks
 CONFIG = {
     'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
@@ -43,7 +54,7 @@ CONFIG = {
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
     'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '8')),  # 2x return
-    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '12')),  # Adding this for backward compatibility
+    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Adding this for backward compatibility
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Adding this for backward compatibility
     'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '5')),
@@ -53,7 +64,7 @@ CONFIG = {
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Reduced to 0.10 SOL
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.12')),  # Reduced to 0.10 SOL
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
@@ -80,11 +91,11 @@ CONFIG = {
     },
 
     'LIQUIDITY_FILTER': {
-    'min_liquidity_usd': 20000,
-    'min_age_minutes': 5,
+    'min_liquidity_usd': 50000,
+    'min_age_minutes': 10,
     'max_age_minutes': 180,
     'min_holders': 50,
-    'min_volume_usd': 2000
+    'min_volume_usd': 10000
     },
 
     'HOLD_TIME': {
@@ -2428,6 +2439,26 @@ def enhanced_token_filter(token_address):
         logging.warning(f"Token filter error for {token_address[:8]}: {str(e)}")
         return False
 
+def calculate_optimal_position_size() -> float:
+    """Calculate position size based on balance and daily progress"""
+    try:
+        balance = get_wallet_balance_sol()
+        
+        # Scale position size with balance for compound growth
+        if balance < 0.3:
+            return min(0.05, balance * 0.25)  # 25% of small balance
+        elif balance < 0.8:
+            return min(0.12, balance * 0.20)  # 20% of medium balance  
+        elif balance < 2.0:
+            return min(0.20, balance * 0.15)  # 15% of good balance
+        else:
+            return min(0.30, balance * 0.12)  # 12% of large balance (max 0.3 SOL)
+            
+    except Exception as e:
+        logging.error(f"Error calculating position size: {e}")
+        return 0.1  # Safe fallback
+
+
 def calculate_trade_profit(buy_price, sell_price, amount_sol):
     """Calculate actual profit from a trade."""
     try:
@@ -2569,6 +2600,35 @@ def enhanced_token_filter_with_liquidity(potential_tokens):
     
     return [token['address'] for token in filtered_tokens[:3]]  # Return top 3
     
+def reset_daily_stats():
+    """Reset stats for new trading day"""
+    global daily_stats
+    daily_stats = {
+        'trades_executed': 0,
+        'trades_successful': 0,
+        'total_profit_usd': 0,
+        'total_fees_paid': 0,
+        'best_trade': 0,
+        'worst_trade': 0,
+        'start_time': time.time()
+    }
+
+def calculate_recent_success_rate(hours: int = 4) -> float:
+    """Calculate success rate over recent hours"""
+    # Implement based on your trade history
+    # Return percentage (0-100)
+    return 75.0  # Placeholder
+    
+def get_market_volatility_index() -> float:
+    """Get current market volatility (0-1 scale)"""
+    # Implement based on recent price movements
+    # Return 0.0 (calm) to 1.0 (extreme volatility)
+    return 0.5  # Placeholder
+
+def get_recent_trade_history(hours: int = 2) -> List[dict]:
+    """Get recent trade history"""
+    # Implement based on your trade tracking
+    return []  # Placeholder
 
 def get_token_age_minutes(token_address):
     """Get token age in minutes since creation"""
@@ -2714,6 +2774,129 @@ def enhanced_token_scoring(token_data, source="unknown"):
     except Exception as e:
         print(f"⚠️ Scoring error: {e}")
         return 5  # Default safe score
+
+def risk_management_check(token_address: str, position_size: float) -> bool:
+    """Prevent catastrophic losses that destroy daily profits"""
+    
+    # Check portfolio concentration
+    total_portfolio_value = get_wallet_balance_sol() * 240  # USD value
+    position_value = position_size * 240
+    
+    # Never risk more than 15% of portfolio on single trade
+    if position_value > total_portfolio_value * 0.15:
+        logging.warning(f"❌ Position too large: ${position_value:.0f} > 15% of ${total_portfolio_value:.0f}")
+        return False
+    
+    # Check if we've had recent losses
+    recent_trades = get_recent_trade_history(hours=2)  # Last 2 hours
+    recent_losses = [t for t in recent_trades if t['profit'] < 0]
+    
+    # If 3+ losses in 2 hours, reduce position size or pause
+    if len(recent_losses) >= 3:
+        logging.warning(f"⚠️ {len(recent_losses)} recent losses - using smaller position")
+        return position_size * 0.5  # Half size after losses
+    
+    # Check daily drawdown
+    daily_stats = get_daily_stats()
+    if daily_stats['total_profit_usd'] < -100:  # More than $100 daily loss
+        logging.warning(f"❌ Daily drawdown limit reached: ${daily_stats['total_profit_usd']:.2f}")
+        return False
+    
+    return True
+
+def requires_momentum_validation(token_address: str) -> bool:
+    """Only trade tokens with strong momentum indicators"""
+    try:
+        # Get recent price action data
+        dex_data = get_dexscreener_data(token_address)
+        if not dex_data:
+            return False
+        
+        # Volume momentum (critical)
+        volume_24h = dex_data.get('volume_24h', 0)
+        volume_6h = dex_data.get('volume_6h', 0)
+        
+        if volume_24h < 100000:  # Minimum $100k daily volume
+            logging.info(f"❌ Volume too low: ${volume_24h:,.0f}")
+            return False
+        
+        # Price momentum (last hour)
+        price_change_1h = dex_data.get('price_change_1h', 0)
+        if price_change_1h < 5:  # Minimum 5% price increase in last hour
+            logging.info(f"❌ No price momentum: {price_change_1h:.1f}% last hour")
+            return False
+        
+        # Liquidity quality
+        liquidity = dex_data.get('liquidity_usd', 0)
+        if liquidity < 200000:  # Raised to $200k minimum
+            logging.info(f"❌ Liquidity insufficient: ${liquidity:,.0f}")
+            return False
+        
+        # Volume/Liquidity ratio (indicates activity)
+        volume_ratio = volume_24h / liquidity if liquidity > 0 else 0
+        if volume_ratio < 0.3:  # 30% daily turnover minimum
+            logging.info(f"❌ Low activity ratio: {volume_ratio:.2f}")
+            return False
+        
+        logging.info(f"✅ High momentum: ${volume_24h:,.0f} vol, +{price_change_1h:.1f}% 1h, ${liquidity:,.0f} liq")
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error in momentum validation: {e}")
+        return False
+
+def find_high_momentum_tokens(max_tokens: int = 3) -> List[str]:
+    """Find the best momentum tokens quickly"""
+    
+    candidates = []
+    
+    try:
+        # 1. Get new tokens from multiple sources
+        helius_tokens = get_helius_new_tokens(limit=20)  # Your existing function
+        
+        # 2. Quick pre-filter
+        for token_data in helius_tokens:
+            token_address = token_data.get('address')
+            
+            if not token_address or token_address in monitored_tokens:
+                continue
+                
+            # Quick liquidity check first (fastest filter)
+            quick_liquidity = token_data.get('liquidity_usd', 0)
+            if quick_liquidity < 150000:  # Quick filter at $150k
+                continue
+            
+            # Add to candidates for full validation
+            candidates.append(token_address)
+            
+            if len(candidates) >= max_tokens * 3:  # Get 3x what we need
+                break
+        
+        # 3. Full validation on best candidates
+        validated_tokens = []
+        
+        for token_address in candidates:
+            try:
+                # Full security + momentum check
+                if (meets_liquidity_requirements(token_address) and 
+                    requires_momentum_validation(token_address)):
+                    
+                    validated_tokens.append(token_address)
+                    logging.info(f"✅ QUALITY TOKEN: {token_address[:8]}")
+                    
+                    if len(validated_tokens) >= max_tokens:
+                        break
+                        
+            except Exception as e:
+                logging.error(f"❌ Validation failed for {token_address[:8]}: {e}")
+                continue
+        
+        logging.info(f"🔍 Discovery: {len(validated_tokens)}/{len(candidates)} tokens passed validation")
+        return validated_tokens
+        
+    except Exception as e:
+        logging.error(f"❌ Error in token discovery: {e}")
+        return []
 
 def add_token_to_monitoring(token_address, buy_price, amount, signature):
     """Add token to monitoring list."""
@@ -3070,6 +3253,37 @@ def execute_optimized_sell(token_address: str) -> bool:
     except Exception as e:
         logging.error(f"Error in execute_optimized_sell: {e}")
         return False
+
+def execute_partial_sell(token_address: str, percentage: float) -> bool:
+    """Execute partial sell (33% at a time for progressive profits)"""
+    try:
+        logging.info(f"💰 Executing {percentage*100:.0f}% sell for {token_address[:8]}")
+        
+        # For partial sells, we need to get actual token balance and sell a percentage
+        # This is a simplified version - you might need to adjust based on your token balance logic
+        
+        # Use environment variable to signal partial sell
+        import os
+        os.environ['PARTIAL_SELL_PERCENTAGE'] = str(percentage)
+        
+        # Execute sell via JavaScript
+        success, result = execute_via_javascript(token_address, 0, True)  # Amount doesn't matter for sells
+        
+        # Clean up environment
+        if 'PARTIAL_SELL_PERCENTAGE' in os.environ:
+            del os.environ['PARTIAL_SELL_PERCENTAGE']
+        
+        if success:
+            logging.info(f"✅ PARTIAL SELL SUCCESS: {percentage*100:.0f}% of {token_address[:8]}")
+            return True
+        else:
+            logging.error(f"❌ PARTIAL SELL FAILED: {token_address[:8]}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"❌ Error in partial sell: {e}")
+        return False
+
 
 def execute_with_hard_timeout(command, timeout_seconds=8):
     """Execute command with HARD timeout that KILLS the process - SELL OPERATIONS ONLY"""
@@ -3582,8 +3796,41 @@ def enhanced_trading_cycle():
     else:
         print(f"❌ BUY FAILED: {selected_token} ({buy_successes}/{buy_attempts} success rate)")
 
+def optimize_performance_settings():
+    """Dynamically adjust settings based on market conditions"""
+    
+    # Get recent performance metrics
+    recent_success_rate = calculate_recent_success_rate(hours=4)
+    market_volatility = get_market_volatility_index()  # Implement based on recent price swings
+    
+    # Adjust slippage based on market conditions
+    if market_volatility > 0.8:  # High volatility
+        os.environ['DYNAMIC_SLIPPAGE_MULTIPLIER'] = '1.5'  # 50% higher slippage
+        logging.info("📈 High volatility detected - increasing slippage tolerance")
+    elif market_volatility < 0.3:  # Low volatility  
+        os.environ['DYNAMIC_SLIPPAGE_MULTIPLIER'] = '0.8'  # 20% lower slippage
+        logging.info("📉 Low volatility detected - tightening slippage")
+    else:
+        os.environ['DYNAMIC_SLIPPAGE_MULTIPLIER'] = '1.0'  # Normal
+    
+    # Adjust discovery frequency based on success rate
+    if recent_success_rate > 80:  # High success
+        discovery_interval = 5   # Look for new tokens every 5 seconds
+        max_positions = 4        # Allow more positions
+    elif recent_success_rate > 60:  # Medium success
+        discovery_interval = 10  # Every 10 seconds
+        max_positions = 3        # Standard positions
+    else:  # Low success
+        discovery_interval = 20  # Every 20 seconds
+        max_positions = 2        # Conservative positions
+        logging.warning(f"⚠️ Low success rate: {recent_success_rate:.1f}% - reducing activity")
+    
+    return {
+        'discovery_interval': discovery_interval,
+        'max_positions': max_positions,
+        'slippage_multiplier': float(os.environ.get('DYNAMIC_SLIPPAGE_MULTIPLIER', '1.0'))
+    }
 
-# COMPLETE FUNCTION 3: Performance Dashboard (100% Complete)
 def print_performance_dashboard():
     """Print detailed performance dashboard"""
     global CURRENT_DAILY_PROFIT, buy_attempts, buy_successes, sell_attempts, sell_successes
@@ -3661,77 +3908,228 @@ def enhanced_main_loop():
             print(f"🔄 Quick recovery in 5 seconds...")
             time.sleep(5)  # Faster recovery
 
-
-def consistent_profit_trading_loop():
-    """The $500/day consistent profit machine"""
+def ultimate_500_dollar_trading_loop():
+    """The complete system for consistent $500 daily profits"""
     
-    logging.info("💰 CONSISTENT $500/DAY MODE ACTIVATED")
-    logging.info("🎯 Target: 25 trades × $20 = $500")
+    logging.info("🚀 STARTING ULTIMATE $500/DAY TRADING SYSTEM")
     
     # Initialize daily tracking
-    global daily_profit_usd, trades_today
-    daily_profit_usd = 0
-    trades_today = 0
-    start_time = time.time()
+    reset_daily_stats()
+    daily_target = 500
     
-    while daily_profit_usd < 500:
+    # Performance tracking
+    cycle_count = 0
+    last_optimization = time.time()
+    
+    while True:
         try:
-            # Show progress
-            hours_elapsed = (time.time() - start_time) / 3600
-            hourly_rate = daily_profit_usd / hours_elapsed if hours_elapsed > 0 else 0
+            cycle_count += 1
+            cycle_start = time.time()
             
-            logging.info(f"\n💰 CYCLE {trades_today + 1} | Progress: ${daily_profit_usd:.2f}/$500")
-            logging.info(f"⏰ Rate: ${hourly_rate:.2f}/hour | Projected 24h: ${hourly_rate * 24:.2f}")
+            # === DAILY PROGRESS CHECK ===
+            stats = get_daily_stats()
+            current_profit = stats['total_profit_usd'] - stats['total_fees_paid']
             
-            # Get high-confidence tokens only
-            tokens = get_high_confidence_tokens()
-            
-            if not tokens:
-                logging.info("⏳ No high-confidence tokens - waiting 30s...")
+            # Check if target achieved
+            if current_profit >= daily_target:
+                logging.info(f"🎉 TARGET ACHIEVED: ${current_profit:.2f}! Switching to monitoring mode.")
+                # Continue monitoring existing positions but don't take new ones
+                for token in list(monitored_tokens.keys()):
+                    monitor_token_price_for_consistent_profits(token)
                 time.sleep(30)
                 continue
             
-            # Trade the best token
-            best_token = tokens[0]
+            # === PERFORMANCE OPTIMIZATION (every 10 minutes) ===
+            if time.time() - last_optimization > 600:  # 10 minutes
+                settings = optimize_performance_settings()
+                last_optimization = time.time()
+                logging.info(f"⚙️ Performance optimized: {settings}")
+            else:
+                settings = {'discovery_interval': 10, 'max_positions': 3, 'slippage_multiplier': 1.0}
             
-            # Fixed position size for consistency
-            position_size = 0.15  # $36 position
+            # === POSITION MONITORING (HIGHEST PRIORITY) ===
+            active_positions = len(monitored_tokens)
+            if active_positions > 0:
+                logging.info(f"📊 Monitoring {active_positions} positions...")
+                for token_address in list(monitored_tokens.keys()):
+                    monitor_token_price_for_consistent_profits(token_address)
             
-            logging.info(f"🎯 TRADING: {best_token[:8]} with {position_size} SOL")
+            # === NEW POSITION LOGIC ===
+            remaining_target = daily_target - current_profit
             
-            # Execute trade using your existing execute_via_javascript
-            success, result = execute_optimized_trade(best_token, position_size)
+            # Don't take new positions if we have max positions
+            if active_positions >= settings['max_positions']:
+                logging.info(f"⏸️ Max positions ({active_positions}/{settings['max_positions']}) - monitoring only")
+                time.sleep(settings['discovery_interval'])
+                continue
             
-            if success:
-                # Add to monitoring with $20 target
-                monitored_tokens[best_token] = {
-                    'initial_price': get_token_price(best_token) or 0.000001,
-                    'buy_time': time.time(),
-                    'position_size': position_size,
-                    'target_profit_usd': 20
-                }
+            # Check if we have enough balance for new trade
+            balance = get_wallet_balance_sol()
+            optimal_position = calculate_optimal_position_size()
+            
+            if balance < optimal_position + 0.02:
+                logging.warning(f"⚠️ Insufficient balance: {balance:.4f} SOL")
+                time.sleep(30)
+                continue
+            
+            # === TOKEN DISCOVERY ===
+            logging.info(f"🔍 Discovery cycle {cycle_count} - Target remaining: ${remaining_target:.2f}")
+            
+            momentum_tokens = find_high_momentum_tokens(max_tokens=1)  # Get one good token
+            
+            if momentum_tokens:
+                best_token = momentum_tokens[0]
                 
-                logging.info("✅ Trade executed - monitoring for $20 profit...")
+                # Risk management check
+                if not risk_management_check(best_token, optimal_position):
+                    logging.warning(f"❌ Risk check failed for {best_token[:8]}")
+                    time.sleep(settings['discovery_interval'])
+                    continue
+                
+                # === EXECUTE TRADE ===
+                logging.info(f"🎯 EXECUTING: {best_token[:8]} | {optimal_position:.3f} SOL | ${optimal_position * 240:.0f}")
+                
+                trade_start = time.time()
+                success, result = execute_optimized_trade(best_token, optimal_position)
+                trade_time = time.time() - trade_start
+                
+                if success:
+                    logging.info(f"✅ TRADE SUCCESS: {best_token[:8]} in {trade_time:.2f}s")
+                    update_daily_stats(0, 2.5)  # Count trade and fees
+                else:
+                    logging.error(f"❌ TRADE FAILED: {best_token[:8]} in {trade_time:.2f}s")
+                    
+            else:
+                logging.info(f"⏳ No momentum tokens found - waiting {settings['discovery_interval']}s")
             
-            # Monitor all positions
-            for token in list(monitored_tokens.keys()):
-                monitor_token_price_for_consistent_profits(token)
+            # === CYCLE TIMING ===
+            cycle_time = time.time() - cycle_start
+            sleep_time = max(1, settings['discovery_interval'] - cycle_time)
             
-            # Prevent overwhelming the system
-            time.sleep(10)
+            # Show progress
+            if cycle_count % 10 == 0:  # Every 10 cycles
+                hours_running = (time.time() - stats['start_time']) / 3600
+                hourly_rate = current_profit / hours_running if hours_running > 0 else 0
+                eta_hours = remaining_target / hourly_rate if hourly_rate > 0 else 0
+                
+                logging.info(f"📈 PROGRESS: ${current_profit:.2f}/{daily_target} | ${hourly_rate:.2f}/hr | ETA: {eta_hours:.1f}h")
+            
+            time.sleep(sleep_time)
+            
+        except KeyboardInterrupt:
+            logging.info("🛑 Trading stopped by user")
+            break
+        except Exception as e:
+            logging.error(f"❌ Critical error in trading loop: {e}")
+            time.sleep(60)  # Wait 1 minute on errors
+
+
+def consistent_profit_trading_loop():
+    """OPTIMIZED: Faster cycle for $500/day targets"""
+    
+    daily_profit_target = 500  # USD
+    cycle_count = 0
+    
+    while True:
+        try:
+            cycle_count += 1
+            cycle_start = time.time()
+            
+            # Check daily progress
+            daily_stats = get_daily_stats()  # Implement this to track profits
+            current_profit = daily_stats.get('total_profit_usd', 0)
+            
+            logging.info(f"🔄 CYCLE {cycle_count} | Daily Progress: ${current_profit:.2f}/${daily_profit_target}")
+            
+            # Stop trading if target hit
+            if current_profit >= daily_profit_target:
+                logging.info(f"🎉 DAILY TARGET ACHIEVED: ${current_profit:.2f}! Pausing until tomorrow.")
+                time.sleep(3600)  # Wait 1 hour before checking again
+                continue
+            
+            # Calculate remaining target
+            remaining_target = daily_profit_target - current_profit
+            logging.info(f"💰 Remaining target: ${remaining_target:.2f}")
+            
+            # 1. Monitor existing positions first (most important)
+            active_positions = len(monitored_tokens)
+            if active_positions > 0:
+                logging.info(f"📊 Monitoring {active_positions} active positions...")
+                for token_address in list(monitored_tokens.keys()):
+                    monitor_token_price_for_consistent_profits(token_address)
+                
+                # Don't look for new trades if we have 3+ positions
+                if active_positions >= 3:
+                    logging.info(f"⏸️ Max positions reached ({active_positions}/3) - monitoring only")
+                    time.sleep(10)
+                    continue
+            
+            # 2. Check balance for new trades
+            balance = get_wallet_balance_sol()
+            min_balance_needed = calculate_optimal_position_size() + 0.02  # Position + fees
+            
+            if balance < min_balance_needed:
+                logging.warning(f"⚠️ Low balance: {balance:.4f} SOL < {min_balance_needed:.4f} needed")
+                time.sleep(30)
+                continue
+            
+            # 3. Find high-momentum tokens (faster discovery)
+            logging.info(f"🔍 DISCOVERY: Looking for momentum tokens...")
+            
+            # Use your existing token discovery but add momentum filter
+            candidate_tokens = []
+            
+            # Quick scan for new tokens (your existing logic)
+            helius_tokens = get_helius_tokens()  # Your existing function
+            
+            for token_data in helius_tokens[:10]:  # Check top 10 only for speed
+                token_address = token_data.get('address')
+                
+                # Quick pre-filters
+                if not token_address or token_address in monitored_tokens:
+                    continue
+                
+                # Enhanced validation with momentum
+                if (meets_liquidity_requirements(token_address) and 
+                    requires_momentum_validation(token_address)):
+                    candidate_tokens.append(token_address)
+                    break  # Take first good token for speed
+            
+            # 4. Execute trade if good token found
+            if candidate_tokens:
+                best_token = candidate_tokens[0]
+                position_size = calculate_optimal_position_size()
+                
+                logging.info(f"🎯 EXECUTING: {best_token[:8]} with {position_size:.3f} SOL")
+                
+                success, result = execute_optimized_trade(best_token, position_size)
+                
+                if success:
+                    logging.info(f"✅ TRADE SUCCESS: {best_token[:8]} - Monitoring for profits")
+                else:
+                    logging.error(f"❌ TRADE FAILED: {best_token[:8]}")
+            else:
+                logging.info(f"⏳ No momentum tokens found - waiting...")
+            
+            # 5. Adaptive cycle timing
+            cycle_time = time.time() - cycle_start
+            
+            # Faster cycles when close to target
+            if remaining_target > 200:
+                sleep_time = 15  # 15 second cycles when far from target
+            elif remaining_target > 100:
+                sleep_time = 10  # 10 second cycles when getting close
+            else:
+                sleep_time = 5   # 5 second cycles when very close
+            
+            actual_sleep = max(1, sleep_time - cycle_time)
+            logging.info(f"⏱️ Cycle {cycle_count} completed in {cycle_time:.1f}s - Next cycle in {actual_sleep:.1f}s")
+            time.sleep(actual_sleep)
             
         except Exception as e:
-            logging.error(f"Cycle error: {e}")
-            time.sleep(15)
-    
-    # Daily target reached!
-    total_hours = (time.time() - start_time) / 3600
-    
-    logging.info("🎉 DAILY TARGET ACHIEVED! 🎉")
-    logging.info(f"💰 Total Profit: ${daily_profit_usd:.2f}")
-    logging.info(f"📊 Total Trades: {trades_today}")
-    logging.info(f"⏰ Time Taken: {total_hours:.1f} hours")
-    logging.info(f"📈 Average per trade: ${daily_profit_usd/trades_today:.2f}")
+            logging.error(f"❌ Error in trading cycle: {e}")
+            time.sleep(30)
+
     
 
 def update_performance_stats(success, profit_amount=0, token_address=""):
@@ -7019,67 +7417,53 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
         logging.error(traceback.format_exc())
         return None, None
 
-def execute_optimized_trade(token_address: str, amount_sol: float = 0.15) -> Tuple[bool, Optional[str]]:
-    """Wrapper that uses the WORKING execute_via_javascript but with better debugging."""
-    global buy_attempts, buy_successes
+def execute_optimized_trade(token_address: str, amount_sol: float) -> Tuple[bool, Optional[str]]:
+    """Enhanced execution with momentum validation and progress tracking"""
+    global buy_attempts, buy_successes, monitored_tokens, token_buy_timestamps
     
     buy_attempts += 1
-    logging.info(f"🎯 Starting optimized trade for {token_address} - Amount: {amount_sol} SOL")
+    start_time = time.time()
     
-    # VALIDATE TOKEN IS STILL TRADEABLE
-    if not validate_token_still_tradeable(token_address):
-        logging.error(f"❌ Token {token_address[:8]} no longer tradeable - skipping")
+    logging.info(f"🎯 EXECUTE: {token_address[:8]} | {amount_sol:.3f} SOL | ${amount_sol * 240:.0f}")
+    
+    # Final momentum check right before execution
+    if not requires_momentum_validation(token_address):
+        logging.warning(f"❌ Lost momentum during execution: {token_address[:8]}")
         return False, None
     
-    # Fresh balance check - FIXED VERSION
+    # Execute trade
     try:
-        # Use your existing balance check function
-        actual_balance = get_wallet_balance_sol()  # This function should already exist
-        logging.info(f"💰 Fresh balance check: {actual_balance:.6f} SOL")
+        success, result = execute_via_javascript(token_address, amount_sol, False)
+        execution_time = time.time() - start_time
         
-        if actual_balance < amount_sol + 0.01:
-            logging.error(f"❌ Insufficient balance: {actual_balance:.6f} SOL < {amount_sol + 0.01} SOL needed")
+        logging.info(f"⚡ Execution time: {execution_time:.2f}s")
+        
+        if success:
+            buy_successes += 1
+            
+            # Set up progressive profit monitoring
+            initial_price = get_token_price(token_address) or 0.000001
+            
+            monitored_tokens[token_address] = {
+                'initial_price': initial_price,
+                'buy_time': time.time(),
+                'position_size': amount_sol,
+                'tokens_sold': 0,  # Track partial sells
+                'target_profit_usd': 20  # Per-position target
+            }
+            
+            token_buy_timestamps[token_address] = time.time()
+            
+            logging.info(f"✅ BUY SUCCESS: {token_address[:8]} | Monitoring for progressive profits")
+            return True, result
+        else:
+            logging.error(f"❌ BUY FAILED: {token_address[:8]} | Time: {execution_time:.2f}s")
             return False, None
             
     except Exception as e:
-        logging.error(f"❌ Error checking fresh balance: {e}")
-        # Continue anyway
-    
-    # Log the exact command being executed
-    logging.info(f"📞 Calling execute_via_javascript({token_address}, {amount_sol}, False)")
-    
-    # Use your execute_via_javascript function
-    try:
-        success, result = execute_via_javascript(token_address, amount_sol, False)  # False = buy
-        
-        # Log the raw result
-        logging.info(f"📤 JavaScript executor returned: success={success}, result={result[:100] if result else 'None'}")
-        
-    except Exception as e:
-        logging.error(f"❌ Exception in execute_via_javascript: {e}")
+        logging.error(f"❌ Execution error: {e}")
         return False, None
-    
-    if success:
-        buy_successes += 1
-        logging.info(f"✅ Buy successful via JavaScript executor")
-        
-        # Set up the $20 profit monitoring
-        initial_price = get_token_price(token_address) or 0.000001
-        
-        monitored_tokens[token_address] = {
-            'initial_price': initial_price,
-            'buy_time': time.time(),
-            'position_size': amount_sol,
-            'target_profit_usd': 20  # $20 profit target
-        }
-        
-        token_buy_timestamps[token_address] = time.time()
-        
-        return True, result
-    else:
-        logging.error(f"❌ Buy failed via JavaScript executor")
-        logging.error(f"📋 Failure details: {result}")
-        return False, None
+
 
 def execute_via_javascript(token_address, amount, is_sell=False):
     """Execute trade via JavaScript with proper amount handling"""
@@ -7545,16 +7929,14 @@ def monitor_token_peak_price(token_address):
     monitored_tokens[token_address] = token_data
 
 def monitor_token_price_for_consistent_profits(token_address):
-    """Optimized for consistent $20 profits per trade"""
+    """FIXED: Progressive profit taking for $500/day consistency"""
     
     if token_address not in monitored_tokens:
         return
     
     token_data = monitored_tokens[token_address]
     position_size_sol = token_data.get('position_size', 0.15)
-    position_value_usd = position_size_sol * 240  # $36 at 0.15 SOL
-    
-    TARGET_PROFIT_USD = 20
+    position_value_usd = position_size_sol * 240  # Current SOL price
     
     current_price = get_token_price(token_address)
     if not current_price:
@@ -7564,57 +7946,81 @@ def monitor_token_price_for_consistent_profits(token_address):
     current_gain_pct = ((current_price - initial_price) / initial_price) * 100
     current_profit_usd = position_value_usd * (current_gain_pct / 100)
     
-    # 1. Hit $20 profit? SELL IMMEDIATELY
-    if current_profit_usd >= 20:
-        logging.info(f"💰 TARGET HIT: ${current_profit_usd:.2f} profit - SELLING!")
-        try:
-            execute_optimized_sell(token_address)
-            update_daily_stats(20)
-        except NameError:
-            logging.warning("execute_optimized_sell not found, using fallback...")
-            success, result = execute_via_javascript(token_address, position_size_sol, True)
-            if success:
-                logging.info(f"✅ FALLBACK SELL SUCCESS: {token_address[:8]}")
-                if token_address in monitored_tokens:
-                    del monitored_tokens[token_address]
-                update_daily_stats(20)
+    # PROGRESSIVE PROFIT STRATEGY (Key to $500/day)
+    tokens_sold = token_data.get('tokens_sold', 0)
+    
+    # Sell 33% at +15% gain
+    if current_gain_pct >= 15 and tokens_sold == 0:
+        logging.info(f"🎯 PROFIT TAKE 1: +{current_gain_pct:.1f}% - Selling 33% (${current_profit_usd:.2f})")
+        success = execute_partial_sell(token_address, 0.33)
+        if success:
+            token_data['tokens_sold'] = 0.33
+            update_daily_stats(current_profit_usd * 0.33)
         return
     
-    # 2. Stop loss at EITHER -12% OR -$10 (whichever comes first)
-    if current_gain_pct <= -12 or current_profit_usd <= -10:
-        logging.info(f"🛑 STOP LOSS: {current_gain_pct:.1f}% (${current_profit_usd:.2f}) - SELLING!")
-        try:
-            execute_optimized_sell(token_address)
+    # Sell another 33% at +30% gain  
+    elif current_gain_pct >= 30 and tokens_sold <= 0.33:
+        logging.info(f"🎯 PROFIT TAKE 2: +{current_gain_pct:.1f}% - Selling 33% (${current_profit_usd:.2f})")
+        success = execute_partial_sell(token_address, 0.33)
+        if success:
+            token_data['tokens_sold'] = 0.66
+            update_daily_stats(current_profit_usd * 0.33)
+        return
+    
+    # Sell remaining 34% at +50% gain
+    elif current_gain_pct >= 50 and tokens_sold <= 0.66:
+        logging.info(f"🎯 PROFIT TAKE 3: +{current_gain_pct:.1f}% - Selling final 34% (${current_profit_usd:.2f})")
+        success = execute_optimized_sell(token_address)
+        if success:
+            update_daily_stats(current_profit_usd * 0.34)
+            if token_address in monitored_tokens:
+                del monitored_tokens[token_address]
+        return
+    
+    # STOP LOSS: -8% (tighter than your current -12%)
+    if current_gain_pct <= -8:
+        logging.info(f"🛑 STOP LOSS: {current_gain_pct:.1f}% loss - SELLING ALL")
+        success = execute_optimized_sell(token_address)
+        if success:
             update_daily_stats(current_profit_usd)
-        except NameError:
-            logging.warning("execute_optimized_sell not found, using fallback...")
-            success, result = execute_via_javascript(token_address, position_size_sol, True)
-            if success:
-                logging.info(f"✅ FALLBACK STOP LOSS SELL: {token_address[:8]}")
-                if token_address in monitored_tokens:
-                    del monitored_tokens[token_address]
-                update_daily_stats(current_profit_usd)
+            if token_address in monitored_tokens:
+                del monitored_tokens[token_address]
         return
     
-    # 3. Just log progress - NO TIME-BASED SELLING
+    # Progress logging every 30 seconds
     seconds_held = time.time() - token_data['buy_time']
-    if int(seconds_held) % 30 == 0:  # Log every 30 seconds
-        logging.info(f"📊 {token_address[:8]}: ${current_profit_usd:.2f} profit ({current_gain_pct:.1f}%) after {seconds_held/60:.1f} min")
+    if int(seconds_held) % 30 == 0:
+        sold_pct = tokens_sold * 100
+        logging.info(f"📊 {token_address[:8]}: ${current_profit_usd:.2f} ({current_gain_pct:.1f}%) | {sold_pct:.0f}% sold | {seconds_held/60:.1f}min")
 
 
-def update_daily_stats(profit_usd):
-    """Track progress toward $500 daily goal"""
-    global daily_profit_usd, trades_today
+def update_daily_stats(profit_usd: float, fees_usd: float = 2.5):
+    """Track daily progress toward $500 target"""
+    global daily_stats
     
-    daily_profit_usd += profit_usd
-    trades_today += 1
+    daily_stats['trades_executed'] += 1
+    daily_stats['total_profit_usd'] += profit_usd
+    daily_stats['total_fees_paid'] += fees_usd
     
-    avg_profit = daily_profit_usd / trades_today if trades_today > 0 else 0
-    trades_needed = (500 - daily_profit_usd) / 20 if avg_profit > 0 else 25
+    if profit_usd > 0:
+        daily_stats['trades_successful'] += 1
+        daily_stats['best_trade'] = max(daily_stats['best_trade'], profit_usd)
+    else:
+        daily_stats['worst_trade'] = min(daily_stats['worst_trade'], profit_usd)
     
-    logging.info(f"📊 DAILY PROGRESS: ${daily_profit_usd:.2f}/$500")
-    logging.info(f"📈 Trades: {trades_today} | Avg: ${avg_profit:.2f}")
-    logging.info(f"🎯 Need {int(trades_needed)} more trades at $20 each")
+    # Calculate key metrics
+    hours_running = (time.time() - daily_stats['start_time']) / 3600
+    success_rate = (daily_stats['trades_successful'] / daily_stats['trades_executed']) * 100 if daily_stats['trades_executed'] > 0 else 0
+    net_profit = daily_stats['total_profit_usd'] - daily_stats['total_fees_paid']
+    hourly_rate = net_profit / hours_running if hours_running > 0 else 0
+    
+    logging.info(f"📈 DAILY STATS: ${net_profit:.2f} profit | {success_rate:.1f}% success | ${hourly_rate:.2f}/hr | {daily_stats['trades_executed']} trades")
+    
+    return daily_stats
+
+def get_daily_stats():
+    """Get current daily statistics"""
+    return daily_stats
 
 def cleanup_memory():
     """Force garbage collection to free up memory."""
@@ -8858,22 +9264,24 @@ def execute_optimized_transaction(token_address, amount_sol):
 
 def main():
     """Main entry point for consistent $500/day profit trading."""
-    logging.info("============ CONSISTENT PROFIT BOT STARTING ============")
-    logging.info("💰 Target: 25 trades × $20 = $500 daily")
-    logging.info("📊 Position size: 0.15 SOL per trade")
+    logging.info("============= ULTIMATE $500/DAY BOT STARTING =============")
+    logging.info("🎯 Target: Progressive profits for $500 daily")
+    logging.info("📊 Strategy: 33% at +15%, +30%, +50% gains")
     
     if initialize():
         logging.info("✅ Initialization successful!")
         
         try:
-            # Start the consistent profit trading loop
-            consistent_profit_trading_loop()
+            # Start the NEW ultimate trading loop (not the old one)
+            ultimate_500_dollar_trading_loop()
             
         except KeyboardInterrupt:
             logging.info("\n🛑 Bot stopped by user")
             # Log final daily stats
-            logging.info(f"💰 Final daily profit: ${daily_profit_usd:.2f}")
-            logging.info(f"📊 Total trades today: {trades_today}")
+            final_stats = get_daily_stats()
+            final_profit = final_stats['total_profit_usd'] - final_stats['total_fees_paid']
+            logging.info(f"💰 Final daily profit: ${final_profit:.2f}")
+            logging.info(f"📊 Total trades today: {final_stats['trades_executed']}")
             
         except Exception as e:
             logging.error(f"❌ Fatal error: {e}")
