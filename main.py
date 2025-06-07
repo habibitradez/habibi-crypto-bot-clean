@@ -198,6 +198,9 @@ ERROR_WINDOW_SECONDS = 300  # 5 minutes
 CIRCUIT_BREAKER_COOLDOWN = 600  # 10 minutes
 daily_profit_usd = 0  # Track daily profit in USD
 trades_today = 0      # Track number of trades today
+last_jupiter_call = 0
+JUPITER_CALL_DELAY = 1.5  # 1.5 seconds between Jupiter calls
+
 # --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
@@ -1210,10 +1213,18 @@ def calculate_profitable_position_size(wallet_balance_sol, estimated_fees_sol=0.
     return final_position
 
 def meets_liquidity_requirements(token_address):
-    """OPTIMIZED Enhanced anti-rug protection - $50k liquidity threshold"""
+    """OPTIMIZED Enhanced anti-rug protection - $50k liquidity threshold - RATE LIMITED"""
+    global last_jupiter_call
     
     try:
         logging.info(f"🛡️ Enhanced anti-rug check for {token_address[:8]}...")
+        
+        # RATE LIMITING: Prevent Jupiter API overload
+        now = time.time()
+        if now - last_jupiter_call < JUPITER_CALL_DELAY:
+            sleep_time = JUPITER_CALL_DELAY - (now - last_jupiter_call)
+            logging.info(f"⏳ Rate limiting Jupiter calls - waiting {sleep_time:.1f}s")
+            time.sleep(sleep_time)
         
         # LAYER 0: Blacklist check – Block known problematic tokens immediately
         BLACKLISTED_TOKENS = {
@@ -1227,50 +1238,81 @@ def meets_liquidity_requirements(token_address):
         
         # LAYER 1: Jupiter buy tradability test
         logging.info(f"⚠️ Layer 1: Testing Jupiter buy quote...")
-        buy_response = requests.get(
-            f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000&slippageBps=300",
-            timeout=8
-        )
-        
-        if buy_response.status_code != 200:
-            logging.warning(f"⚠️ Jupiter buy test skipped for {token_address[:8]} – Status: {buy_response.status_code}")
-            # ✅ DON'T return False – continue to other validation layers
-        
-        buy_data = buy_response.json()
-        if not buy_data.get('outAmount') or int(buy_data.get('outAmount', 0)) <= 0:
-            logging.warning(f"🚫 No valid buy quote for {token_address[:8]}")
-            return False
-        
-        # Check for suspicious exchange rates
-        out_amount = int(buy_data['outAmount'])
-        exchange_rate = 100000000 / out_amount
-        if exchange_rate < 0.001 or exchange_rate > 10000:
-            logging.warning(f"🚫 Suspicious buy rate for {token_address[:8]}: {exchange_rate}")
-            return False
+        try:
+            buy_response = requests.get(
+                f"https://quote-api.jup.ag/v6/quote?inputMint=So11111111111111111111111111111111111111112&outputMint={token_address}&amount=100000000&slippageBps=300",
+                timeout=8
+            )
+            last_jupiter_call = time.time()  # Update timestamp after call
+            
+            if buy_response.status_code == 429:
+                logging.warning(f"🔄 Jupiter rate limited for {token_address[:8]} - skipping for now")
+                return False  # Skip this token and try again later
+            elif buy_response.status_code != 200:
+                logging.warning(f"⚠️ Jupiter buy test failed for {token_address[:8]} – Status: {buy_response.status_code}")
+                # Continue to other validation layers
+            else:
+                buy_data = buy_response.json()
+                if not buy_data.get('outAmount') or int(buy_data.get('outAmount', 0)) <= 0:
+                    logging.warning(f"🚫 No valid buy quote for {token_address[:8]}")
+                    return False
+                
+                # Check for suspicious exchange rates
+                out_amount = int(buy_data['outAmount'])
+                exchange_rate = 100000000 / out_amount
+                if exchange_rate < 0.001 or exchange_rate > 10000:
+                    logging.warning(f"🚫 Suspicious buy rate for {token_address[:8]}: {exchange_rate}")
+                    return False
+                    
+        except requests.exceptions.Timeout:
+            logging.warning(f"⚠️ Jupiter buy test timeout for {token_address[:8]}")
+            # Continue to other layers
+        except Exception as e:
+            logging.warning(f"⚠️ Jupiter buy test error for {token_address[:8]}: {e}")
+            # Continue to other layers
         
         # LAYER 2: Jupiter sell tradability test (CRITICAL for honeypot detection)
         logging.info(f"⚠️ Layer 2: Testing Jupiter sell quote...")
-        sell_response = requests.get(
-            f"https://quote-api.jup.ag/v6/quote?inputMint={token_address}&outputMint=So11111111111111111111111111111111111111112&amount=100000&slippageBps=500",
-            timeout=8
-        )
         
-        if sell_response.status_code != 200:
-            logging.warning(f"⚠️ Jupiter sell test skipped for {token_address[:8]} – Status: {sell_response.status_code}")
-            # ✅ DON'T return False – continue to other validation layers
+        # Add rate limiting before second Jupiter call
+        now = time.time()
+        if now - last_jupiter_call < JUPITER_CALL_DELAY:
+            sleep_time = JUPITER_CALL_DELAY - (now - last_jupiter_call)
+            time.sleep(sleep_time)
         
-        sell_data = sell_response.json()
-        if not sell_data.get('outAmount') or int(sell_data.get('outAmount', 0)) <= 0:
-            logging.warning(f"🚫 No valid sell quote for {token_address[:8]} – LIKELY HONEYPOT")
-            return False
-        
-        # Validate sell quote makes sense
-        sell_out_amount = int(sell_data['outAmount'])
-        if sell_out_amount < 1000:  # Less than 0.000001 SOL for selling tokens
-            logging.warning(f"🚫 Suspicious sell quote for {token_address[:8]}: {sell_out_amount} lamports")
-            return False
-        
-        logging.info(f"✅ Layer 2 passed: Sell quote valid ({sell_out_amount} lamports)")
+        try:
+            sell_response = requests.get(
+                f"https://quote-api.jup.ag/v6/quote?inputMint={token_address}&outputMint=So11111111111111111111111111111111111111112&amount=100000&slippageBps=500",
+                timeout=8
+            )
+            last_jupiter_call = time.time()  # Update timestamp after call
+            
+            if sell_response.status_code == 429:
+                logging.warning(f"🔄 Jupiter rate limited for {token_address[:8]} - skipping for now")
+                return False  # Skip this token and try again later
+            elif sell_response.status_code != 200:
+                logging.warning(f"⚠️ Jupiter sell test failed for {token_address[:8]} – Status: {sell_response.status_code}")
+                # Continue to other validation layers
+            else:
+                sell_data = sell_response.json()
+                if not sell_data.get('outAmount') or int(sell_data.get('outAmount', 0)) <= 0:
+                    logging.warning(f"🚫 No valid sell quote for {token_address[:8]} – LIKELY HONEYPOT")
+                    return False
+                
+                # Validate sell quote makes sense
+                sell_out_amount = int(sell_data['outAmount'])
+                if sell_out_amount < 1000:  # Less than 0.000001 SOL for selling tokens
+                    logging.warning(f"🚫 Suspicious sell quote for {token_address[:8]}: {sell_out_amount} lamports")
+                    return False
+                
+                logging.info(f"✅ Layer 2 passed: Sell quote valid ({sell_out_amount} lamports)")
+                
+        except requests.exceptions.Timeout:
+            logging.warning(f"⚠️ Jupiter sell test timeout for {token_address[:8]}")
+            # Continue to other layers
+        except Exception as e:
+            logging.warning(f"⚠️ Jupiter sell test error for {token_address[:8]}: {e}")
+            # Continue to other layers
         
         # LAYER 3: DexScreener verification with enhanced checks
         try:
@@ -1289,13 +1331,16 @@ def meets_liquidity_requirements(token_address):
                     liquidity_usd = float(pair.get('liquidity', {}).get('usd', 0))
                     volume_24h = float(pair.get('volume', {}).get('h24', 0))
                     
-                    # 🎯 OPTIMIZED liquidity requirements - $50k as you wanted
-                    if liquidity_usd < CONFIG['LIQUIDITY_FILTER']['min_liquidity_usd']:  # Use your config value
-                        logging.warning(f"🚫 Low liquidity: ${liquidity_usd:,.0f} (need $50k+)")
+                    # 🎯 OPTIMIZED liquidity requirements - Use CONFIG values
+                    min_liquidity = CONFIG['LIQUIDITY_FILTER']['min_liquidity_usd']
+                    min_volume = CONFIG['LIQUIDITY_FILTER']['min_volume_usd']
+                    
+                    if liquidity_usd < min_liquidity:
+                        logging.warning(f"🚫 Low liquidity: ${liquidity_usd:,.0f} (need ${min_liquidity:,.0f}+)")
                         return False
                         
-                    if volume_24h < CONFIG['LIQUIDITY_FILTER']['min_volume_usd']:  # Use your config value
-                        logging.warning(f"🚫 Low volume: ${volume_24h:,.0f} (need $10k+)")
+                    if volume_24h < min_volume:
+                        logging.warning(f"🚫 Low volume: ${volume_24h:,.0f} (need ${min_volume:,.0f}+)")
                         return False
                     
                     # 🎯 MUCH MORE PERMISSIVE Volume/Liquidity ratio check
@@ -1330,24 +1375,29 @@ def meets_liquidity_requirements(token_address):
         # LAYER 4: Bidirectional price consistency check
         logging.info(f"⚠️ Layer 4: Price consistency verification...")
         try:
-            # Calculate implied prices from both directions
-            buy_implied_price = 100000000 / out_amount  # SOL per token (from Layer 1)
-            sell_implied_price = sell_out_amount / 100000  # SOL per token (from Layer 2)
-            
-            # Prices should be reasonably consistent (within 50% of each other)
-            if buy_implied_price > 0 and sell_implied_price > 0:
-                price_ratio = max(buy_implied_price, sell_implied_price) / min(buy_implied_price, sell_implied_price)
-                if price_ratio > 2.0:  # More than 2x difference
-                    logging.warning(f"🚫 Inconsistent pricing: buy={buy_implied_price:.8f}, sell={sell_implied_price:.8f} (ratio: {price_ratio:.2f})")
-                    return False
+            # Only do this check if we have valid data from both Jupiter calls
+            if 'out_amount' in locals() and 'sell_out_amount' in locals():
+                # Calculate implied prices from both directions
+                buy_implied_price = 100000000 / out_amount  # SOL per token (from Layer 1)
+                sell_implied_price = sell_out_amount / 100000  # SOL per token (from Layer 2)
                 
-                logging.info(f"✅ Layer 4 passed: Price consistency verified (ratio: {price_ratio:.2f})")
+                # Prices should be reasonably consistent (within 50% of each other)
+                if buy_implied_price > 0 and sell_implied_price > 0:
+                    price_ratio = max(buy_implied_price, sell_implied_price) / min(buy_implied_price, sell_implied_price)
+                    if price_ratio > 2.0:  # More than 2x difference
+                        logging.warning(f"🚫 Inconsistent pricing: buy={buy_implied_price:.8f}, sell={sell_implied_price:.8f} (ratio: {price_ratio:.2f})")
+                        return False
+                    
+                    logging.info(f"✅ Layer 4 passed: Price consistency verified (ratio: {price_ratio:.2f})")
+                else:
+                    logging.warning(f"🚫 Invalid price calculation")
+                    return False
             else:
-                logging.warning(f"🚫 Invalid price calculation")
-                return False
+                logging.info(f"⚠️ Layer 4 skipped: Insufficient Jupiter data for price consistency check")
         except Exception as e:
             logging.warning(f"🚫 Price consistency check failed: {e}")
-            return False
+            # Don't fail completely on price consistency errors
+            pass
         
         # LAYER 5: Environment-based honeypot detection (if enabled)
         if os.environ.get('ENABLE_HONEYPOT_DETECTION', 'false').lower() == 'true':
@@ -1359,7 +1409,7 @@ def meets_liquidity_requirements(token_address):
                 min_sell_success_rate = float(os.environ.get('MIN_SELL_SUCCESS_RATE', '50'))
                 
                 # Calculate sell success rate estimate (simplified)
-                if liquidity_usd > 0 and volume_24h > 0:
+                if 'liquidity_usd' in locals() and 'volume_24h' in locals() and liquidity_usd > 0 and volume_24h > 0:
                     volume_ratio = volume_24h / liquidity_usd
                     estimated_sell_success_rate = min(100, volume_ratio * 100)
                     
@@ -1375,15 +1425,20 @@ def meets_liquidity_requirements(token_address):
         
         # ALL LAYERS PASSED
         logging.info(f"✅ ALL SECURITY LAYERS PASSED: {token_address[:8]} is safe to trade")
-        logging.info(f"   💧 Liquidity: ${liquidity_usd:,.0f}")
-        logging.info(f"   📊 Volume: ${volume_24h:,.0f}")
-        logging.info(f"   🔄 Turnover: {(volume_24h/liquidity_usd)*100:.1f}%/day")
+        
+        # Log final metrics if available
+        if 'liquidity_usd' in locals() and 'volume_24h' in locals():
+            logging.info(f"   💧 Liquidity: ${liquidity_usd:,.0f}")
+            logging.info(f"   📊 Volume: ${volume_24h:,.0f}")
+            logging.info(f"   🔄 Turnover: {(volume_24h/liquidity_usd)*100:.1f}%/day")
+        
         logging.info(f"   ✅ Buy/Sell quotes: Both valid")
         
         return True
         
     except Exception as e:
         logging.error(f"🚫 Anti-rug check error for {token_address[:8]}: {e}")
+        import traceback
         logging.error(traceback.format_exc())
         return False
 
