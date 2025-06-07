@@ -3001,6 +3001,50 @@ def find_volume_surge_tokens():
         logging.error(f"Volume surge detection error: {e}")
         return []
 
+def get_helius_new_tokens(limit: int = 20) -> List[dict]:
+    """Get new tokens from Helius API for momentum trading"""
+    try:
+        # Use your existing Helius token discovery method
+        # This should return a list of token dictionaries with 'address' field
+        
+        # If you have an existing function that gets tokens, use that:
+        # Example: return get_helius_tokens()[:limit]
+        
+        # Or if you need to implement from scratch:
+        api_key = CONFIG.get('HELIUS_API_KEY', '')
+        if not api_key:
+            logging.warning("❌ No Helius API key found")
+            return []
+        
+        # Replace this with your actual Helius API call
+        # This is a placeholder - adapt to your existing Helius integration
+        url = f"https://api.helius.xyz/v0/tokens/new?api-key={api_key}"
+        
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            tokens = response.json()
+            
+            # Format the response to match expected structure
+            formatted_tokens = []
+            for token in tokens[:limit]:
+                formatted_tokens.append({
+                    'address': token.get('mint', ''),
+                    'liquidity_usd': token.get('liquidity', 0),
+                    'volume_24h': token.get('volume', 0)
+                })
+            
+            return formatted_tokens
+        else:
+            logging.warning(f"❌ Helius API error: {response.status_code}")
+            return []
+            
+    except Exception as e:
+        logging.error(f"❌ Error getting Helius tokens: {e}")
+        return []
+
+def get_helius_tokens():
+    """Wrapper for compatibility with existing code"""
+    return get_helius_new_tokens(limit=50)
 
 def enhanced_find_newest_tokens_with_free_apis():
     """
