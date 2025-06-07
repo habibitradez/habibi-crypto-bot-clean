@@ -2846,53 +2846,66 @@ def requires_momentum_validation(token_address: str) -> bool:
         return False
 
 def find_high_momentum_tokens(max_tokens: int = 3) -> List[str]:
-    """Find the best momentum tokens quickly"""
+    """Find the best momentum tokens quickly - FIXED for string addresses"""
     
     candidates = []
     
     try:
-        # 1. Get new tokens from multiple sources
+        # 1. Get new tokens from your existing proven function
         helius_addresses = enhanced_find_newest_tokens_with_free_apis()[:20]
-        candidates = helius_addresses  # Skip the pre-filter since these are already good tokens
         
-        # 2. Quick pre-filter
-        for token_data in helius_tokens:
-            token_address = token_data.get('address')
-            
+        logging.info(f"🔍 Got {len(helius_addresses)} tokens from discovery")
+        
+        # 2. Convert to candidates list (handle both strings and dicts)
+        for token_item in helius_addresses:
+            # Handle both string addresses and dict objects
+            if isinstance(token_item, str):
+                token_address = token_item
+            elif isinstance(token_item, dict):
+                token_address = token_item.get('address') or token_item.get('mint') or ''
+            else:
+                continue
+                
             if not token_address or token_address in monitored_tokens:
                 continue
                 
-            # Quick liquidity check first (fastest filter)
-            quick_liquidity = token_data.get('liquidity_usd', 0)
-            if quick_liquidity < 150000:  # Quick filter at $150k
-                continue
-            
-            # Add to candidates for full validation
+            # Add to candidates for validation
             candidates.append(token_address)
             
             if len(candidates) >= max_tokens * 3:  # Get 3x what we need
                 break
         
-        # 3. Full validation on best candidates
+        logging.info(f"📋 {len(candidates)} candidates ready for validation")
+        
+        # 3. Full validation on candidates
         validated_tokens = []
         
         for token_address in candidates:
             try:
-                # Full security + momentum check
-                if (meets_liquidity_requirements(token_address) and 
-                    requires_momentum_validation(token_address)):
+                logging.info(f"🔍 Validating {token_address[:8]}...")
+                
+                # Full security check first
+                if not meets_liquidity_requirements(token_address):
+                    logging.info(f"❌ Failed liquidity check: {token_address[:8]}")
+                    continue
+                
+                # Then momentum validation
+                if not requires_momentum_validation(token_address):
+                    logging.info(f"❌ Failed momentum check: {token_address[:8]}")
+                    continue
+                
+                # If we get here, token passed all checks
+                validated_tokens.append(token_address)
+                logging.info(f"✅ QUALITY TOKEN: {token_address[:8]}")
+                
+                if len(validated_tokens) >= max_tokens:
+                    break
                     
-                    validated_tokens.append(token_address)
-                    logging.info(f"✅ QUALITY TOKEN: {token_address[:8]}")
-                    
-                    if len(validated_tokens) >= max_tokens:
-                        break
-                        
             except Exception as e:
                 logging.error(f"❌ Validation failed for {token_address[:8]}: {e}")
                 continue
         
-        logging.info(f"🔍 Discovery: {len(validated_tokens)}/{len(candidates)} tokens passed validation")
+        logging.info(f"🎯 Discovery complete: {len(validated_tokens)}/{len(candidates)} tokens passed validation")
         return validated_tokens
         
     except Exception as e:
