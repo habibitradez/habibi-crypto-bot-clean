@@ -231,7 +231,7 @@ SNIPING_CONFIG = {
     'QUICK_PROFIT_TARGETS': [30, 50, 100], # 30%, 50%, 100% profit levels
     'STOP_LOSS_PERCENT': 15,              # 15% stop loss
     'MAX_HOLD_TIME_MINUTES': 30,          # Max 30 minutes per position
-    'SNIPE_DELAY_SECONDS': 3,             # Execute within 3 seconds
+    'SNIPE_DELAY_SECONDS': 2,             # Execute within 3 seconds
     'MIN_MARKET_CAP': 5000,               # Min $5k market cap
     'MAX_MARKET_CAP': 100000,             # Max $100k market cap (early entry)
 }
