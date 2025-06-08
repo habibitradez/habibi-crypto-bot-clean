@@ -226,8 +226,8 @@ iteration_count = 0
 # SNIPING CONFIGURATION (Based on successful strategies)
 SNIPING_CONFIG = {
     'TARGET_DAILY_PROFIT': 500,           # $500 daily target
-    'POSITION_SIZE_SOL': 0.2,             # 0.2 SOL per snipe (aggressive sizing)
-    'MAX_CONCURRENT_SNIPES': 5,           # Max 5 positions at once
+    'POSITION_SIZE_SOL': 0.05,             # 0.2 SOL per snipe (aggressive sizing)
+    'MAX_CONCURRENT_SNIPES': 3,           # Max 5 positions at once
     'QUICK_PROFIT_TARGETS': [30, 50, 100], # 30%, 50%, 100% profit levels
     'STOP_LOSS_PERCENT': 15,              # 15% stop loss
     'MAX_HOLD_TIME_MINUTES': 30,          # Max 30 minutes per position
