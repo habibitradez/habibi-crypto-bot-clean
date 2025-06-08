@@ -8409,7 +8409,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         amount = round(float(amount), 6)
         trade_amount = str(amount)  # Use the amount passed to the function
         
-        logging.info(f"🎯 Executing: {command}")
+        logging.info(f"⚡ Executing: node swap.js {token_address} {trade_amount} {'true' if is_sell else 'false'}")
         
         result = subprocess.run(
             command, 
