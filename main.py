@@ -53,27 +53,27 @@ CONFIG = {
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
     'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
-    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '8')),  # 2x return
-    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Adding this for backward compatibility
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '30')),  # 2x return
+    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '30')),  # Adding this for backward compatibility
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Adding this for backward compatibility
     'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '5')),
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),  # Adding this for backward compatibility
     'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
     'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '60')),
-    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '1000')),
-    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
+    'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
+    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.12')),  # Reduced to 0.10 SOL
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.20')),  # Reduced to 0.10 SOL
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
     'TOKENS_PER_DAY': int(os.environ.get('TOKENS_PER_DAY', '20')),        # Target 20 tokens per day
     'PROFIT_PER_TOKEN': int(os.environ.get('PROFIT_PER_TOKEN', '50')),    # Target $50 profit per token
-    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '8')),        # Take profit at just 20% gain
-    'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '120')), # Only hold for 60 seconds max
+    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '30')),        # Take profit at just 20% gain
+    'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '1800')), # Only hold for 60 seconds max
     'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
-    'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '5')),  # Only buy very new tokens
+    'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '60')),  # Only buy very new tokens
     'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
     
 
@@ -91,11 +91,11 @@ CONFIG = {
     },
 
     'LIQUIDITY_FILTER': {
-    'min_liquidity_usd': 50000,
-    'min_age_minutes': 10,
-    'max_age_minutes': 180,
-    'min_holders': 50,
-    'min_volume_usd': 10000
+    'min_liquidity_usd': 10000,
+    'min_age_minutes': 1,
+    'max_age_minutes': 60,
+    'min_holders': 10,
+    'min_volume_usd': 5000
     },
 
     'HOLD_TIME': {
@@ -107,15 +107,15 @@ CONFIG = {
 }  # THIS CLOSES THE MAIN CONFIG
 
 CAPITAL_PRESERVATION_CONFIG = {
-    'MIN_POSITION_SIZE': 0.12,
+    'MIN_POSITION_SIZE': 0.20,
     'MAX_LOSS_PERCENTAGE': 15,
-    'MIN_BALANCE_SOL': 0.15,
-    'POSITION_MULTIPLIER': 15,
+    'MIN_BALANCE_SOL': 0.30,
+    'POSITION_MULTIPLIER': 5,
     'EMERGENCY_STOP_ENABLED': True,
-    'ANTI_RUG_ENABLED': True,           # NEW
-    'MIN_LIQUIDITY_USD': 50000,         # NEW
-    'MIN_HOLD_TIME_SECONDS': 30,        # NEW
-    'MAX_HOLD_TIME_SECONDS': 90         # NEW
+    'ANTI_RUG_ENABLED': false,           # NEW
+    'MIN_LIQUIDITY_USD': 10000,         # NEW
+    'MIN_HOLD_TIME_SECONDS': 60,        # NEW
+    'MAX_HOLD_TIME_SECONDS': 1800         # NEW
 }
 
 def update_config_for_quicknode():
@@ -222,6 +222,34 @@ sell_successes = 0
 errors_encountered = 0
 last_status_time = time.time()
 iteration_count = 0
+
+# SNIPING CONFIGURATION (Based on successful strategies)
+SNIPING_CONFIG = {
+    'TARGET_DAILY_PROFIT': 500,           # $500 daily target
+    'POSITION_SIZE_SOL': 0.2,             # 0.2 SOL per snipe (aggressive sizing)
+    'MAX_CONCURRENT_SNIPES': 5,           # Max 5 positions at once
+    'QUICK_PROFIT_TARGETS': [30, 50, 100], # 30%, 50%, 100% profit levels
+    'STOP_LOSS_PERCENT': 15,              # 15% stop loss
+    'MAX_HOLD_TIME_MINUTES': 30,          # Max 30 minutes per position
+    'SNIPE_DELAY_SECONDS': 3,             # Execute within 3 seconds
+    'MIN_MARKET_CAP': 5000,               # Min $5k market cap
+    'MAX_MARKET_CAP': 100000,             # Max $100k market cap (early entry)
+}
+
+# Global tracking for sniped positions
+sniped_positions = {}
+daily_snipe_stats = {
+    'snipes_attempted': 0,
+    'snipes_successful': 0,
+    'total_profit_usd': 0,
+    'best_snipe': 0,
+    'start_time': time.time()
+}
+
+# Rate limiting for wallet checks (if using copy trading later)
+last_wallet_checks = {}
+
+# ===== END OF SNIPING ADDITIONS =====
 
 # SOL token address (used as base currency)
 SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
@@ -1460,20 +1488,313 @@ def calculate_hold_time(token_address, entry_time):
     
     return int(hold_time)
 
-def get_wallet_recent_trades(wallet_address, hours=2):
-    """Get recent trades from a wallet (simplified - you'll need proper API)"""
-    # This is a placeholder - implement with Solscan/Helius API
-    return []
+def get_wallet_recent_trades(wallet_address: str) -> List[Dict]:
+    """
+    Get recent trades from a profitable wallet using Helius API
+    """
+    try:
+        api_key = CONFIG.get('HELIUS_API_KEY', '')
+        if not api_key:
+            logging.warning("No Helius API key - cannot monitor wallets")
+            return []
+        
+        # Helius transactions API
+        url = f"https://api.helius.xyz/v0/addresses/{wallet_address}/transactions"
+        
+        params = {
+            'api-key': api_key,
+            'limit': 5,  # Last 5 transactions
+            'type': 'SWAP'  # Only swap transactions
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            transactions = response.json()
+            trades = []
+            
+            for tx in transactions:
+                parsed_trade = parse_helius_transaction(tx)
+                if parsed_trade:
+                    trades.append(parsed_trade)
+            
+            return trades
+        
+        elif response.status_code == 429:
+            logging.warning(f"Rate limited on wallet {wallet_address[:8]}")
+            time.sleep(2)
+            return []
+        
+        else:
+            return []
+            
+    except Exception as e:
+        logging.error(f"Error getting wallet trades: {e}")
+        return []
 
-def get_wallet_recent_trades(wallet_address, hours=2):
-    """Get recent trades from a wallet (simplified - you'll need proper API)"""
-    # This is a placeholder - implement with Solscan/Helius API
-    return []
+def parse_helius_transaction(tx: Dict) -> Optional[Dict]:
+    """
+    Parse Helius transaction data to extract trade information
+    """
+    try:
+        # Look for token transfers in the transaction
+        token_transfers = tx.get('tokenTransfers', [])
+        
+        if not token_transfers or len(token_transfers) < 2:
+            return None
+        
+        # Identify SOL/token swaps
+        sol_mint = "So11111111111111111111111111111111111111112"
+        
+        sol_transfer = None
+        token_transfer = None
+        
+        for transfer in token_transfers:
+            if transfer.get('mint') == sol_mint:
+                sol_transfer = transfer
+            else:
+                token_transfer = transfer
+        
+        if not sol_transfer or not token_transfer:
+            return None
+        
+        # Determine if this is a buy or sell
+        trade_type = 'buy' if sol_transfer.get('fromUserAccount') else 'sell'
+        
+        return {
+            'token_address': token_transfer.get('mint'),
+            'amount_sol': abs(float(sol_transfer.get('tokenAmount', 0)) / 1e9),  # Convert lamports to SOL
+            'trade_type': trade_type,
+            'timestamp': tx.get('timestamp', time.time()),
+            'signature': tx.get('signature')
+        }
+        
+    except Exception as e:
+        logging.error(f"Error parsing transaction: {e}")
+        return None
 
 def get_dex_new_listings(dex_name, limit=3):
     """Get new token listings from DEX (simplified - you'll need proper API)"""
     # This is a placeholder - implement with DEX APIs
     return []
+
+def is_copyable_trade(trade: Dict) -> bool:
+    """
+    Determine if a trade should be copied
+    """
+    try:
+        current_time = time.time()
+        trade_time = trade.get('timestamp', 0)
+        
+        # Only copy recent trades (within last 5 minutes)
+        if current_time - trade_time > 300:
+            return False
+        
+        # Only copy buy trades
+        if trade.get('trade_type') != 'buy':
+            return False
+        
+        # Check position size limits
+        amount_sol = trade.get('amount_sol', 0)
+        if amount_sol < 0.01 or amount_sol > 1.0:  # Reasonable position sizes
+            return False
+        
+        # Don't copy if we already have this token
+        token_address = trade.get('token_address')
+        if token_address in copy_trade_positions:
+            return False
+        
+        # Check if we've hit max concurrent positions
+        if len(copy_trade_positions) >= COPY_TRADING_CONFIG['MAX_CONCURRENT_COPIES']:
+            return False
+        
+        return True
+        
+    except Exception as e:
+        logging.error(f"Error checking copyable trade: {e}")
+        return False
+
+def execute_copy_trades(opportunities: List[Dict]):
+    """
+    Execute multiple copy trades from opportunities
+    """
+    for opportunity in opportunities:
+        try:
+            execute_single_copy_trade(opportunity)
+            time.sleep(1)  # Small delay between executions
+        except Exception as e:
+            logging.error(f"Error executing copy trade: {e}")
+
+def execute_single_copy_trade(opportunity: Dict):
+    """
+    Execute a single copy trade
+    """
+    try:
+        token_address = opportunity['token_address']
+        source_wallet = opportunity['source_wallet']
+        original_amount = opportunity['amount_sol']
+        
+        # Calculate our position size (scale to our balance)
+        our_balance = get_wallet_balance()
+        position_size = calculate_copy_position_size(original_amount, our_balance)
+        
+        if position_size < COPY_TRADING_CONFIG['MIN_POSITION_SIZE_SOL']:
+            logging.warning(f"Position size too small: {position_size} SOL")
+            return
+        
+        logging.info(f"🚀 COPYING TRADE: {source_wallet[:8]} → {token_address[:8]} | {position_size} SOL")
+        
+        # Execute the copy trade with high speed
+        start_time = time.time()
+        success, result = execute_via_javascript(token_address, position_size, False)
+        execution_time = time.time() - start_time
+        
+        if success:
+            # Track the position
+            copy_trade_positions[token_address] = {
+                'entry_time': time.time(),
+                'entry_price': get_token_price(token_address),
+                'position_size_sol': position_size,
+                'source_wallet': source_wallet,
+                'target_profit': COPY_TRADING_CONFIG['PROFIT_TARGET_PERCENT'],
+                'stop_loss': COPY_TRADING_CONFIG['STOP_LOSS_PERCENT']
+            }
+            
+            logging.info(f"✅ COPY TRADE SUCCESS: {token_address[:8]} in {execution_time:.1f}s")
+            
+            # Update daily stats
+            if 'daily_stats' in globals():
+                daily_stats['trades_executed'] += 1
+            
+        else:
+            logging.warning(f"❌ COPY TRADE FAILED: {token_address[:8]}")
+            
+    except Exception as e:
+        logging.error(f"Error in execute_single_copy_trade: {e}")
+
+def calculate_copy_position_size(original_amount: float, our_balance: float) -> float:
+    """
+    Calculate appropriate position size for copy trading
+    """
+    try:
+        # Use percentage of balance similar to original trader
+        if our_balance < 0.1:
+            return min(0.05, our_balance * 0.3)
+        elif our_balance < 0.5:
+            return min(0.15, our_balance * 0.25)
+        else:
+            return min(COPY_TRADING_CONFIG['MAX_POSITION_SIZE_SOL'], our_balance * 0.20)
+            
+    except:
+        return 0.1
+
+def monitor_copy_trade_positions():
+    """
+    Monitor active copy trade positions for exits
+    """
+    try:
+        if not copy_trade_positions:
+            return
+        
+        current_time = time.time()
+        positions_to_close = []
+        
+        for token_address, position in copy_trade_positions.items():
+            try:
+                # Calculate hold time
+                hold_time_minutes = (current_time - position['entry_time']) / 60
+                
+                # Force exit after max hold time
+                if hold_time_minutes >= COPY_TRADING_CONFIG['MAX_HOLD_TIME_MINUTES']:
+                    logging.info(f"⏰ MAX HOLD TIME: Closing {token_address[:8]} after {hold_time_minutes:.1f} min")
+                    positions_to_close.append(token_address)
+                    continue
+                
+                # Check current price
+                current_price = get_token_price(token_address)
+                if not current_price or not position.get('entry_price'):
+                    continue
+                
+                # Calculate profit/loss
+                price_change_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                
+                # Take profit
+                if price_change_pct >= position['target_profit']:
+                    logging.info(f"💰 PROFIT TARGET HIT: {token_address[:8]} +{price_change_pct:.1f}%")
+                    positions_to_close.append(token_address)
+                    continue
+                
+                # Stop loss
+                if price_change_pct <= -position['stop_loss']:
+                    logging.info(f"🛑 STOP LOSS: {token_address[:8]} {price_change_pct:.1f}%")
+                    positions_to_close.append(token_address)
+                    continue
+                
+                # Log position status
+                if int(hold_time_minutes) % 5 == 0:  # Every 5 minutes
+                    profit_usd = (position['position_size_sol'] * 240) * (price_change_pct / 100)
+                    logging.info(f"📊 {token_address[:8]}: {price_change_pct:.1f}% (${profit_usd:.2f}) - {hold_time_minutes:.1f}m")
+                
+            except Exception as e:
+                logging.error(f"Error monitoring position {token_address[:8]}: {e}")
+                continue
+        
+        # Close positions
+        for token_address in positions_to_close:
+            close_copy_trade_position(token_address)
+            
+    except Exception as e:
+        logging.error(f"Error monitoring copy trade positions: {e}")
+
+def close_copy_trade_position(token_address: str):
+    """
+    Close a copy trade position
+    """
+    try:
+        if token_address not in copy_trade_positions:
+            return
+        
+        position = copy_trade_positions[token_address]
+        position_size = position['position_size_sol']
+        
+        logging.info(f"🔄 CLOSING POSITION: {token_address[:8]}")
+        
+        # Execute sell
+        success, result = execute_via_javascript(token_address, position_size, True)
+        
+        if success:
+            # Calculate final profit
+            hold_time = (time.time() - position['entry_time']) / 60
+            current_price = get_token_price(token_address)
+            
+            if current_price and position.get('entry_price'):
+                profit_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                profit_usd = (position_size * 240) * (profit_pct / 100)
+                
+                logging.info(f"✅ POSITION CLOSED: {token_address[:8]} | {profit_pct:.1f}% | ${profit_usd:.2f} | {hold_time:.1f}m")
+                
+                # Update daily stats
+                if 'daily_stats' in globals():
+                    daily_stats['trades_successful'] += 1 if profit_pct > 0 else 0
+                    daily_stats['total_profit_usd'] += profit_usd
+                    daily_stats['best_trade'] = max(daily_stats.get('best_trade', 0), profit_usd)
+                    daily_stats['worst_trade'] = min(daily_stats.get('worst_trade', 0), profit_usd)
+            
+            # Remove from tracking
+            del copy_trade_positions[token_address]
+            
+        else:
+            logging.error(f"❌ FAILED TO CLOSE: {token_address[:8]}")
+            
+    except Exception as e:
+        logging.error(f"Error closing position: {e}")
+
+# Add this function to load more wallets from Dune export
+def load_additional_wallets_from_dune():
+    """Load more wallets from your Dune analytics export"""
+    # Export CSV from https://dune.com/maditim/solmemecoinstradewallets
+    # Add top performers to PROFITABLE_WALLETS list
+    pass
 
 def get_trending_social_tokens():
     """Get trending tokens from social signals (simplified)"""
@@ -1725,9 +2046,63 @@ def monitor_profitable_wallets():
     
     return copy_opportunities
 
-# ================================
-# 3. ADD THIS MULTI-DEX SCANNING FUNCTION
-# ================================
+def monitor_profitable_wallets():
+    """
+    Monitor all 48+ profitable wallets for copy opportunities
+    This is your main $500/day strategy
+    """
+    try:
+        logging.info(f"🎯 Monitoring {len(PROFITABLE_WALLETS)} profitable wallets for copy opportunities...")
+        
+        copy_opportunities = []
+        current_time = time.time()
+        
+        # Check wallets in batches to manage API limits
+        batch_size = 10
+        for i in range(0, len(PROFITABLE_WALLETS), batch_size):
+            batch = PROFITABLE_WALLETS[i:i + batch_size]
+            
+            for wallet_address in batch:
+                try:
+                    # Rate limiting - don't check same wallet too frequently
+                    last_check = last_wallet_checks.get(wallet_address, 0)
+                    if current_time - last_check < COPY_TRADING_CONFIG['WALLET_CHECK_INTERVAL']:
+                        continue
+                    
+                    # Get recent activity
+                    recent_trades = get_wallet_recent_trades(wallet_address)
+                    last_wallet_checks[wallet_address] = current_time
+                    
+                    # Look for copyable trades
+                    for trade in recent_trades:
+                        if is_copyable_trade(trade):
+                            copy_opportunities.append({
+                                'source_wallet': wallet_address,
+                                'token_address': trade['token_address'],
+                                'amount_sol': trade['amount_sol'],
+                                'trade_type': trade['trade_type'],
+                                'timestamp': trade['timestamp']
+                            })
+                    
+                    # Small delay between wallet checks
+                    time.sleep(0.2)
+                    
+                except Exception as e:
+                    logging.warning(f"⚠️ Error checking wallet {wallet_address[:8]}: {e}")
+                    continue
+            
+            # Delay between batches
+            time.sleep(1)
+        
+        # Execute copy trades
+        if copy_opportunities:
+            logging.info(f"🚀 Found {len(copy_opportunities)} copy opportunities!")
+            execute_copy_trades(copy_opportunities)
+        else:
+            logging.info("📊 No new copy opportunities found - continuing monitoring...")
+            
+    except Exception as e:
+        logging.error(f"Error in monitor_profitable_wallets: {e}")
 
 def scan_multiple_dexs():
     """Scan multiple DEXs for new high-volume tokens"""
@@ -1926,9 +2301,60 @@ def aggressive_token_discovery():
     unique_tokens = list(set(discovered_tokens))
     return unique_tokens[:12]  # Process up to 12 tokens per cycle
 
-# ================================
-# 2. ADD THIS NEW COPY TRADING FUNCTION
-# ================================
+def copy_trading_main_loop():
+    """
+    Main copy trading loop - replaces your current trading system
+    """
+    logging.info("🎯 COPY TRADING MODE ACTIVATED")
+    logging.info(f"📊 Monitoring {len(PROFITABLE_WALLETS)} profitable wallets")
+    logging.info(f"🎯 Target: $500/day through copy trading")
+    
+    cycle_count = 0
+    
+    while True:
+        try:
+            cycle_count += 1
+            current_profit = daily_stats.get('total_profit_usd', 0) - daily_stats.get('total_fees_paid', 0)
+            
+            logging.info(f"🔄 Copy Trading Cycle {cycle_count} | Daily Profit: ${current_profit:.2f}/500")
+            
+            # Check for daily target achievement
+            if current_profit >= 500:
+                logging.info(f"🎉 DAILY TARGET ACHIEVED: ${current_profit:.2f}!")
+                logging.info("💤 Switching to monitoring-only mode...")
+                
+                # Just monitor existing positions until tomorrow
+                while copy_trade_positions:
+                    monitor_copy_trade_positions()
+                    time.sleep(30)
+                break
+            
+            # Monitor profitable wallets for new opportunities
+            monitor_profitable_wallets()
+            
+            # Monitor existing copy trade positions
+            monitor_copy_trade_positions()
+            
+            # Status update
+            active_positions = len(copy_trade_positions)
+            if active_positions > 0:
+                logging.info(f"📊 Active copy positions: {active_positions}/{COPY_TRADING_CONFIG['MAX_CONCURRENT_COPIES']}")
+            
+            # Wait before next cycle
+            time.sleep(COPY_TRADING_CONFIG['WALLET_CHECK_INTERVAL'])
+            
+        except KeyboardInterrupt:
+            logging.info("🛑 Copy trading stopped by user")
+            
+            # Close all positions before exit
+            for token_address in list(copy_trade_positions.keys()):
+                close_copy_trade_position(token_address)
+            break
+            
+        except Exception as e:
+            logging.error(f"Error in copy trading main loop: {e}")
+            time.sleep(30)
+
 
 def enhanced_profitable_trading_loop():
     """The FINAL profitable trading loop with capital preservation and profit tracking"""
@@ -2091,52 +2517,407 @@ def enhanced_profitable_trading_loop():
             logging.error(traceback.format_exc())
             time.sleep(10)
 
-
-def execute_profitable_trade_with_tracking(token, position_size, capital_system):
-    """Execute trade with real profit tracking"""
-    try:
-        token_address = token.get('address') or token.get('mint')
-        
-        # Execute buy
-        buy_success, buy_result = execute_via_javascript(token_address, position_size, False)
-        
-        if not buy_success:
-            return False, 0
+def ultimate_sniping_loop():
+    """
+    Main sniping loop - the $500/day money maker
+    """
+    logging.info("🎯 ULTIMATE SNIPING MODE ACTIVATED")
+    logging.info(f"💰 Target: ${SNIPING_CONFIG['TARGET_DAILY_PROFIT']}/day")
+    logging.info(f"⚡ Strategy: Ultra-fast new token sniping")
+    
+    cycle_count = 0
+    
+    while True:
+        try:
+            cycle_count += 1
+            current_profit = daily_snipe_stats['total_profit_usd']
             
-        logging.info(f"✅ BUY EXECUTED: {token['symbol']} with {position_size} SOL")
-        
-        # Hold and monitor for profit
-        entry_time = time.time()
-        hold_time = calculate_hold_time(token_address, entry_time)
-        
-        # Monitor for profitable exit
-        while (time.time() - entry_time) < hold_time:
-            elapsed = time.time() - entry_time
+            logging.info(f"🔄 Snipe Cycle {cycle_count} | Profit: ${current_profit:.2f}/{SNIPING_CONFIG['TARGET_DAILY_PROFIT']}")
             
-            # Force sell after hold time
-            if elapsed >= hold_time:
-                break
+            # Check for daily target achievement
+            if current_profit >= SNIPING_CONFIG['TARGET_DAILY_PROFIT']:
+                logging.info(f"🎉 DAILY TARGET ACHIEVED: ${current_profit:.2f}!")
+                logging.info("💤 Switching to position monitoring only...")
                 
-            time.sleep(2)
-        
-        # Execute sell
-        sell_success, sell_result = execute_via_javascript(token_address, position_size, True)
-        
-        if sell_success:
-            # Calculate actual profit
-            profit_target_percent = float(os.getenv('PROFIT_TARGET_PERCENT', 40)) / 100
-            actual_profit_usd = position_size * 240 * profit_target_percent
+                # Monitor remaining positions until closed
+                while sniped_positions:
+                    monitor_sniped_positions()
+                    time.sleep(30)
+                break
             
-            logging.info(f"✅ SELL EXECUTED: {token['symbol']} | Profit: ${actual_profit_usd:.2f}")
-            return True, actual_profit_usd
+            # 1. Monitor existing sniped positions
+            monitor_sniped_positions()
+            
+            # 2. Look for new sniping opportunities
+            if len(sniped_positions) < SNIPING_CONFIG['MAX_CONCURRENT_SNIPES']:
+                find_and_execute_snipes()
+            else:
+                logging.info(f"📊 Max positions ({len(sniped_positions)}/5) - monitoring only")
+            
+            # 3. Performance stats
+            success_rate = (daily_snipe_stats['snipes_successful'] / max(daily_snipe_stats['snipes_attempted'], 1)) * 100
+            logging.info(f"📈 Success Rate: {success_rate:.1f}% | Best Snipe: ${daily_snipe_stats['best_snipe']:.2f}")
+            
+            # Wait before next cycle (frequent checking for speed)
+            time.sleep(10)
+            
+        except KeyboardInterrupt:
+            logging.info("🛑 Sniping stopped by user")
+            
+            # Close all positions
+            for token_address in list(sniped_positions.keys()):
+                close_sniped_position(token_address)
+            break
+            
+        except Exception as e:
+            logging.error(f"Error in sniping loop: {e}")
+            time.sleep(30)
+
+def find_and_execute_snipes():
+    """
+    Find new tokens and execute ultra-fast snipes
+    This is where the money is made
+    """
+    try:
+        # Get the newest tokens using your existing discovery
+        new_tokens = get_newest_tokens_for_sniping()
+        
+        if not new_tokens:
+            logging.info("🔍 No new snipe targets found")
+            return
+        
+        logging.info(f"🎯 Found {len(new_tokens)} potential snipe targets")
+        
+        for token_address in new_tokens:
+            try:
+                # Quick validation (no slow security checks)
+                if not is_snipeable_token(token_address):
+                    continue
+                
+                # Execute the snipe
+                success = execute_lightning_snipe(token_address)
+                
+                if success:
+                    # Track the position for monitoring
+                    track_sniped_position(token_address)
+                    
+                    # Log success
+                    logging.info(f"✅ SNIPE SUCCESS: {token_address[:8]}")
+                    daily_snipe_stats['snipes_successful'] += 1
+                    
+                    # Don't snipe too many at once
+                    if len(sniped_positions) >= SNIPING_CONFIG['MAX_CONCURRENT_SNIPES']:
+                        break
+                
+                daily_snipe_stats['snipes_attempted'] += 1
+                
+            except Exception as e:
+                logging.error(f"Error sniping {token_address[:8]}: {e}")
+                continue
+                
+    except Exception as e:
+        logging.error(f"Error in find_and_execute_snipes: {e}")
+
+def get_newest_tokens_for_sniping() -> List[str]:
+    """
+    Get the newest tokens for sniping using multiple sources
+    """
+    try:
+        new_tokens = []
+        
+        # Method 1: Use your existing Helius discovery
+        helius_tokens = enhanced_find_newest_tokens_with_free_apis()
+        if helius_tokens:
+            new_tokens.extend(helius_tokens[:10])
+        
+        # Method 2: DexScreener new pairs (as mentioned in research)
+        dexscreener_tokens = get_dexscreener_new_tokens()
+        if dexscreener_tokens:
+            new_tokens.extend(dexscreener_tokens[:10])
+        
+        # Method 3: Pump.fun new launches
+        pumpfun_tokens = get_pumpfun_new_launches()
+        if pumpfun_tokens:
+            new_tokens.extend(pumpfun_tokens[:10])
+        
+        # Remove duplicates and return newest
+        unique_tokens = list(dict.fromkeys(new_tokens))
+        
+        logging.info(f"🔍 Discovery sources: Helius({len(helius_tokens or [])}), DexScreener({len(dexscreener_tokens or [])}), Pump.fun({len(pumpfun_tokens or [])})")
+        
+        return unique_tokens[:15]  # Top 15 newest
+        
+    except Exception as e:
+        logging.error(f"Error getting newest tokens: {e}")
+        return []
+
+def get_dexscreener_new_tokens() -> List[str]:
+    """
+    Get new tokens from DexScreener (mentioned in research as key source)
+    """
+    try:
+        url = "https://api.dexscreener.com/latest/dex/tokens/"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            pairs = data.get('pairs', [])
+            
+            # Filter for Solana tokens under 24h old
+            new_tokens = []
+            for pair in pairs:
+                if (pair.get('chainId') == 'solana' and 
+                    pair.get('pairCreatedAt') and
+                    is_token_new_enough(pair.get('pairCreatedAt'))):
+                    
+                    token_address = pair.get('baseToken', {}).get('address')
+                    if token_address:
+                        new_tokens.append(token_address)
+            
+            return new_tokens
+    except:
+        return []
+
+def get_pumpfun_new_launches() -> List[str]:
+    """
+    Get new launches from Pump.fun platform
+    """
+    try:
+        # Pump.fun API endpoint for new tokens
+        url = "https://api.pump.fun/coins"
+        response = requests.get(url, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            new_tokens = []
+            for coin in data[:20]:  # Latest 20
+                token_address = coin.get('mint')
+                market_cap = coin.get('market_cap', 0)
+                
+                # Filter by market cap range
+                if (token_address and 
+                    SNIPING_CONFIG['MIN_MARKET_CAP'] <= market_cap <= SNIPING_CONFIG['MAX_MARKET_CAP']):
+                    new_tokens.append(token_address)
+            
+            return new_tokens
+    except:
+        return []
+
+def is_snipeable_token(token_address: str) -> bool:
+    """
+    Ultra-fast validation for sniping (no slow security checks)
+    """
+    try:
+        # Basic format validation
+        if len(token_address) < 32:
+            return False
+        
+        # Quick Jupiter tradability test (2 second timeout)
+        response = requests.get(
+            "https://quote-api.jup.ag/v6/quote",
+            params={
+                "inputMint": "So11111111111111111111111111111111111111112",
+                "outputMint": token_address,
+                "amount": "100000000",  # 0.1 SOL test
+                "slippageBps": "1000"   # 10% slippage for speed
+            },
+            timeout=2
+        )
+        
+        return response.status_code == 200
+        
+    except:
+        return False
+
+def execute_lightning_snipe(token_address: str) -> bool:
+    """
+    Execute ultra-fast snipe - speed is everything
+    """
+    try:
+        start_time = time.time()
+        
+        position_size = SNIPING_CONFIG['POSITION_SIZE_SOL']
+        
+        logging.info(f"⚡ SNIPING: {token_address[:8]} | {position_size} SOL")
+        
+        # Use your existing fast execution function
+        success, result = execute_via_javascript(token_address, position_size, False)
+        
+        execution_time = time.time() - start_time
+        
+        if success and execution_time <= SNIPING_CONFIG['SNIPE_DELAY_SECONDS']:
+            logging.info(f"🎯 LIGHTNING SNIPE: {token_address[:8]} in {execution_time:.1f}s")
+            return True
         else:
-            logging.warning(f"❌ SELL FAILED: {token['symbol']}")
-            return False, 0
+            logging.warning(f"⚠️ SNIPE TOO SLOW: {execution_time:.1f}s")
+            return False
             
     except Exception as e:
-        logging.error(f"Error in profitable trade execution: {e}")
-        return False, 0
+        logging.error(f"Error in lightning snipe: {e}")
+        return False
 
+def track_sniped_position(token_address: str):
+    """
+    Track a sniped position for monitoring
+    """
+    try:
+        current_price = get_token_price(token_address)
+        
+        sniped_positions[token_address] = {
+            'entry_time': time.time(),
+            'entry_price': current_price,
+            'position_size_sol': SNIPING_CONFIG['POSITION_SIZE_SOL'],
+            'profit_targets': SNIPING_CONFIG['QUICK_PROFIT_TARGETS'].copy(),
+            'stop_loss': SNIPING_CONFIG['STOP_LOSS_PERCENT']
+        }
+        
+        logging.info(f"📊 Tracking sniped position: {token_address[:8]}")
+        
+    except Exception as e:
+        logging.error(f"Error tracking position: {e}")
+
+def monitor_sniped_positions():
+    """
+    Monitor sniped positions for quick exits
+    """
+    try:
+        if not sniped_positions:
+            return
+        
+        current_time = time.time()
+        positions_to_close = []
+        
+        for token_address, position in sniped_positions.items():
+            try:
+                # Calculate hold time
+                hold_time_minutes = (current_time - position['entry_time']) / 60
+                
+                # Force exit after max hold time
+                if hold_time_minutes >= SNIPING_CONFIG['MAX_HOLD_TIME_MINUTES']:
+                    logging.info(f"⏰ MAX HOLD TIME: Force exit {token_address[:8]} after {hold_time_minutes:.1f}m")
+                    positions_to_close.append(token_address)
+                    continue
+                
+                # Check current price
+                current_price = get_token_price(token_address)
+                if not current_price or not position.get('entry_price'):
+                    continue
+                
+                # Calculate profit/loss
+                gain_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                
+                # Progressive profit taking
+                if position['profit_targets'] and gain_pct >= position['profit_targets'][0]:
+                    target_hit = position['profit_targets'].pop(0)
+                    logging.info(f"💰 PROFIT TARGET {target_hit}%: {token_address[:8]} at +{gain_pct:.1f}%")
+                    
+                    # Sell 33% of position
+                    partial_sell_sniped_position(token_address, 0.33)
+                    
+                    # If all targets hit, close position
+                    if not position['profit_targets']:
+                        positions_to_close.append(token_address)
+                
+                # Stop loss
+                elif gain_pct <= -position['stop_loss']:
+                    logging.info(f"🛑 STOP LOSS: {token_address[:8]} at {gain_pct:.1f}%")
+                    positions_to_close.append(token_address)
+                
+                # Log position status every 5 minutes
+                if int(hold_time_minutes) % 5 == 0:
+                    profit_usd = (position['position_size_sol'] * 240) * (gain_pct / 100)
+                    logging.info(f"📊 {token_address[:8]}: {gain_pct:.1f}% (${profit_usd:.2f}) - {hold_time_minutes:.1f}m")
+                
+            except Exception as e:
+                logging.error(f"Error monitoring {token_address[:8]}: {e}")
+                continue
+        
+        # Close flagged positions
+        for token_address in positions_to_close:
+            close_sniped_position(token_address)
+            
+    except Exception as e:
+        logging.error(f"Error monitoring sniped positions: {e}")
+
+def partial_sell_sniped_position(token_address: str, sell_percentage: float):
+    """
+    Sell a percentage of a sniped position
+    """
+    try:
+        if token_address not in sniped_positions:
+            return
+        
+        position = sniped_positions[token_address]
+        sell_amount = position['position_size_sol'] * sell_percentage
+        
+        logging.info(f"💸 PARTIAL SELL: {token_address[:8]} - {sell_percentage*100:.0f}% ({sell_amount:.3f} SOL)")
+        
+        # Execute partial sell
+        success, result = execute_via_javascript(token_address, sell_amount, True)
+        
+        if success:
+            # Update position size
+            position['position_size_sol'] *= (1 - sell_percentage)
+            
+            # Calculate and track profit
+            current_price = get_token_price(token_address)
+            if current_price and position.get('entry_price'):
+                profit_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                profit_usd = (sell_amount * 240) * (profit_pct / 100)
+                
+                daily_snipe_stats['total_profit_usd'] += profit_usd
+                daily_snipe_stats['best_snipe'] = max(daily_snipe_stats['best_snipe'], profit_usd)
+                
+                logging.info(f"✅ PARTIAL SELL SUCCESS: +${profit_usd:.2f}")
+    
+    except Exception as e:
+        logging.error(f"Error in partial sell: {e}")
+
+def close_sniped_position(token_address: str):
+    """
+    Close a sniped position completely
+    """
+    try:
+        if token_address not in sniped_positions:
+            return
+        
+        position = sniped_positions[token_address]
+        remaining_size = position['position_size_sol']
+        
+        logging.info(f"🔄 CLOSING SNIPE: {token_address[:8]} - {remaining_size:.3f} SOL")
+        
+        # Execute final sell
+        success, result = execute_via_javascript(token_address, remaining_size, True)
+        
+        if success:
+            # Calculate final profit
+            hold_time = (time.time() - position['entry_time']) / 60
+            current_price = get_token_price(token_address)
+            
+            if current_price and position.get('entry_price'):
+                final_profit_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                final_profit_usd = (remaining_size * 240) * (final_profit_pct / 100)
+                
+                daily_snipe_stats['total_profit_usd'] += final_profit_usd
+                daily_snipe_stats['best_snipe'] = max(daily_snipe_stats['best_snipe'], final_profit_usd)
+                
+                logging.info(f"✅ SNIPE CLOSED: {token_address[:8]} | {final_profit_pct:.1f}% | ${final_profit_usd:.2f} | {hold_time:.1f}m")
+            
+            # Remove from tracking
+            del sniped_positions[token_address]
+            
+    except Exception as e:
+        logging.error(f"Error closing sniped position: {e}")
+
+def is_token_new_enough(created_timestamp) -> bool:
+    """Check if token is new enough for sniping"""
+    try:
+        current_time = time.time()
+        token_age_hours = (current_time - created_timestamp) / 3600
+        return token_age_hours <= 24  # Less than 24 hours old
+    except:
+        return False
 
 def convert_profits_to_usdc(profit_amount_usd):
     """Convert profits to USDC when daily target hit"""
@@ -9434,4 +10215,9 @@ def main():
 
 # Also update the bottom of your file:
 if __name__ == "__main__":
-    main()
+    # Initialize your existing systems
+    initialize()
+    
+    # Start the ultimate sniping system
+    ultimate_sniping_loop()
+"""
