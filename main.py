@@ -4152,6 +4152,17 @@ def enhanced_find_newest_tokens_with_free_apis():
         ]
 
 
+def execute_sell_with_retries(token_address, amount, max_retries=3):
+    for attempt in range(max_retries):
+        success = execute_via_javascript(token_address, amount, True)
+        if success:
+            return True
+        
+        logging.warning(f"Sell attempt {attempt + 1} failed, retrying...")
+        time.sleep(2)
+    
+    return False
+
 def execute_optimized_sell(token_address: str) -> bool:
     """Execute sell for a token"""
     try:
@@ -8395,8 +8406,8 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         import subprocess
         
         # USE THE ACTUAL AMOUNT PARAMETER!
+        amount = round(float(amount), 6)
         trade_amount = str(amount)  # Use the amount passed to the function
-        command = f"node swap.js {token_address} {trade_amount} {str(is_sell).lower()}"
         
         logging.info(f"🎯 Executing: {command}")
         
