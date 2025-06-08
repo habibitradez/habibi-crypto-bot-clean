@@ -1652,12 +1652,56 @@ def monitor_profitable_wallets():
     
     # PROVEN PROFITABLE WALLETS (REAL ADDRESSES FROM RESEARCH)
     PROFITABLE_WALLETS = [
-        "3bpQitXdThkCgfELQ2KwhLvacze3fXWYEue993LqEhUD",  # $2M+ profits
-        "DWhUa8Z5mKXH4D2nF3jCvYz1aE6hK9lO3qT7wC5jP8d",  # $14.8M profits, 75% ROI
-        "cifwifhatday.sol",                                   # $23.4M from WIF, 579% ROI
-        "D2Noa9xKvP4mR2tE6sL8cH3kF9jA1mN5qP7rT4vU2w",   # Consistent gains
-        "B4mN7pQ3rS5tU8vX1yZ2aE6hK9lO3qT7wC5jP8dF2s"    # Steady performer
-    ]
+        "52XAJBYAqBfx5NUf9UHcYbtpd6Ar9r4miiJgBMrPtoX7",
+        "FpYssNBCxC9uAXrw6JsFqQ59e2vH1RMnfdGtjTvr5aFX", 
+        "4hkgHm84DWJPCTx6aqRq3bgr4YreenUSzQPTmUn9WNCG",
+        "AtCzVpyaXXTPC4yDoku8yCYCSNyS9zBknGFCRHzXvcw7",
+        "8BXDu9QAEp4TgTKQy1ShGgLvcuv5YvukpiHwhU4zfPqN",
+        "8pZLhFrW9KFwJYgF6No7GmB6QimTPoruG5SFH1avqDeZ",
+        "CAUP6pShV5byF9dXUQz5PZiFvqGXWCLX8GvNWNBiTEDQ",
+        "E8EZTrRY4Dc9Vsw3mCdBZ6gE2xCw9CisQBundxzggtCs",
+        "9b9hqvHaKkDuGsqu622Lud6ToWuGbVCTsr2GWimWtnuk",
+        "2EiuGzhmktr72M3FjWNwMZLRNF7HxAsYn23SsYkPcPDk",
+        "Gv8YFCU9WESGpN6fcGKG9nirqcyF9wVZAqnQ1DjrsfcE",
+        "9fR8gerfvGSycFGbK2VY1PFrPuU9jS6QM47S974yTUHC",
+        "6jEs4tt5dH61Ehy1kQoAdbv5Vrim7UhhQuhDpMLgVVzi",
+        "8av6yAVUYJgT4MFBAsxoMgG6uPuTLqzQ5qXgsF2AYDTw",
+        "X7EQaGXBG6Qij9acj9mibr5TqRW8Ngh8AfdWgaKHeBj",
+        "54JSah7PDBxxn7NK5KCvFogsPmxxHPrfYyPJfNrpiLRe",
+        "3kaEyCoJRUigeSeii8FK8QKy8XxEKMekgAmYpYEEnkFL",
+        "DQe4BwXxGgxy2hHsqrGXdVFoS8G4sbDeUqziT7ibBq2L",
+        "68HSB9JP52zJkEks9NdTPZ5HeQbbzcA5dSEJkf4XYzQj",
+        "H6XVhyXuBhjcx9yPZDfqtczhiXcQ9NyW1cotfSUfRFfX",
+        "EsfrWzpXV2NnCA13s28ar76SKm6FhV5oWTAPCNm2MzRf",
+        "EPLVsSqUmKXBM9cPyBHSfhBA3yPYfMPkHHz2a4ajQ4aZ",
+        "J1dHwpKBs8Jo4n7jWEJWwMGNH2DJQnApBFPnnYXg74v7",
+        "CPxoj3BRB4ao3kxCx9YHpHZ1g3P7rXcGnT6vcz8rPYV",
+        "6BGqq9G76dYz2FhEEkGpptnHg1PH2sCRkWyS2gptJYgr",
+        "7ViAq5Vxy1R5NXxc3mMSrfEKEnXCYcJg6ajWBxALVR2f",
+        "52mJfw4stQVLubAkwpDx7p7svPjCVf6gUGGC2wj9HG53",
+        "HLA6XQhpJpsUcQJ3AgNMDqMD6YhqmJjykVSSyC4uHqiu",
+        "2MDe4t6n29Fa9DkZMv2uZxdxbquDp4Jtros2oRQFfeU2",
+        "CqxyPRrXK24qXW1GK4Lqfypn5E6UsG6zk7oCZZLrMA5h",
+        "C8eZQ72REJZ2i4eNoB7iWPehV9D2CN6f4uGiUvmXHuKf",
+        "4wHWwoRfbYmDJepWdMTB7vqY887UMWQZZcAQaSBnm2L4",
+        "ExbKNUwVtyRjrJMPLnVWRus9BxTRpt6BRXWxGYTyfcYS",
+        "5op4fioUwT2qgVU52RxRjt1QaVX93oNK6BHmZLnvbPpP",
+        "EptgprX4NYhSHCn2R5EzLY9bVdfT19dx3D68xa18fwfw",
+        "H36Puic1cYwHVW5PWMiYs91msVgSMKwTgoB5rXMzGcgs",
+        "B7x5z5w5h23vmHusQfpm7R6iD1MBzysbKoWfXXWa3dEs",
+        "7rNKHb8b9kVgTZxCizVRFsLHJ8KCxwr8RiMiUJro7NUP",
+        "B8VCgam3PowSEZL3HSx1ZfGqS4CKXd1M62zpZ843A1GC",
+        "EHRAi3SarXEqAZSbJinTMcAxLnuUAsPPmAE6EurxQgHu",
+        "G3raAzSsMwkc3yAjRohyhsq7BRZcauyrDct8UYvKwM5Z",
+        "H7rUY2ghRa7YB85K9392cFxvEnWFT7VgveUJeD3zzcZE",
+        "D2NGbbtqDvGti35dJarHN9HGqv5zsHHqaLwFdEu5dHYS",
+        "9Q2LcZZgD7Rnv3tQNXQwQxHQYTVNY997HnQsYoVa9UzL",
+        "9ZYp74kFLi2fNgdBEpcUwJPaPeP8pTjdEDHsYYXVDpHR",
+        "D756157u6peVqqAxehBz1dkyrFuSmPDcR8rgnyCCHkKo",
+        "EqnrSFRcbgvU5QJkvGah824iH6uzY13dsB7XpeF9nk5r",
+        "GCohAnZ532yjPRXA67RdbbpchuYVHKx4Z9x64sfapZnd"
+]
+
     
     copy_opportunities = []
     
