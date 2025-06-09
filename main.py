@@ -2854,7 +2854,7 @@ def partial_sell_sniped_position(token_address: str, sell_percentage: float):
         logging.info(f"💸 PARTIAL SELL: {token_address[:8]} - {sell_percentage*100:.0f}% ({sell_amount:.3f} SOL)")
         
         # Execute partial sell
-        success, result = execute_via_javascript(token_address, sell_amount, True)
+        success, result = execute_sell_with_retries(token_address, sell_amount)
         
         if success:
             # Update position size
@@ -2888,7 +2888,7 @@ def close_sniped_position(token_address: str):
         logging.info(f"🔄 CLOSING SNIPE: {token_address[:8]} - {remaining_size:.3f} SOL")
         
         # Execute final sell
-        success, result = execute_via_javascript(token_address, remaining_size, True)
+        success, result = execute_emergency_sell(token_address, remaining_size)
         
         if success:
             # Calculate final profit
@@ -8399,9 +8399,41 @@ def execute_optimized_trade(token_address: str, amount_sol: float) -> Tuple[bool
         logging.error(f"❌ Execution error: {e}")
         return False, None
 
+def execute_emergency_sell(token_address, amount):
+    """Emergency sell with maximum timeout and aggressive retry"""
+    logging.error(f"🚨 EMERGENCY SELL INITIATED: {token_address}")
+    
+    # Try with retries first
+    success, output = execute_sell_with_retries(token_address, amount, max_retries=5)
+    
+    if success:
+        logging.info(f"✅ EMERGENCY SELL SUCCESS: {token_address}")
+        return True
+    
+    logging.error(f"💀 EMERGENCY SELL FAILED: {token_address} - MANUAL INTERVENTION REQUIRED")
+    return False
+
+def execute_sell_with_retries(token_address, amount, max_retries=3):
+    """Execute sell with retries and increasing slippage"""
+    for attempt in range(max_retries):
+        try:
+            success, output = execute_via_javascript(token_address, amount, True)
+            if success:
+                logging.info(f"✅ SELL SUCCESS on attempt {attempt + 1}")
+                return True
+            
+            logging.warning(f"❌ Sell attempt {attempt + 1} failed, retrying...")
+            time.sleep(5)  # Wait 5 seconds between retries
+            
+        except Exception as e:
+            logging.error(f"Sell attempt {attempt + 1} error: {e}")
+            time.sleep(5)
+    
+    logging.error(f"🚨 ALL SELL ATTEMPTS FAILED for {token_address}")
+    return False
 
 def execute_via_javascript(token_address, amount, is_sell=False):
-    """Execute trade via JavaScript with proper amount handling"""
+    """Execute trade via JavaScript with proper amount handling and sell fixes"""
     try:
         import subprocess
         
@@ -8412,6 +8444,9 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         command_str = f"node swap.js {token_address} {trade_amount} {'true' if is_sell else 'false'}"
         logging.info(f"⚡ Executing: {command_str}")
         
+        # Increased timeout for sells (60s) and buys (30s)
+        timeout_duration = 60 if is_sell else 30
+        
         result = subprocess.run([
             'node', 'swap.js',
             token_address,
@@ -8420,7 +8455,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         ], 
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=timeout_duration,  # Dynamic timeout based on operation
         cwd='/opt/render/project/src'
         )
         
@@ -8436,7 +8471,8 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             "BUY SUCCESS:" in combined_output,
             "SELL SUCCESS:" in combined_output,
             "confirmed" in combined_output.lower(),
-            "submitted" in combined_output.lower()
+            "submitted" in combined_output.lower(),
+            "🎉 SUCCESS" in combined_output  # Your swap.js success indicator
         ]
         
         is_successful = any(success_indicators)
@@ -8452,8 +8488,9 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             return False, combined_output
             
     except subprocess.TimeoutExpired:
-        logging.error(f"⏰ TIMEOUT: 30 seconds exceeded for {token_address}")
-        return False, "Timeout after 30 seconds"
+        timeout_duration = 60 if is_sell else 30
+        logging.error(f"⏰ TIMEOUT: {timeout_duration} seconds exceeded for {token_address}")
+        return False, f"Timeout after {timeout_duration} seconds"
     except Exception as e:
         logging.error(f"❌ ERROR: {e}")
         return False, f"Error: {str(e)}"
