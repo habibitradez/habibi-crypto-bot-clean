@@ -8418,10 +8418,10 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             trade_amount,
             'true' if is_sell else 'false'
         ], 
-        shell=True,
         capture_output=True,
         text=True,
-        timeout=30
+        timeout=30,
+        cwd='/opt/render/project/src'
         )
         
         stdout_output = result.stdout if result.stdout else ""
