@@ -2704,6 +2704,82 @@ def get_pumpfun_new_launches() -> List[str]:
     except:
         return []
 
+def cleanup_empty_positions():
+    """Periodic cleanup of positions with zero balance"""
+    try:
+        positions_to_remove = []
+        
+        for token_address in list(sniped_positions.keys()):
+            if not has_token_balance(token_address, 0.0001):  # Very small threshold
+                positions_to_remove.append(token_address)
+                logging.info(f"🧹 Found empty position: {token_address[:8]}")
+        
+        for token_address in positions_to_remove:
+            if token_address in sniped_positions:
+                del sniped_positions[token_address]
+                logging.info(f"🗑️ CLEANED UP empty position: {token_address[:8]}")
+        
+        if positions_to_remove:
+            logging.info(f"🧹 Cleaned up {len(positions_to_remove)} empty positions")
+            
+    except Exception as e:
+        logging.error(f"Error in cleanup_empty_positions: {e}")
+
+def has_token_balance(token_address, min_amount=0.001):
+    """Check if wallet actually has tokens before trying to sell"""
+    try:
+        # Get the token balance using your existing method
+        # This is a simplified version - you might need to adapt based on your existing balance checking code
+        
+        # Try to use your existing get_token_balance function if it exists
+        try:
+            balance = get_token_balance(token_address)
+            return balance > min_amount
+        except:
+            pass
+        
+        # Alternative: Use a simple RPC call (if you have RPC functions)
+        try:
+            # This would use your existing RPC infrastructure
+            # Adapt this to match your existing token balance checking method
+            wallet_address = "5sPBtVAS9tZdkHa8AFCf6hc2xfAFyMcp9U3DFsA1vFLh"  # Your wallet
+            
+            # Use your existing RPC call pattern
+            result = requests.post(
+                "YOUR_RPC_URL",  # Replace with your actual RPC URL
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getParsedTokenAccountsByOwner",
+                    "params": [
+                        wallet_address,
+                        {"mint": token_address},
+                        {"encoding": "jsonParsed"}
+                    ]
+                },
+                timeout=5
+            )
+            
+            if result.status_code == 200:
+                data = result.json()
+                if data.get('result', {}).get('value'):
+                    accounts = data['result']['value']
+                    for account in accounts:
+                        amount = account['account']['data']['parsed']['info']['tokenAmount']['uiAmount']
+                        if amount and amount > min_amount:
+                            return True
+                return False
+            
+        except:
+            pass
+        
+        return False  # Default to False if we can't check
+        
+    except Exception as e:
+        logging.error(f"Error checking token balance for {token_address}: {e}")
+        return False
+
+
 def is_snipeable_token(token_address: str) -> bool:
     """
     Ultra-fast validation for sniping (no slow security checks)
@@ -2778,15 +2854,14 @@ def track_sniped_position(token_address: str):
         logging.error(f"Error tracking position: {e}")
 
 def monitor_sniped_positions():
-    """
-    Monitor sniped positions for quick exits
-    """
+    """Monitor sniped positions for quick exits with position cleanup"""
     try:
         if not sniped_positions:
             return
         
         current_time = time.time()
         positions_to_close = []
+        positions_to_remove = []  # For cleanup
         
         for token_address, position in sniped_positions.items():
             try:
@@ -2802,6 +2877,10 @@ def monitor_sniped_positions():
                 # Check current price
                 current_price = get_token_price(token_address)
                 if not current_price or not position.get('entry_price'):
+                    # If we can't get price, it might be delisted/rugged
+                    if hold_time_minutes > 10:  # Give it 10 minutes
+                        logging.warning(f"💀 Cannot get price for {token_address[:8]} after {hold_time_minutes:.1f}m - removing")
+                        positions_to_remove.append(token_address)
                     continue
                 
                 # Calculate profit/loss
@@ -2810,7 +2889,7 @@ def monitor_sniped_positions():
                 # Progressive profit taking
                 if position['profit_targets'] and gain_pct >= position['profit_targets'][0]:
                     target_hit = position['profit_targets'].pop(0)
-                    logging.info(f"💰 PROFIT TARGET {target_hit}%: {token_address[:8]} at +{gain_pct:.1f}%")
+                    logging.info(f"🎯 PROFIT TARGET {target_hit}%: {token_address[:8]} at +{gain_pct:.1f}%")
                     
                     # Sell 33% of position
                     partial_sell_sniped_position(token_address, 0.33)
@@ -2829,9 +2908,23 @@ def monitor_sniped_positions():
                     profit_usd = (position['position_size_sol'] * 240) * (gain_pct / 100)
                     logging.info(f"📊 {token_address[:8]}: {gain_pct:.1f}% (${profit_usd:.2f}) - {hold_time_minutes:.1f}m")
                 
+                # Clean up positions that have been negative for too long
+                if gain_pct <= -50 and hold_time_minutes > 15:
+                    logging.warning(f"💀 Position {token_address[:8]} down {gain_pct:.1f}% for {hold_time_minutes:.1f}m - likely rugged")
+                    positions_to_remove.append(token_address)
+                    
             except Exception as e:
                 logging.error(f"Error monitoring {token_address[:8]}: {e}")
+                # If we consistently can't monitor a position, remove it after 30 minutes
+                if hold_time_minutes > 30:
+                    positions_to_remove.append(token_address)
                 continue
+        
+        # Clean up positions that should be removed (rugged, delisted, etc.)
+        for token_address in positions_to_remove:
+            if token_address in sniped_positions:
+                del sniped_positions[token_address]
+                logging.info(f"🗑️ CLEANED UP dead position: {token_address[:8]}")
         
         # Close flagged positions
         for token_address in positions_to_close:
@@ -2839,6 +2932,7 @@ def monitor_sniped_positions():
             
     except Exception as e:
         logging.error(f"Error monitoring sniped positions: {e}")
+
 
 def partial_sell_sniped_position(token_address: str, sell_percentage: float):
     """
@@ -2875,11 +2969,10 @@ def partial_sell_sniped_position(token_address: str, sell_percentage: float):
         logging.error(f"Error in partial sell: {e}")
 
 def close_sniped_position(token_address: str):
-    """
-    Close a sniped position completely
-    """
+    """Close a sniped position completely with proper cleanup"""
     try:
         if token_address not in sniped_positions:
+            logging.warning(f"⚠️ Attempted to close non-existent position: {token_address[:8]}")
             return
         
         position = sniped_positions[token_address]
@@ -2887,7 +2980,15 @@ def close_sniped_position(token_address: str):
         
         logging.info(f"🔄 CLOSING SNIPE: {token_address[:8]} - {remaining_size:.3f} SOL")
         
-        # Execute final sell
+        # Check if we actually have tokens to sell
+        if not has_token_balance(token_address, 0.0001):
+            logging.warning(f"💰 No tokens to sell for {token_address[:8]} - position already empty")
+            # Remove from tracking since there's nothing to sell
+            del sniped_positions[token_address]
+            logging.info(f"🗑️ REMOVED empty position: {token_address[:8]}")
+            return
+        
+        # Execute final sell with emergency function (maximum retries)
         success, result = execute_emergency_sell(token_address, remaining_size)
         
         if success:
@@ -2904,11 +3005,21 @@ def close_sniped_position(token_address: str):
                 
                 logging.info(f"✅ SNIPE CLOSED: {token_address[:8]} | {final_profit_pct:.1f}% | ${final_profit_usd:.2f} | {hold_time:.1f}m")
             
-            # Remove from tracking
+            # Remove from tracking after successful sale
             del sniped_positions[token_address]
+            
+        else:
+            logging.error(f"❌ Failed to close position: {token_address[:8]}")
+            # Still remove from tracking to prevent infinite retry loops
+            del sniped_positions[token_address]
+            logging.info(f"🗑️ REMOVED failed position: {token_address[:8]}")
             
     except Exception as e:
         logging.error(f"Error closing sniped position: {e}")
+        # Clean up position even if error occurs
+        if token_address in sniped_positions:
+            del sniped_positions[token_address]
+            
 
 def is_token_new_enough(created_timestamp) -> bool:
     """Check if token is new enough for sniping"""
@@ -4153,15 +4264,68 @@ def enhanced_find_newest_tokens_with_free_apis():
 
 
 def execute_sell_with_retries(token_address, amount, max_retries=3):
-    for attempt in range(max_retries):
-        success = execute_via_javascript(token_address, amount, True)
-        if success:
-            return True
-        
-        logging.warning(f"Sell attempt {attempt + 1} failed, retrying...")
-        time.sleep(2)
+    """Execute sell with retries and position cleanup"""
+    logging.info(f"🔄 Starting sell with retries for {token_address}")
     
-    return False
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"🔄 Sell attempt {attempt + 1}/{max_retries} for {token_address}")
+            
+            success, output = execute_via_javascript(token_address, amount, True)
+            
+            if success:
+                logging.info(f"✅ SELL SUCCESS on attempt {attempt + 1}: {token_address}")
+                
+                # CRITICAL: Remove from tracking after successful sell
+                if token_address in sniped_positions:
+                    del sniped_positions[token_address]
+                    logging.info(f"🗑️ REMOVED from tracking: {token_address}")
+                
+                # Update daily stats
+                try:
+                    daily_snipe_stats['snipes_successful'] += 1
+                    logging.info(f"📊 Updated daily stats: {daily_snipe_stats['snipes_successful']} successful snipes")
+                except:
+                    pass
+                
+                return True, output
+            
+            # Log the specific failure reason
+            if "timeout" in output.lower():
+                logging.warning(f"⏰ Attempt {attempt + 1} timed out, retrying...")
+            elif "zero balance" in output.lower() or "balance=0" in output.lower():
+                logging.warning(f"💰 No balance to sell for {token_address} - removing from tracking")
+                # Remove from tracking if no balance
+                if token_address in sniped_positions:
+                    del sniped_positions[token_address]
+                    logging.info(f"🗑️ REMOVED zero balance position: {token_address}")
+                return False, "No balance to sell"
+            else:
+                logging.warning(f"❌ Attempt {attempt + 1} failed: {output[:200]}")
+            
+            # Wait between retries, increasing wait time each attempt
+            wait_time = 3 + (attempt * 2)  # 3s, 5s, 7s
+            logging.info(f"⏳ Waiting {wait_time}s before retry...")
+            time.sleep(wait_time)
+            
+        except Exception as e:
+            logging.error(f"💥 Sell attempt {attempt + 1} exception: {e}")
+            time.sleep(5)
+    
+    logging.error(f"🚨 ALL {max_retries} SELL ATTEMPTS FAILED for {token_address}")
+    
+    # If all attempts failed, check if it's a balance issue and clean up
+    try:
+        # Try one more manual check
+        manual_result = execute_via_javascript(token_address, 0.001, True)  # Tiny test amount
+        if "zero balance" in str(manual_result).lower() or "balance=0" in str(manual_result).lower():
+            if token_address in sniped_positions:
+                del sniped_positions[token_address]
+                logging.info(f"🗑️ REMOVED failed position (no balance): {token_address}")
+    except:
+        pass
+    
+    return False, "All retry attempts failed"
 
 def execute_optimized_sell(token_address: str) -> bool:
     """Execute sell for a token"""
