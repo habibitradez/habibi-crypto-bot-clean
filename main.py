@@ -8212,21 +8212,21 @@ def scan_recent_solana_transactions():
                         
                         if len(potential_tokens) >= 3:  # Limit total tokens
                             break
-                                
-                        except Exception as e:
-                            logging.error(f"Error analyzing transaction {signature}: {str(e)}")
-                            continue
                     
-                    if potential_tokens:
-                        logging.info(f"Found {len(potential_tokens)} potential tokens from transaction analysis")
-                        return potential_tokens
+                    except Exception as e:  # This except should align with the try on line 8209
+                        logging.error(f"Error analyzing transaction {signature}: {str(e)}")
+                        continue
+                
+                if potential_tokens:
+                    logging.info(f"Found {len(potential_tokens)} potential tokens from transaction analysis")
+                    return potential_tokens
         
-        except Exception as e:
+        except Exception as e:  # This except should align with the outer try
             logging.error(f"Error scanning transactions: {str(e)}")
         
         return []
-        
-    except Exception as e:
+    
+    except Exception as e:  # This except aligns with the function's try
         logging.error(f"Error in transaction scanning: {str(e)}")
         return []
 
