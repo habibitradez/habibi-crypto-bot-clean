@@ -8197,21 +8197,21 @@ def scan_recent_solana_transactions():
         }
         
         response = RPC_SESSION.post(CONFIG['SOLANA_RPC_URL'], json=payload, timeout=5)
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "result" in data and data["result"]:
-                    signatures = [tx["signature"] for tx in data["result"][:5]]  # Limit to 5
-                    
-                    # Analyze these transactions for new token addresses
-                    potential_tokens = []
-                    for signature in signatures:
-                        try:
-                            token_addresses = analyze_transaction_for_tokens(signature)
-                            potential_tokens.extend(token_addresses[:2])  # Limit tokens per tx
-                            
-                            if len(potential_tokens) >= 3:  # Limit total tokens
-                                break
+        
+        if response.status_code == 200:
+            data = response.json()
+            if "result" in data and data["result"]:
+                signatures = [tx["signature"] for tx in data["result"][:5]]  # Limit to 5
+                
+                # Analyze these transactions for new token addresses
+                potential_tokens = []
+                for signature in signatures:
+                    try:
+                        token_addresses = analyze_transaction_for_tokens(signature)
+                        potential_tokens.extend(token_addresses[:2])  # Limit tokens per tx
+                        
+                        if len(potential_tokens) >= 3:  # Limit total tokens
+                            break
                                 
                         except Exception as e:
                             logging.error(f"Error analyzing transaction {signature}: {str(e)}")
