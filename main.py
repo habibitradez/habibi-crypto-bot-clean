@@ -21,6 +21,9 @@ from solders.pubkey import Pubkey as PublicKey
 from solders.transaction import Transaction, VersionedTransaction
 from solders.system_program import transfer, TransferParams
 from base58 import b58decode, b58encode
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging with both file and console output
 current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -45,9 +48,48 @@ daily_stats = {
     'last_reset': time.time()
 }
 
+def create_optimized_session():
+    """Create session with connection pooling, keep-alive, and retries"""
+    session = requests.Session()
+    
+    # Retry strategy for resilience
+    retry_strategy = Retry(
+        total=3,
+        backoff_factor=0.1,
+        status_forcelist=[429, 500, 502, 503, 504],
+    )
+    
+    # Adapter with connection pooling
+    adapter = HTTPAdapter(
+        max_retries=retry_strategy,
+        pool_connections=20,  # Increase for Helius
+        pool_maxsize=50,      # Increase for parallel requests
+        pool_block=False      # Don't block on pool full
+    )
+    
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    
+    # Optimized headers
+    session.headers.update({
+        'Content-Type': 'application/json',
+        'User-Agent': 'SolanaBot/2.0',
+        'Connection': 'keep-alive',
+        'Accept-Encoding': 'gzip, deflate',
+        'Accept': 'application/json'
+    })
+    
+    return session
+
+RPC_SESSION = create_optimized_session()
+HELIUS_SESSION = create_optimized_session()
+
+# Thread pool for parallel requests
+REQUEST_EXECUTOR = ThreadPoolExecutor(max_workers=10)
+
 # Configuration from environment variables with fallbacks
 CONFIG = {
-    'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', ''),
+    'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', 'https://mainnet.helius-rpc.com/?api-key=6e4e884f-d053-4682-81a5-3aeaa0b4c7dc'),
     'JUPITER_API_URL': 'https://quote-api.jup.ag',  # Base URL
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
@@ -64,7 +106,7 @@ CONFIG = {
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.05')),  # Reduced to 0.10 SOL
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.20')),  # Reduced to 0.10 SOL
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
@@ -75,7 +117,13 @@ CONFIG = {
     'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
     'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '60')),  # Only buy very new tokens
     'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
-    
+    'DISCOVERY_CHECK_INTERVAL': float(os.environ.get('DISCOVERY_CHECK_INTERVAL', '0.5')),
+    'VALIDATION_TIMEOUT': int(os.environ.get('VALIDATION_TIMEOUT', '1')),
+    'SKIP_MARKET_CAP_CHECK': os.environ.get('SKIP_MARKET_CAP_CHECK', 'true').lower() == 'true',
+    'PARALLEL_EXECUTION': os.environ.get('PARALLEL_EXECUTION', 'true').lower() == 'true',
+    'SKIP_UNNECESSARY_CHECKS': os.environ.get('SKIP_UNNECESSARY_CHECKS', 'true').lower() == 'true',
+    'HELIUS_PRIORITY_FEE': os.environ.get('HELIUS_PRIORITY_FEE', 'true').lower() == 'true',
+    'SNIPE_DELAY_SECONDS': float(os.environ.get('SNIPE_DELAY_SECONDS', '0.5')),
 
     # Memory optimization
     'RPC_CALL_DELAY_MS': int(os.environ.get('RPC_CALL_DELAY_MS', '300')),
@@ -116,6 +164,29 @@ CAPITAL_PRESERVATION_CONFIG = {
     'MIN_LIQUIDITY_USD': 10000,         # NEW
     'MIN_HOLD_TIME_SECONDS': 60,        # NEW
     'MAX_HOLD_TIME_SECONDS': 1800         # NEW
+}
+
+SNIPING_CONFIG = {
+    'TARGET_DAILY_PROFIT': 500,           
+    'POSITION_SIZE_SOL': 0.2,           
+    'MAX_CONCURRENT_SNIPES': 5,         
+    'QUICK_PROFIT_TARGETS': [15, 25, 35],
+    'STOP_LOSS_PERCENT': 10,            
+    'MAX_HOLD_TIME_MINUTES': 15,        
+    'MIN_MARKET_CAP': 5000,               
+    'MAX_MARKET_CAP': 100000,
+    'STRATEGY': 'DIP_BUYER',  # New strategy
+    'TARGET_AGE': '2-24 hours',
+    'BUY_ON_DIP': -25,
+    'SELL_ON_BOUNCE': 15,
+}
+
+# ADD THIS TOO - Speed optimization flags
+SPEED_MODE = {
+    'ENABLED': True,
+    'SKIP_VALIDATIONS': ['market_cap', 'holder_count', 'social_signals'],
+    'PRIORITY_FEES_MULTIPLIER': 2.0,
+    'USE_WEBSOCKET': False,  # Disable for speed
 }
 
 def update_config_for_quicknode():
@@ -330,7 +401,7 @@ def fallback_rpc():
                 "params": []
             }
             
-            response = requests.post(endpoint, headers=headers, json=test_request, timeout=10)
+            response = RPC_SESSION.post(endpoint, json=test_request, timeout=5)
             
             if response.status_code == 200 and "result" in response.json():
                 logging.info(f"✅ Successfully switched to fallback RPC: {endpoint}")
@@ -614,12 +685,7 @@ class SolanaWallet:
                     "wrapUnwrapSOL": True  # Correct parameter name
                 }
                 
-                swap_response = requests.post(
-                    swap_url, 
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=15
-                )
+                swap_response = RPC_SESSION.post(swap_url, json=payload, timeout=10)
                 
                 if swap_response.status_code != 200:
                     logging.error(f"Swap preparation failed for account creation: {swap_response.status_code}")
@@ -747,6 +813,28 @@ def convert_profits_to_usdc(profit_amount_usd):
     except Exception as e:
         logging.error(f"Error converting to USDC: {e}")
         return False
+
+def fast_rpc_call(method, params=None):
+    """Ultra-fast RPC call with minimal overhead"""
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params or []
+    }
+    
+    try:
+        response = RPC_SESSION.post(
+            CONFIG['SOLANA_RPC_URL'],
+            json=payload,
+            timeout=3  # Very short timeout
+        )
+        return response.json()
+    except:
+        return None
+
+# Usage example:
+# result = fast_rpc_call("getBalance", [wallet_address])
 
 def get_token_price_standard(token_address: str) -> Optional[float]:
     """Standard method for getting token price - your original implementation."""
@@ -2134,10 +2222,6 @@ def scan_multiple_dexs():
     
     return dex_tokens
 
-# ================================
-# 4. REPLACE YOUR POSITION SIZING WITH THIS AGGRESSIVE VERSION
-# ================================
-
 
 def execute_enhanced_trade(token_address, position_size, trade_source):
     """Enhanced trade execution with realistic profit targets"""
@@ -2170,9 +2254,6 @@ def execute_enhanced_trade(token_address, position_size, trade_source):
         logging.error(f"Error executing enhanced trade: {e}")
         return False
 
-# ================================
-# 7. ADD THIS AGGRESSIVE SELL SCHEDULING
-# ================================
 
 def profitable_trading_cycle():
     """Single profitable trading cycle with fee awareness"""
@@ -2573,6 +2654,43 @@ def ultimate_sniping_loop():
             logging.error(f"Error in sniping loop: {e}")
             time.sleep(30)
 
+def second_wave_sniper():
+    """Buy established tokens on dips, not new launches"""
+    
+    # Target tokens 2-24 hours old
+    MIN_TOKEN_AGE = 2 * 60 * 60  # 2 hours in seconds
+    MAX_TOKEN_AGE = 24 * 60 * 60  # 24 hours
+    
+    # Look for sudden dips
+    DIP_THRESHOLD = -25  # 25% drop in 15 minutes
+    
+    # But with strong fundamentals
+    MIN_HOLDERS = 100
+    MIN_VOLUME_24H = 50000  # $50K volume
+    
+    return tokens_matching_criteria
+
+async def find_dip_opportunities():
+    """Find tokens that dipped 25%+ in last hour"""
+    
+    # Use Helius API to scan
+    tokens = await helius_client.get_tokens_by_age(
+        min_age_hours=2,
+        max_age_hours=24
+    )
+    
+    opportunities = []
+    for token in tokens:
+        # Get 1hr price change
+        price_change_1h = await get_price_change(token, '1h')
+        
+        if price_change_1h < -25:  # 25% dip
+            # Verify it's not a rug
+            if await verify_liquidity_locked(token):
+                opportunities.append(token)
+    
+    return opportunities
+
 def find_and_execute_snipes():
     """
     Find new tokens and execute ultra-fast snipes
@@ -2745,9 +2863,10 @@ def has_token_balance(token_address, min_amount=0.001):
             wallet_address = "5sPBtVAS9tZdkHa8AFCf6hc2xfAFyMcp9U3DFsA1vFLh"  # Your wallet
             
             # Use your existing RPC call pattern
-            result = requests.post(
-                "YOUR_RPC_URL",  # Replace with your actual RPC URL
-                json={
+            result = RPC_SESSION.post(
+                CONFIG['SOLANA_RPC_URL'], # Replace with your actual RPC URL
+                json={...},
+                timeout=5
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "getParsedTokenAccountsByOwner",
@@ -4076,7 +4195,7 @@ def enhanced_find_newest_tokens_with_free_apis():
                             ]
                         }
                         
-                        response = requests.post(rpc_url, json=payload, timeout=12)
+                        response = HELIUS_SESSION.post(rpc_url, json=payload, timeout=8)
                         
                         if response.status_code == 200:
                             data = response.json()
@@ -4099,7 +4218,8 @@ def enhanced_find_newest_tokens_with_free_apis():
                                         ]
                                     }
                                     
-                                    tx_response = requests.post(rpc_url, json=tx_payload, timeout=8)
+                                    tx_response = RPC_SESSION.post(rpc_url, json=tx_payload, timeout=5)
+
                                     
                                     if tx_response.status_code == 200:
                                         tx_data = tx_response.json()
@@ -5717,7 +5837,7 @@ def test_helius_free_tier(helius_key):
         }
         
         start_time = time.time()
-        response = requests.post(helius_rpc, json=health_payload, headers=headers, timeout=10)
+        response = HELIUS_SESSION.post(helius_rpc, json=health_payload, timeout=5)
         response_time = time.time() - start_time
         
         if response.status_code == 200:
@@ -7146,11 +7266,10 @@ def initialize():
     # Verify Solana RPC connection 
     try:
         logging.info("Verifying RPC connection...")
-        rpc_response = requests.post(
+        rpc_response = RPC_SESSION.post(
             CONFIG['SOLANA_RPC_URL'],
             json={"jsonrpc": "2.0", "id": 1, "method": "getHealth"},
-            headers={"Content-Type": "application/json"},
-            timeout=10
+            timeout=5  # Reduce timeout for faster fails
         )
         if rpc_response.status_code == 200:
             logging.info(f"Successfully connected to Solana RPC (status {rpc_response.status_code})")
@@ -8078,13 +8197,7 @@ def scan_recent_solana_transactions():
             ]
         }
         
-        try:
-            response = requests.post(
-                CONFIG['SOLANA_RPC_URL'],
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=10
-            )
+        response = RPC_SESSION.post(CONFIG['SOLANA_RPC_URL'], json=payload, timeout=5)
             
             if response.status_code == 200:
                 data = response.json()
@@ -10289,7 +10402,7 @@ def submit_via_helius(signed_transaction):
         
         # Send request
         headers = {"Content-Type": "application/json"}
-        response = requests.post(helius_endpoint, json=payload, headers=headers, timeout=15)
+        response = HELIUS_SESSION.post(helius_endpoint, json=payload, timeout=10)
         
         if response.status_code == 200:
             data = response.json()
