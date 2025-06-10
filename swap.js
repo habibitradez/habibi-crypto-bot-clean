@@ -45,8 +45,8 @@ const MAX_RETRIES = 10; // INCREASED from 7
 const INITIAL_RETRY_DELAY = 2000; // REDUCED from 3000
 
 // OPTIMIZED SLIPPAGE AND PRIORITY FEES FOR $500/DAY CONSISTENCY
-const MIN_SLIPPAGE_FOR_BUYS = 800;     // CHANGED: 3% instead of 1%
-const MIN_SLIPPAGE_FOR_SELLS = 1000;    // CHANGED: 8% instead of 5%
+const MIN_SLIPPAGE_FOR_BUYS = 800;     // CHANGED: 8% instead of 1%
+const MIN_SLIPPAGE_FOR_SELLS = 1000;    // CHANGED: 10% instead of 5%
 const MIN_SLIPPAGE_FOR_SMALL = 2000;   // KEEP: 20% for small positions
 const MIN_PRIORITY_FEE_BUYS = 500000;   // DOUBLED: 0.0005 SOL for speed
 const MIN_PRIORITY_FEE_SELLS = 2000000; // INCREASED: 0.002 SOL priority
@@ -395,6 +395,91 @@ async function retryWithBackoff(fn, maxRetries = MAX_RETRIES, initialDelay = INI
   }
 }
 
+// NEW: Slippage escalation function
+async function executeWithSlippageEscalation(inputMint, outputMint, amount, keypair, priorityFee, connection) {
+  // Determine base slippage
+  let baseSlippage;
+  if (IS_SMALL_TOKEN_SELL || IS_FORCE_SELL) {
+    baseSlippage = MIN_SLIPPAGE_FOR_SMALL;
+  } else if (IS_SELL) {
+    baseSlippage = MIN_SLIPPAGE_FOR_SELLS;
+  } else {
+    baseSlippage = MIN_SLIPPAGE_FOR_BUYS;
+  }
+  
+  // Slippage escalation attempts
+  const slippageAttempts = IS_SELL ? 
+    [baseSlippage, Math.floor(baseSlippage * 1.5), Math.floor(baseSlippage * 2)] :
+    [800, 1200, 1500]; // For buys: 8%, 12%, 15%
+  
+  console.log(`\n🎯 Slippage escalation ready: ${slippageAttempts.map(s => s/100 + '%').join(' → ')}`);
+  
+  let lastError;
+  let successfulQuote = null;
+  let successfulSlippage = null;
+  
+  // Try getting quotes with escalating slippage
+  for (let attemptIndex = 0; attemptIndex < slippageAttempts.length; attemptIndex++) {
+    const currentSlippage = slippageAttempts[attemptIndex];
+    console.log(`\n📊 Attempt ${attemptIndex + 1}/${slippageAttempts.length} with ${currentSlippage/100}% slippage...`);
+    
+    try {
+      // Get quote with current slippage
+      let quoteResponse;
+      
+      if (USE_QUICKNODE_METIS) {
+        quoteResponse = await retryWithBackoff(async () => {
+          return await getQuoteViaQuickNode(inputMint, outputMint, amount, currentSlippage);
+        });
+      } else {
+        const quoteUrl = `https://quote-api.jup.ag/v6/quote`;
+        const quoteParams = {
+          inputMint: inputMint,
+          outputMint: outputMint,
+          amount: amount.toString(),
+          slippageBps: currentSlippage.toString()
+        };
+        
+        console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
+        
+        quoteResponse = await retryWithBackoff(async () => {
+          console.log('Attempting to get Jupiter quote...');
+          return await axios.get(quoteUrl, { 
+            params: quoteParams,
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            timeout: 15000
+          });
+        });
+      }
+      
+      if (quoteResponse && quoteResponse.data) {
+        console.log(`✅ Got quote with ${currentSlippage/100}% slippage. Output: ${quoteResponse.data.outAmount}`);
+        successfulQuote = quoteResponse;
+        successfulSlippage = currentSlippage;
+        break; // Success! Exit the loop
+      }
+      
+    } catch (error) {
+      lastError = error;
+      console.log(`❌ Failed with ${currentSlippage/100}% slippage: ${error.message}`);
+      
+      if (attemptIndex < slippageAttempts.length - 1) {
+        console.log(`🔄 Escalating to higher slippage...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+  }
+  
+  if (!successfulQuote) {
+    throw lastError || new Error('All slippage attempts failed');
+  }
+  
+  return { quoteResponse: successfulQuote, slippageBps: successfulSlippage };
+}
+
 async function executeSwap() {
   try {
     console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL${IS_FORCE_SELL ? ' (FORCE SELL MODE)' : ''}`);
@@ -430,9 +515,6 @@ async function executeSwap() {
     
     // Convert SOL to lamports
     const amountLamports = Math.floor(AMOUNT_SOL * 1_000_000_000);
-    
-    // Use QuickNode Metis Jupiter or public Jupiter API
-    const JUPITER_API_BASE = USE_QUICKNODE_METIS ? QUICKNODE_JUPITER_ENDPOINT : 'https://quote-api.jup.ag';
     
     // Set input and output mints based on operation
     const inputMint = IS_SELL 
@@ -585,17 +667,6 @@ async function executeSwap() {
       console.log(`Final amount to sell: ${amount}`);
     }
     
-    // Determine slippage
-    let slippageBps;
-    if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
-      slippageBps = MIN_SLIPPAGE_FOR_SMALL.toString();
-      console.log(`Using ${parseInt(slippageBps)/100}% slippage for ${IS_FORCE_SELL ? 'force sell' : 'small token sell'}`);
-    } else if (IS_SELL) {
-      slippageBps = MIN_SLIPPAGE_FOR_SELLS.toString();
-    } else {
-      slippageBps = MIN_SLIPPAGE_FOR_BUYS.toString();
-    }
-    
     // Determine priority fee
     let priorityFee;
     if (IS_SMALL_TOKEN_SELL || isVerySmallBalance || IS_FORCE_SELL) {
@@ -607,55 +678,19 @@ async function executeSwap() {
       priorityFee = MIN_PRIORITY_FEE_BUYS;
     }
     
-    // Step 1: Get a quote (QuickNode Metis or public Jupiter)
-    let quoteResponse;
+    // Step 1: Get quote with slippage escalation
+    console.log(`\n🚀 Starting quote phase with automatic slippage escalation...`);
+    const { quoteResponse, slippageBps } = await executeWithSlippageEscalation(
+      inputMint, 
+      outputMint, 
+      amount, 
+      keypair, 
+      priorityFee,
+      connection
+    );
     
-    if (USE_QUICKNODE_METIS) {
-      // Use QuickNode Metis Jupiter API for quotes only (since quotes work)
-      console.log(`💎 Using QuickNode Metis Jupiter API for quotes (working)`);
-      quoteResponse = await retryWithBackoff(async () => {
-        return await getQuoteViaQuickNode(inputMint, outputMint, amount, parseInt(slippageBps));
-      });
-      
-      console.log(`⚠️ Using public Jupiter API for swaps (QuickNode swap endpoints have 405 errors)`);
-      // Fall through to use public Jupiter API for swaps
-    } else {
-      // Use public Jupiter API
-      const quoteUrl = `${JUPITER_API_BASE}/v6/quote`;
-      console.log(`Using public Jupiter quote URL: ${quoteUrl}`);
-      
-      const quoteParams = {
-        inputMint: inputMint,
-        outputMint: outputMint,
-        amount: amount.toString(),
-        slippageBps: slippageBps
-      };
-      
-      console.log('Quote request params:', JSON.stringify(quoteParams, null, 2));
-      
-      quoteResponse = await retryWithBackoff(async () => {
-        console.log('Attempting to get Jupiter quote...');
-        return await axios.get(quoteUrl, { 
-          params: quoteParams,
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
-          },
-          timeout: 15000 // REDUCED from 20000
-        });
-      });
-    }
-    
-    if (!quoteResponse.data) {
-      console.error('Failed to get quote', quoteResponse);
-      if (IS_SELL || IS_FORCE_SELL) {
-        console.error("Marking as sold anyway to remove from monitoring.");
-        process.exit(0);
-      }
-      process.exit(1);
-    }
-    
-    console.log(`Got Jupiter quote. Output amount: ${quoteResponse.data.outAmount}`);
+    console.log(`\n✅ Quote obtained successfully with ${slippageBps/100}% slippage`);
+    console.log(`Output amount: ${quoteResponse.data.outAmount}`);
     
     await new Promise(resolve => setTimeout(resolve, USE_QUICKNODE_METIS ? 300 : 500)); // REDUCED
     
