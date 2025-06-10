@@ -2860,13 +2860,12 @@ def has_token_balance(token_address, min_amount=0.001):
         try:
             # This would use your existing RPC infrastructure
             # Adapt this to match your existing token balance checking method
-            wallet_address = "5sPBtVAS9tZdkHa8AFCf6hc2xfAFyMcp9U3DFsA1vFLh"  # Your wallet
+            wallet_address = CONFIG['WALLET_ADDRESS']  # Better than hardcoding
             
             # Use your existing RPC call pattern
             result = RPC_SESSION.post(
-                CONFIG['SOLANA_RPC_URL'], # Replace with your actual RPC URL
-                json={...},
-                timeout=5
+                CONFIG['SOLANA_RPC_URL'],
+                json={
                     "jsonrpc": "2.0",
                     "id": 1,
                     "method": "getParsedTokenAccountsByOwner",
