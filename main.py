@@ -5311,6 +5311,30 @@ def ultimate_500_dollar_trading_loop():
             stats = get_daily_stats()
             current_profit = stats['total_profit_usd'] - stats['total_fees_paid']
             
+            # SAFETY CHECK FOR 4 SOL TESTING
+            wallet_balance = get_wallet_balance_sol()
+            if wallet_balance < 2.5:  # Stop if balance drops below 2.5 SOL
+                logging.error(f"🚨 EMERGENCY STOP: Balance {wallet_balance:.2f} SOL below safety limit!")
+                logging.error("Bot stopping to protect remaining capital")
+                break  # Exit the loop
+            
+            # Dynamic position sizing based on balance
+            if wallet_balance < 4.0:
+                safe_position_size = 0.15  # Use smaller positions with 4 SOL
+                max_positions = 3  # Fewer concurrent positions
+            elif wallet_balance < 7.0:
+                safe_position_size = 0.2  # Medium positions
+                max_positions = 5
+            else:
+                safe_position_size = JEET_CONFIG['POSITION_SIZE_SOL']  # Full size
+                max_positions = JEET_CONFIG['MAX_POSITIONS']
+            
+            # Log current trading parameters
+            if int(time.time()) % 300 == 0:  # Every 5 minutes
+                logging.info(f"💰 Wallet Balance: {wallet_balance:.2f} SOL")
+                logging.info(f"📊 Position Size: {safe_position_size} SOL")
+                logging.info(f"🎯 Max Positions: {max_positions}")
+            
             if current_profit >= daily_target:
                 logging.info(f"🎉 DAILY TARGET ACHIEVED: ${current_profit:.2f}!")
                 # Monitor existing positions only
@@ -5326,26 +5350,39 @@ def ultimate_500_dollar_trading_loop():
                 monitor_jeet_positions()
             
             # Look for new jeet opportunities if we have capacity
-            if len(jeet_positions) < JEET_CONFIG['MAX_POSITIONS']:
+            if len(jeet_positions) < max_positions:  # Use dynamic max_positions
                 jeet_opportunities = find_jeet_dumps()
                 
                 if jeet_opportunities:
                     best_opportunity = jeet_opportunities[0]  # Already sorted by score
                     
-                    # Execute the jeet harvest
-                    if execute_jeet_harvest(best_opportunity):
-                        logging.info(f"✅ JEET HARVEST INITIATED: {best_opportunity['address'][:8]}")
+                    # Double-check we have enough balance for new position
+                    active_capital = len(jeet_positions) * safe_position_size
+                    available_balance = wallet_balance - 1.5  # Keep 1.5 SOL for gas
+                    
+                    if available_balance - active_capital >= safe_position_size:
+                        # Execute the jeet harvest with dynamic position size
+                        if execute_jeet_harvest(best_opportunity, safe_position_size):
+                            logging.info(f"✅ JEET HARVEST INITIATED: {best_opportunity['address'][:8]} | Size: {safe_position_size} SOL")
+                    else:
+                        logging.warning(f"⚠️ Insufficient balance for new position. Available: {available_balance - active_capital:.2f} SOL")
                 
             # Show progress
             if int(time.time()) % 60 == 0:  # Every minute
                 hours_running = (time.time() - stats['start_time']) / 3600
                 hourly_rate = current_profit / hours_running if hours_running > 0 else 0
                 
+                # Calculate win rate safely
+                total_trades = jeet_daily_stats.get('winning_trades', 0) + jeet_daily_stats.get('losing_trades', 0)
+                win_rate = (jeet_daily_stats.get('winning_trades', 0) / total_trades * 100) if total_trades > 0 else 0
+                
                 logging.info(f"🌾 JEET HARVESTER STATS:")
                 logging.info(f"   💰 Daily Profit: ${current_profit:.2f}/${daily_target}")
                 logging.info(f"   📊 Hourly Rate: ${hourly_rate:.2f}/hr")
-                logging.info(f"   🎯 Active Positions: {len(jeet_positions)}/{JEET_CONFIG['MAX_POSITIONS']}")
-                logging.info(f"   ✅ Win Rate: {(jeet_daily_stats['winning_trades']/(jeet_daily_stats['winning_trades']+jeet_daily_stats['losing_trades'])*100) if (jeet_daily_stats['winning_trades']+jeet_daily_stats['losing_trades']) > 0 else 0:.1f}%")
+                logging.info(f"   💵 Balance: {wallet_balance:.2f} SOL")
+                logging.info(f"   🎯 Active Positions: {len(jeet_positions)}/{max_positions}")
+                logging.info(f"   ✅ Win Rate: {win_rate:.1f}%")
+                logging.info(f"   📈 Total Trades: {total_trades}")
             
             time.sleep(JEET_CONFIG['SCAN_INTERVAL'])
             
@@ -5354,6 +5391,7 @@ def ultimate_500_dollar_trading_loop():
             break
         except Exception as e:
             logging.error(f"❌ Error in Jeet Harvester: {e}")
+            logging.error(traceback.format_exc())
             time.sleep(30)
 
 def find_jeet_dumps():
@@ -5426,21 +5464,34 @@ def find_jeet_dumps():
         logging.error(f"Error finding jeet dumps: {e}")
         return []
 
-def execute_jeet_harvest(opportunity):
-    """Execute the jeet harvest trade"""
+def execute_jeet_harvest(opportunity, position_size=None):
+    """Execute the jeet harvest trade with dynamic position sizing"""
     try:
         token_address = opportunity['address']
-        position_size = JEET_CONFIG['POSITION_SIZE_SOL']
+        
+        # Use passed position size or default from config
+        if position_size is None:
+            position_size = JEET_CONFIG['POSITION_SIZE_SOL']
         
         logging.info(f"🌾 EXECUTING JEET HARVEST: {token_address[:8]} | "
                     f"{opportunity['dump_percent']:.0f}% dump | "
-                    f"Score: {opportunity['recovery_score']:.1f}")
+                    f"Score: {opportunity['recovery_score']:.1f} | "
+                    f"Position: {position_size} SOL")
         
         # Double check liquidity before buying
         current_liquidity = get_token_liquidity(token_address)
         if current_liquidity < JEET_CONFIG['MIN_LIQUIDITY_USD']:
-            logging.warning(f"Liquidity too low: ${current_liquidity}")
+            logging.warning(f"Liquidity too low: ${current_liquidity:.0f} < ${JEET_CONFIG['MIN_LIQUIDITY_USD']}")
             return False
+        
+        # Check wallet balance one more time
+        wallet_balance = get_wallet_balance_sol()
+        if wallet_balance - 1.5 < position_size:  # Keep 1.5 SOL for gas
+            logging.warning(f"⚠️ Insufficient balance. Have {wallet_balance:.2f} SOL, need {position_size + 1.5:.2f} SOL")
+            return False
+        
+        # Log pre-trade state
+        logging.info(f"💰 Pre-trade balance: {wallet_balance:.2f} SOL")
         
         # Execute buy using your existing function
         success, result = execute_via_javascript(token_address, position_size, False)
@@ -5451,19 +5502,34 @@ def execute_jeet_harvest(opportunity):
                 'entry_time': time.time(),
                 'entry_price': opportunity['current_price'],
                 'position_size': position_size,
-                'recovery_score': opportunity['recovery_score']
+                'recovery_score': opportunity['recovery_score'],
+                'dump_percent': opportunity['dump_percent'],
+                'holders': opportunity['holders'],
+                'volume': opportunity['volume']
             }
             
             jeet_daily_stats['positions_opened'] += 1
             
+            # Log success with details
             logging.info(f"✅ JEET HARVEST SUCCESS: {token_address[:8]}")
+            logging.info(f"   📊 Entry Price: ${opportunity['current_price']:.8f}")
+            logging.info(f"   💵 Position Size: {position_size} SOL")
+            logging.info(f"   📉 Dump Depth: {abs(opportunity['dump_percent']):.0f}%")
+            logging.info(f"   👥 Holders: {opportunity['holders']}")
+            
             return True
         else:
             logging.error(f"❌ JEET HARVEST FAILED: {token_address[:8]}")
+            
+            # Log failure details for debugging
+            if result:
+                logging.error(f"   Error: {result}")
+            
             return False
             
     except Exception as e:
         logging.error(f"Error executing jeet harvest: {e}")
+        logging.error(traceback.format_exc())
         return False
 
 def monitor_jeet_positions():
