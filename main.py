@@ -5127,9 +5127,9 @@ def enhanced_main_loop():
             time.sleep(5)  # Faster recovery
 
 def ultimate_500_dollar_trading_loop():
-    """The complete system for consistent $500 daily profits"""
+    """The complete system for consistent $500 daily profits using DIP BUYING strategy"""
     
-    logging.info("🚀 STARTING ULTIMATE $500/DAY TRADING SYSTEM")
+    logging.info("🚀 STARTING ULTIMATE $500/DAY TRADING SYSTEM - DIP BUYER STRATEGY")
     
     # Initialize daily tracking
     reset_daily_stats()
@@ -5190,10 +5190,60 @@ def ultimate_500_dollar_trading_loop():
                 time.sleep(30)
                 continue
             
-            # === TOKEN DISCOVERY ===
-            logging.info(f"🔍 Discovery cycle {cycle_count} - Target remaining: ${remaining_target:.2f}")
+            # === TOKEN DISCOVERY (DIP BUYING STRATEGY) ===
+            logging.info(f"🔍 Looking for DIP opportunities - Target remaining: ${remaining_target:.2f}")
             
-            momentum_tokens = find_high_momentum_tokens(max_tokens=1)  # Get one good token
+            # Find tokens that dipped 25%+ in the last hour
+            dip_opportunities = []
+            momentum_tokens = []
+            
+            try:
+                # Use your existing token discovery but filter for dips
+                all_tokens = get_helius_new_tokens(limit=50)  # Get more tokens to find dips
+                
+                for token in all_tokens:
+                    try:
+                        # Skip if it's just an address string
+                        token_address = token if isinstance(token, str) else token.get('address', token.get('mint', ''))
+                        
+                        if not token_address:
+                            continue
+                        
+                        # Check if token is 2-24 hours old
+                        token_age_hours = get_token_age_hours(token_address)
+                        if 2 <= token_age_hours <= 24:
+                            # Check 1hr price change
+                            price_change_1h = get_price_change_percent(token_address, '1h')
+                            
+                            # Check volume and liquidity
+                            volume_24h = get_token_volume_24h(token_address)
+                            liquidity = get_token_liquidity(token_address)
+                            
+                            if price_change_1h <= -25 and volume_24h > 50000 and liquidity > 10000:  # 25% dip with good volume
+                                dip_opportunities.append({
+                                    'address': token_address,
+                                    'dip_percent': price_change_1h,
+                                    'age_hours': token_age_hours,
+                                    'volume_24h': volume_24h,
+                                    'liquidity': liquidity
+                                })
+                                logging.info(f"🎯 DIP FOUND: {token_address[:8]} down {abs(price_change_1h):.1f}% | Vol: ${volume_24h:,.0f}")
+                    except Exception as e:
+                        logging.debug(f"Error checking token {token}: {e}")
+                        continue
+                
+                # Sort by biggest dip with good volume
+                dip_opportunities.sort(key=lambda x: (x['dip_percent'], -x['volume_24h']))
+                
+                # Take best dip opportunity
+                if dip_opportunities:
+                    best_dip = dip_opportunities[0]
+                    momentum_tokens = [best_dip['address']]
+                    logging.info(f"🎯 BEST DIP: {best_dip['address'][:8]} | {abs(best_dip['dip_percent']):.1f}% dip | ${best_dip['volume_24h']:,.0f} volume")
+                
+            except Exception as e:
+                logging.error(f"Error finding dips: {e}")
+                momentum_tokens = []
             
             if momentum_tokens:
                 best_token = momentum_tokens[0]
@@ -5205,20 +5255,25 @@ def ultimate_500_dollar_trading_loop():
                     continue
                 
                 # === EXECUTE TRADE ===
-                logging.info(f"🎯 EXECUTING: {best_token[:8]} | {optimal_position:.3f} SOL | ${optimal_position * 240:.0f}")
+                logging.info(f"🎯 EXECUTING DIP BUY: {best_token[:8]} | {optimal_position:.3f} SOL | ${optimal_position * 240:.0f}")
                 
                 trade_start = time.time()
                 success, result = execute_optimized_trade(best_token, optimal_position)
                 trade_time = time.time() - trade_start
                 
                 if success:
-                    logging.info(f"✅ TRADE SUCCESS: {best_token[:8]} in {trade_time:.2f}s")
+                    logging.info(f"✅ DIP BUY SUCCESS: {best_token[:8]} in {trade_time:.2f}s")
                     update_daily_stats(0, 2.5)  # Count trade and fees
+                    
+                    # Set lower profit target for dip buys
+                    if best_token in monitored_tokens:
+                        monitored_tokens[best_token]['profit_target'] = 15  # 15% for quick exit
+                        monitored_tokens[best_token]['strategy'] = 'DIP_BUY'
                 else:
-                    logging.error(f"❌ TRADE FAILED: {best_token[:8]} in {trade_time:.2f}s")
+                    logging.error(f"❌ DIP BUY FAILED: {best_token[:8]} in {trade_time:.2f}s")
                     
             else:
-                logging.info(f"⏳ No momentum tokens found - waiting {settings['discovery_interval']}s")
+                logging.info(f"⏳ No dip opportunities found - waiting {settings['discovery_interval']}s")
             
             # === CYCLE TIMING ===
             cycle_time = time.time() - cycle_start
@@ -5231,6 +5286,7 @@ def ultimate_500_dollar_trading_loop():
                 eta_hours = remaining_target / hourly_rate if hourly_rate > 0 else 0
                 
                 logging.info(f"📈 PROGRESS: ${current_profit:.2f}/{daily_target} | ${hourly_rate:.2f}/hr | ETA: {eta_hours:.1f}h")
+                logging.info(f"📊 DIP BUYER STATS: {cycle_count} cycles | {active_positions} positions")
             
             time.sleep(sleep_time)
             
@@ -5239,6 +5295,7 @@ def ultimate_500_dollar_trading_loop():
             break
         except Exception as e:
             logging.error(f"❌ Critical error in trading loop: {e}")
+            logging.error(traceback.format_exc())
             time.sleep(60)  # Wait 1 minute on errors
 
 
@@ -9178,6 +9235,44 @@ def monitor_token_peak_price(token_address):
     # Update token data with latest info
     monitored_tokens[token_address] = token_data
 
+def get_token_age_hours(token_address):
+    """Get how many hours old a token is"""
+    try:
+        # Use your existing token info method
+        creation_time = get_token_creation_time(token_address)
+        age_seconds = time.time() - creation_time
+        return age_seconds / 3600
+    except:
+        return 0
+
+def get_price_change_percent(token_address, timeframe='1h'):
+    """Get price change percentage over timeframe"""
+    try:
+        # This might already exist in your code
+        current_price = get_token_price(token_address)
+        historical_price = get_historical_price(token_address, timeframe)
+        if historical_price > 0:
+            return ((current_price - historical_price) / historical_price) * 100
+    except:
+        return 0
+
+def get_token_volume_24h(token_address):
+    """Get 24h volume for a token"""
+    try:
+        # Use your existing volume checking method
+        # This might be from Birdeye, DexScreener, or Jupiter
+        return get_token_volume(token_address)  # You likely have this
+    except:
+        return 0
+
+def get_token_liquidity(token_address):
+    """Get current liquidity for a token"""
+    try:
+        # Use your existing liquidity checking method
+        return check_token_liquidity(token_address)  # You likely have this
+    except:
+        return 0
+
 def monitor_token_price_for_consistent_profits(token_address):
     """FIXED: Progressive profit taking for $500/day consistency"""
     
@@ -9185,7 +9280,7 @@ def monitor_token_price_for_consistent_profits(token_address):
         return
     
     token_data = monitored_tokens[token_address]
-    position_size_sol = token_data.get('position_size', 0.15)
+    position_size_sol = token_data.get('position_size', 0.20)
     position_value_usd = position_size_sol * 240  # Current SOL price
     
     current_price = get_token_price(token_address)
