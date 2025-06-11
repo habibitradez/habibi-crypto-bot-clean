@@ -2050,6 +2050,41 @@ class CapitalPreservationSystem:
             
         return "TRADE", position_size, f"Safe to trade {position_size:.4f} SOL"
 
+def check_jeet_exit(token_address, position, config):
+    """Check if we should exit a jeet harvest position"""
+    
+    try:
+        current_price = get_token_price(token_address)
+        if not current_price:
+            return True, "NO_PRICE"
+        
+        entry_price = position['entry_price']
+        price_change = ((current_price - entry_price) / entry_price) * 100
+        time_held = time.time() - position['entry_time']
+        
+        # Take profit
+        if price_change >= config['PROFIT_TARGET']:
+            return True, f"PROFIT_{price_change:.1f}%"
+        
+        # Stop loss
+        if price_change <= -config['STOP_LOSS']:
+            return True, f"STOP_LOSS_{price_change:.1f}%"
+        
+        # Time exit (30 minutes max)
+        if time_held > 1800:
+            return True, f"TIME_EXIT_{price_change:.1f}%"
+        
+        # Check if liquidity is draining (emergency exit)
+        current_liquidity = get_token_liquidity(token_address)
+        if current_liquidity < config['MIN_LIQUIDITY_USD'] * 0.5:
+            return True, "LIQUIDITY_DRAIN"
+        
+        return False, None
+        
+    except Exception as e:
+        logging.error(f"Error checking jeet exit: {e}")
+        return True, "ERROR"
+
 def get_detailed_price_history(token_address, timeframe='1h'):
     """Get price history with 1-minute candles for jeet pattern detection"""
     try:
