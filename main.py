@@ -8221,9 +8221,6 @@ def scan_recent_solana_transactions():
                     logging.info(f"Found {len(potential_tokens)} potential tokens from transaction analysis")
                     return potential_tokens
         
-        except Exception as e:  # This except should align with the outer try
-            logging.error(f"Error scanning transactions: {str(e)}")
-        
         return []
     
     except Exception as e:  # This except aligns with the function's try
