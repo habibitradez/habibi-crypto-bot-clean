@@ -813,11 +813,14 @@ def get_token_price(token_address: str) -> Optional[float]:
 def get_wallet_balance_sol():
     """Get current wallet SOL balance"""
     try:
-        # Simple solution - return a fixed balance for now
-        return 1.0  # 1.0 SOL - adjust this to your actual balance
+        # Use the wallet instance's get_balance method
+        balance = wallet.get_balance()
+        logging.info(f"Current wallet balance: {balance:.4f} SOL")
+        return balance
     except Exception as e:
         logging.error(f"Error getting wallet balance: {e}")
-        return 1.0
+        # Fallback to a safe value
+        return 4.04
 
 def convert_profits_to_usdc(profit_amount_usd):
     """Convert profits to USDC when daily target hit"""
