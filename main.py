@@ -5403,7 +5403,7 @@ def find_jeet_dumps():
     
     try:
         # Get tokens from your existing discovery methods
-        all_tokens = get_helius_new_tokens(limit=100)
+        all_tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
         
         logging.info(f"🔍 Scanning {len(all_tokens)} tokens for jeet patterns...")
         
