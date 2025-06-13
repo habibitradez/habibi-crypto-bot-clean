@@ -156,12 +156,12 @@ CONFIG = {
 
 # JEET HARVESTER CONFIGURATION (The money maker)
 JEET_CONFIG = {
-    'MIN_AGE_MINUTES': 12,      # Sweet spot - after initial dump
-    'MAX_AGE_MINUTES': 25,      # Before recovery ends
-    'MIN_DUMP_PERCENT': -45,    # Must be down 45%+ from ATH
+    'MIN_AGE_MINUTES': 10,      # Sweet spot - after initial dump
+    'MAX_AGE_MINUTES': 30,      # Before recovery ends
+    'MIN_DUMP_PERCENT': -25,    # Must be down 45%+ from ATH
     'MAX_DUMP_PERCENT': -80,    # Not more than 80% (might be rug)
-    'MIN_HOLDERS': 150,         # Proven community interest
-    'MIN_VOLUME_USD': 25000,    # $25k+ volume shows real trading
+    'MIN_HOLDERS': 50,         # Proven community interest
+    'MIN_VOLUME_USD': 10000,    # $25k+ volume shows real trading
     'MIN_LIQUIDITY_USD': 15000, # Lower threshold for more trades
     'POSITION_SIZE_SOL': 0.3,   # Larger positions for consistency
     'PROFIT_TARGET': 22,        # 22% profit target (not 25%)
@@ -5407,31 +5407,77 @@ def find_jeet_dumps():
         
         logging.info(f"🔍 Scanning {len(all_tokens)} tokens for jeet patterns...")
         
+        # Add counters for debugging
+        tokens_checked = 0
+        age_failures = 0
+        no_metrics = 0
+        dump_failures = 0
+        holder_failures = 0
+        volume_failures = 0
+        liquidity_failures = 0
+        
         for token in all_tokens:
             try:
                 token_address = token if isinstance(token, str) else token.get('address', '')
                 if not token_address:
                     continue
                 
+                tokens_checked += 1
+                
                 # Check token age
                 creation_time = get_token_creation_time(token_address)
+                if not creation_time:
+                    logging.debug(f"❌ {token_address[:8]}: No creation time found")
+                    continue
+                    
                 age_minutes = (time.time() - creation_time) / 60
                 
                 # Must be in sweet spot age range
                 if not (JEET_CONFIG['MIN_AGE_MINUTES'] <= age_minutes <= JEET_CONFIG['MAX_AGE_MINUTES']):
+                    age_failures += 1
+                    logging.debug(f"❌ {token_address[:8]}: Age {age_minutes:.1f}m (need {JEET_CONFIG['MIN_AGE_MINUTES']}-{JEET_CONFIG['MAX_AGE_MINUTES']}m)")
                     continue
+                
+                logging.info(f"✅ {token_address[:8]}: Age {age_minutes:.1f}m - checking pattern...")
                 
                 # Analyze for jeet pattern
                 metrics = analyze_token_for_jeet_pattern(token_address)
                 if not metrics:
+                    no_metrics += 1
+                    logging.debug(f"❌ {token_address[:8]}: No metrics returned")
                     continue
                 
-                # Check if it matches jeet dump criteria
-                if (JEET_CONFIG['MIN_DUMP_PERCENT'] <= metrics['price_from_ath'] <= JEET_CONFIG['MAX_DUMP_PERCENT'] and
-                    metrics['holders'] >= JEET_CONFIG['MIN_HOLDERS'] and
-                    metrics['volume_24h'] >= JEET_CONFIG['MIN_VOLUME_USD'] and
-                    metrics['liquidity'] >= JEET_CONFIG['MIN_LIQUIDITY_USD']):
-                    
+                # Log all metrics for debugging
+                logging.info(f"📊 {token_address[:8]} metrics: "
+                           f"dump={metrics.get('price_from_ath', 0):.1f}%, "
+                           f"holders={metrics.get('holders', 0)}, "
+                           f"vol=${metrics.get('volume_24h', 0):,.0f}, "
+                           f"liq=${metrics.get('liquidity', 0):,.0f}")
+                
+                # Check each criteria individually
+                dump_ok = JEET_CONFIG['MIN_DUMP_PERCENT'] <= metrics['price_from_ath'] <= JEET_CONFIG['MAX_DUMP_PERCENT']
+                holders_ok = metrics['holders'] >= JEET_CONFIG['MIN_HOLDERS']
+                volume_ok = metrics['volume_24h'] >= JEET_CONFIG['MIN_VOLUME_USD']
+                liquidity_ok = metrics['liquidity'] >= JEET_CONFIG['MIN_LIQUIDITY_USD']
+                
+                if not dump_ok:
+                    dump_failures += 1
+                    logging.info(f"❌ {token_address[:8]}: Dump {metrics['price_from_ath']:.1f}% (need {JEET_CONFIG['MIN_DUMP_PERCENT']} to {JEET_CONFIG['MAX_DUMP_PERCENT']}%)")
+                
+                if not holders_ok:
+                    holder_failures += 1
+                    logging.info(f"❌ {token_address[:8]}: Holders {metrics['holders']} (need {JEET_CONFIG['MIN_HOLDERS']}+)")
+                
+                if not volume_ok:
+                    volume_failures += 1
+                    logging.info(f"❌ {token_address[:8]}: Volume ${metrics['volume_24h']:,.0f} (need ${JEET_CONFIG['MIN_VOLUME_USD']:,}+)")
+                
+                if not liquidity_ok:
+                    liquidity_failures += 1
+                    logging.info(f"❌ {token_address[:8]}: Liquidity ${metrics['liquidity']:,.0f} (need ${JEET_CONFIG['MIN_LIQUIDITY_USD']:,}+)")
+                
+                # Check if it matches all jeet dump criteria
+                if dump_ok and holders_ok and volume_ok and liquidity_ok:
                     # Calculate recovery probability
                     recovery_score = calculate_recovery_probability(metrics)
                     
@@ -5455,16 +5501,31 @@ def find_jeet_dumps():
                 logging.debug(f"Error analyzing token {token}: {e}")
                 continue
         
+        # Log summary statistics
+        logging.info(f"\n📊 JEET SCAN SUMMARY:")
+        logging.info(f"   Tokens checked: {tokens_checked}")
+        logging.info(f"   Age failures: {age_failures}")
+        logging.info(f"   No metrics: {no_metrics}")
+        logging.info(f"   Dump failures: {dump_failures}")
+        logging.info(f"   Holder failures: {holder_failures}")
+        logging.info(f"   Volume failures: {volume_failures}")
+        logging.info(f"   Liquidity failures: {liquidity_failures}")
+        logging.info(f"   ✅ Opportunities found: {len(opportunities)}")
+        
         # Sort by recovery probability
         opportunities.sort(key=lambda x: x['recovery_score'], reverse=True)
         
         if opportunities:
             logging.info(f"🌾 Found {len(opportunities)} jeet opportunities")
+            # Log top 3 opportunities
+            for i, opp in enumerate(opportunities[:3]):
+                logging.info(f"   #{i+1}: {opp['address'][:8]} - {abs(opp['dump_percent']):.0f}% dump, score: {opp['recovery_score']:.1f}")
         
         return opportunities
         
     except Exception as e:
         logging.error(f"Error finding jeet dumps: {e}")
+        logging.error(traceback.format_exc())
         return []
 
 def execute_jeet_harvest(opportunity, position_size=None):
