@@ -1,3 +1,6 @@
+import websocket
+import threadingimport numpy as np
+import pickle
 import subprocess
 import re
 import gc
@@ -14,6 +17,10 @@ import subprocess
 from typing import Dict, List, Tuple, Optional, Any
 from decimal import Decimal
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
+from collections import defaultdict
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
@@ -349,6 +356,16 @@ daily_snipe_stats = {
 last_wallet_checks = {}
 
 # ===== END OF SNIPING ADDITIONS =====
+
+ALPHA_WALLETS_CONFIG = [
+    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
+    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
+    ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
+    ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
+    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
+    ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
+    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
+]
 
 # SOL token address (used as base currency)
 SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
@@ -2392,6 +2409,559 @@ def scan_multiple_dexs():
             continue
     
     return dex_tokens
+
+# Your alpha wallets to follow
+ALPHA_WALLETS_CONFIG = [
+    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
+    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
+    ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
+    ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
+    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
+    ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
+    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
+]
+
+def get_wallet_recent_transactions(wallet_address, limit=50):
+    """Get recent transactions for a wallet using Helius API"""
+    
+    try:
+        # Use Helius Enhanced Transactions API
+        url = f"https://api.helius.xyz/v0/addresses/{wallet_address}/transactions?api-key={HELIUS_API_KEY}"
+        
+        params = {
+            "limit": limit,
+            "commitment": "confirmed",
+            "type": "SWAP"  # Focus on swap transactions
+        }
+        
+        response = requests.get(url, params=params)
+        
+        if response.status_code == 200:
+            return response.json()
+        else:
+            # Fallback to RPC method
+            return get_wallet_transactions_rpc(wallet_address, limit)
+            
+    except Exception as e:
+        logging.error(f"Error fetching transactions: {e}")
+        return []
+
+def get_wallet_transactions_rpc(wallet_address, limit=50):
+    """Fallback method using direct RPC calls"""
+    
+    try:
+        headers = {"Content-Type": "application/json"}
+        
+        # Get recent signatures
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [
+                wallet_address,
+                {"limit": limit}
+            ]
+        }
+        
+        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers)
+        
+        if response.status_code == 200:
+            signatures = response.json().get('result', [])
+            transactions = []
+            
+            # Get transaction details for each signature
+            for sig_info in signatures[:10]:  # Limit to recent 10
+                sig = sig_info['signature']
+                tx_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [
+                        sig,
+                        {"encoding": "jsonParsed", "commitment": "confirmed"}
+                    ]
+                }
+                
+                tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers)
+                if tx_response.status_code == 200:
+                    tx_data = tx_response.json().get('result')
+                    if tx_data:
+                        transactions.append(tx_data)
+                        
+            return transactions
+            
+    except Exception as e:
+        logging.error(f"RPC error: {e}")
+        return []
+
+def parse_wallet_buys(wallet_address, transactions):
+    """Parse transactions to find new token buys"""
+    
+    new_buys = []
+    current_time = time.time()
+    
+    for tx in transactions:
+        try:
+            # Handle both API and RPC response formats
+            if isinstance(tx, dict):
+                # Check if transaction is recent (within last 5 minutes)
+                block_time = tx.get('blockTime', 0)
+                if current_time - block_time > 300:  # 5 minutes
+                    continue
+                
+                # Parse transaction instructions
+                if 'meta' in tx and tx['meta'].get('err') is None:
+                    # Look for token transfers in the transaction
+                    pre_balances = tx['meta'].get('preTokenBalances', [])
+                    post_balances = tx['meta'].get('postTokenBalances', [])
+                    
+                    # Find new tokens acquired
+                    for post in post_balances:
+                        is_new = True
+                        for pre in pre_balances:
+                            if post['mint'] == pre['mint']:
+                                is_new = False
+                                break
+                                
+                        if is_new and post['owner'] == wallet_address:
+                            # This is a new token the wallet acquired
+                            new_buys.append({
+                                'token': post['mint'],
+                                'amount': float(post['uiTokenAmount']['uiAmount']),
+                                'timestamp': block_time,
+                                'signature': tx.get('transaction', {}).get('signatures', [''])[0]
+                            })
+                            
+        except Exception as e:
+            logging.debug(f"Error parsing transaction: {e}")
+            continue
+            
+    return new_buys
+
+def get_wallet_recent_buys_helius(wallet_address):
+    """Main function to get recent buys using Helius"""
+    
+    # Get recent transactions
+    transactions = get_wallet_recent_transactions(wallet_address)
+    
+    # Parse for buys
+    buys = parse_wallet_buys(wallet_address, transactions)
+    
+    # Remove duplicates
+    seen_tokens = set()
+    unique_buys = []
+    for buy in buys:
+        if buy['token'] not in seen_tokens:
+            seen_tokens.add(buy['token'])
+            unique_buys.append(buy)
+            
+    return unique_buys
+
+class AdaptiveAlphaTrader:
+    """Watches alpha wallets and adapts strategy based on price action"""
+    
+    def __init__(self, wallet_instance):
+        self.wallet = wallet_instance
+        self.alpha_wallets = []
+        self.monitoring = {}  # Tokens we're watching
+        self.positions = {}   # Active positions
+        self.brain = TradingBrain()  # Learning component
+        self.last_check = {}  # Track last check time for each wallet
+        
+    def add_alpha_wallet(self, wallet_address, name=""):
+        """Add a profitable wallet to follow"""
+        self.alpha_wallets.append({
+            'address': wallet_address,
+            'name': name,
+            'trades_copied': 0,
+            'profit_generated': 0
+        })
+        self.last_check[wallet_address] = 0
+        logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
+        
+    def check_alpha_wallets(self):
+        """Check all alpha wallets for new buys"""
+        
+        current_time = time.time()
+        
+        for alpha in self.alpha_wallets:
+            # Check each wallet every 30 seconds to avoid rate limits
+            if current_time - self.last_check[alpha['address']] < 30:
+                continue
+                
+            self.last_check[alpha['address']] = current_time
+            
+            try:
+                # Get recent buys using Helius
+                new_buys = get_wallet_recent_buys_helius(alpha['address'])
+                
+                if new_buys:
+                    logging.info(f"🔍 Found {len(new_buys)} new buys from {alpha['name']}")
+                    
+                for buy in new_buys:
+                    # Check if we're already monitoring this token
+                    if buy['token'] not in self.monitoring and buy['token'] not in self.positions:
+                        self.on_alpha_buy_detected(
+                            alpha['address'], 
+                            buy['token'], 
+                            buy['amount']
+                        )
+                        
+            except Exception as e:
+                logging.error(f"Error checking wallet {alpha['name']}: {e}")
+                
+    def on_alpha_buy_detected(self, wallet_address, token_address, amount):
+        """Called when an alpha wallet buys - starts monitoring"""
+        
+        # Get initial token data
+        token_data = self.get_token_snapshot(token_address)
+        if not token_data:
+            logging.warning(f"❌ Could not get data for token {token_address[:8]}")
+            return
+            
+        self.monitoring[token_address] = {
+            'alpha_wallet': wallet_address,
+            'alpha_entry': token_data['price'],
+            'start_time': time.time(),
+            'initial_data': token_data,
+            'strategy': None
+        }
+        
+        # Find wallet name
+        wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_address), "Unknown")
+        
+        logging.info(f"👀 {wallet_name} bought {token_address[:8]} at ${token_data['price']:.8f}")
+        logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
+        logging.info(f"   👥 Holders: {token_data['holders']}")
+        
+    def get_token_snapshot(self, token_address):
+        """Get current token metrics using your existing functions"""
+        try:
+            # Use your existing functions
+            price = get_token_price(token_address)
+            if not price or price == 0:
+                return None
+                
+            return {
+                'price': price,
+                'liquidity': get_token_liquidity(token_address) or 0,
+                'holders': get_holder_count(token_address) or 0,
+                'volume': get_24h_volume(token_address) or 0,
+                'age': get_token_age_minutes(token_address) or 0
+            }
+        except Exception as e:
+            logging.error(f"Error getting token snapshot: {e}")
+            return None
+            
+    def analyze_and_execute(self):
+        """Check all monitored tokens and make trading decisions"""
+        
+        for token_address in list(self.monitoring.keys()):
+            data = self.monitoring[token_address]
+            current = self.get_token_snapshot(token_address)
+            
+            if not current:
+                continue
+                
+            # Calculate changes
+            time_elapsed = (time.time() - data['start_time']) / 60
+            price_change = ((current['price'] - data['alpha_entry']) / data['alpha_entry']) * 100
+            
+            # Remove if too old
+            if time_elapsed > 60:
+                del self.monitoring[token_address]
+                continue
+                
+            # ADAPTIVE STRATEGY DECISION
+            strategy = None
+            position_size = 0.3  # Base size with 9 SOL
+            
+            # MOMENTUM: Token is pumping fast
+            if time_elapsed < 10 and price_change > 5:
+                strategy = 'MOMENTUM'
+                logging.info(f"🚀 MOMENTUM detected: +{price_change:.1f}% in {time_elapsed:.0f}min")
+                
+            # DIP BUY: Token dumped, expecting recovery  
+            elif time_elapsed < 30 and price_change < -15 and current['liquidity'] > 10000:
+                strategy = 'DIP_BUY'
+                logging.info(f"💎 DIP detected: {price_change:.1f}% down")
+                
+            # SCALP: Stable token, quick profit
+            elif 10 < time_elapsed < 30 and -5 < price_change < 5:
+                strategy = 'SCALP'
+                position_size = 0.5  # Larger size for smaller profit
+                logging.info(f"⚡ SCALP opportunity: stable at {price_change:+.1f}%")
+                
+            # Execute if we found a strategy
+            if strategy and token_address not in self.positions:
+                # Check with brain if we should trade
+                should_trade, adjusted_size = self.brain.should_trade({
+                    'token': token_address,
+                    'alpha_wallet': data['alpha_wallet'],
+                    'strategy': strategy,
+                    'price_change': price_change,
+                    'liquidity': current['liquidity']
+                })
+                
+                if should_trade:
+                    self.execute_trade(token_address, strategy, adjusted_size, current['price'])
+                    
+    def execute_trade(self, token_address, strategy, position_size, entry_price):
+        """Execute the trade with strategy-specific parameters"""
+        
+        # Set targets based on strategy
+        if strategy == 'MOMENTUM':
+            targets = {'take_profit': 1.12, 'stop_loss': 0.95, 'trailing': True}
+        elif strategy == 'DIP_BUY':
+            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': False}
+        else:  # SCALP
+            targets = {'take_profit': 1.04, 'stop_loss': 0.98, 'trailing': False}
+            
+        # Execute buy
+        success = execute_via_javascript(token_address, position_size, False)
+        
+        if success:
+            self.positions[token_address] = {
+                'strategy': strategy,
+                'entry_price': entry_price,
+                'size': position_size,
+                'targets': targets,
+                'entry_time': time.time(),
+                'peak_price': entry_price
+            }
+            
+            # Remove from monitoring
+            if token_address in self.monitoring:
+                del self.monitoring[token_address]
+                
+            logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+            
+    def monitor_positions(self):
+        """Check all positions for exit conditions"""
+        
+        for token_address, pos in list(self.positions.items()):
+            current_price = get_token_price(token_address)
+            if not current_price:
+                continue
+                
+            pnl = ((current_price - pos['entry_price']) / pos['entry_price'])
+            
+            # Update trailing stop if applicable
+            if pos['targets']['trailing'] and current_price > pos['peak_price']:
+                pos['peak_price'] = current_price
+                pos['targets']['stop_loss'] = 0.97  # 3% trailing
+                
+            # Check exit conditions
+            should_exit = False
+            exit_reason = ''
+            
+            if pnl >= (pos['targets']['take_profit'] - 1):
+                should_exit = True
+                exit_reason = 'take_profit'
+            elif pnl <= (pos['targets']['stop_loss'] - 1):
+                should_exit = True
+                exit_reason = 'stop_loss'
+            elif time.time() - pos['entry_time'] > 3600:  # 1 hour max
+                should_exit = True
+                exit_reason = 'timeout'
+                
+            if should_exit:
+                self.exit_position(token_address, current_price, exit_reason, pnl)
+                
+    def exit_position(self, token_address, exit_price, reason, pnl):
+        """Exit position and record results"""
+        
+        pos = self.positions[token_address]
+        
+        # Execute sell
+        success = execute_via_javascript(token_address, pos['size'], True)
+        
+        if success:
+            # Record trade for learning
+            profit_sol = pos['size'] * pnl
+            self.brain.record_trade({
+                'token': token_address,
+                'strategy': pos['strategy'],
+                'pnl_percent': pnl * 100,
+                'profit_sol': profit_sol,
+                'exit_reason': reason,
+                'hold_time': (time.time() - pos['entry_time']) / 60
+            })
+            
+            del self.positions[token_address]
+            
+            logging.info(f"💰 Closed {pos['strategy']}: {pnl*100:+.1f}% ({profit_sol:+.3f} SOL)")
+
+
+class TradingBrain:
+    """Learns from trades to improve decisions"""
+    
+    def __init__(self):
+        self.trade_history = []
+        self.pattern_stats = defaultdict(lambda: {'wins': 0, 'losses': 0, 'total_pnl': 0})
+        self.daily_stats = {'trades': 0, 'wins': 0, 'pnl_sol': 0}
+        self.load_history()
+        
+    def load_history(self):
+        """Load previous trade history"""
+        try:
+            with open('trade_history.json', 'r') as f:
+                self.trade_history = json.load(f)
+                logging.info(f"📚 Loaded {len(self.trade_history)} historical trades")
+                self.rebuild_stats()
+        except:
+            logging.info("📚 Starting fresh - no trade history")
+            
+    def save_history(self):
+        """Save trade history"""
+        with open('trade_history.json', 'w') as f:
+            json.dump(self.trade_history, f)
+            
+    def rebuild_stats(self):
+        """Rebuild stats from history"""
+        for trade in self.trade_history:
+            pattern = trade['strategy']
+            if trade['pnl_percent'] > 0:
+                self.pattern_stats[pattern]['wins'] += 1
+            else:
+                self.pattern_stats[pattern]['losses'] += 1
+            self.pattern_stats[pattern]['total_pnl'] += trade['profit_sol']
+            
+    def record_trade(self, trade_data):
+        """Record a completed trade"""
+        trade_data['timestamp'] = datetime.now().isoformat()
+        self.trade_history.append(trade_data)
+        
+        # Update stats
+        pattern = trade_data['strategy']
+        if trade_data['pnl_percent'] > 0:
+            self.pattern_stats[pattern]['wins'] += 1
+            self.daily_stats['wins'] += 1
+        else:
+            self.pattern_stats[pattern]['losses'] += 1
+            
+        self.pattern_stats[pattern]['total_pnl'] += trade_data['profit_sol']
+        self.daily_stats['trades'] += 1
+        self.daily_stats['pnl_sol'] += trade_data['profit_sol']
+        
+        self.save_history()
+        
+        # Show insights every 10 trades
+        if len(self.trade_history) % 10 == 0:
+            self.show_insights()
+            
+    def should_trade(self, opportunity):
+        """Decide if we should take this trade"""
+        strategy = opportunity['strategy']
+        
+        # Get pattern stats
+        stats = self.pattern_stats[strategy]
+        total_trades = stats['wins'] + stats['losses']
+        
+        # Calculate confidence
+        if total_trades < 5:
+            confidence = 0.6  # Default confidence for new patterns
+        else:
+            confidence = stats['wins'] / total_trades
+            
+        # Adjust position size based on confidence and daily performance
+        base_size = 0.3  # Base size for 9 SOL
+        
+        if confidence > 0.7 and self.daily_stats['pnl_sol'] > 0:
+            adjusted_size = base_size * 1.2  # Increase size when winning
+        elif confidence < 0.4 or self.daily_stats['pnl_sol'] < -0.5:
+            adjusted_size = base_size * 0.7  # Decrease size when losing
+        else:
+            adjusted_size = base_size
+            
+        # Max position size with 9 SOL
+        adjusted_size = min(adjusted_size, 0.5)
+        
+        return confidence > 0.3, adjusted_size  # Trade if >30% win rate
+        
+    def show_insights(self):
+        """Display learning insights"""
+        logging.info("🧠 === TRADING BRAIN INSIGHTS ===")
+        
+        for strategy, stats in self.pattern_stats.items():
+            total = stats['wins'] + stats['losses']
+            if total > 0:
+                win_rate = stats['wins'] / total * 100
+                avg_pnl = stats['total_pnl'] / total
+                logging.info(f"   {strategy}: {win_rate:.0f}% win rate, {avg_pnl:+.3f} SOL avg")
+                
+        logging.info(f"   Daily: {self.daily_stats['trades']} trades, "
+                    f"{self.daily_stats['wins']} wins, "
+                    f"{self.daily_stats['pnl_sol']:+.3f} SOL")
+
+
+def run_adaptive_ai_system():
+    """Main function to run the complete system with your configuration"""
+    
+    logging.info("🤖 === ADAPTIVE AI TRADING SYSTEM STARTING ===")
+    logging.info(f"🔗 Using Helius RPC")
+    logging.info(f"📡 WebSocket: {HELIUS_WEBSOCKET_URL[:50]}...")
+    
+    # Initialize components
+    trader = AdaptiveAlphaTrader(wallet)
+    
+    # Add your specific alpha wallets
+    for address, name in ALPHA_WALLETS_CONFIG:
+        trader.add_alpha_wallet(address, name)
+        
+    logging.info(f"📡 Monitoring {len(ALPHA_WALLETS_CONFIG)} alpha wallets")
+    logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
+    logging.info("💰 Starting with 9 SOL capital")
+    
+    # Main trading loop
+    last_stats_time = 0
+    
+    while True:
+        try:
+            # 1. Check all alpha wallets for new buys
+            trader.check_alpha_wallets()
+            
+            # 2. Analyze monitored tokens for opportunities
+            if trader.monitoring:
+                trader.analyze_and_execute()
+            
+            # 3. Monitor existing positions
+            if trader.positions:
+                trader.monitor_positions()
+            
+            # 4. Show stats every 5 minutes
+            current_time = time.time()
+            if current_time - last_stats_time > 300:
+                last_stats_time = current_time
+                
+                stats = trader.brain.daily_stats
+                logging.info("📊 === 5-MINUTE UPDATE ===")
+                logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
+                logging.info(f"   Positions: {len(trader.positions)} active")
+                logging.info(f"   Daily: {stats['trades']} trades, {stats['wins']} wins")
+                logging.info(f"   P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
+                
+                # Show wallet balance
+                try:
+                    balance = wallet.get_balance()
+                    logging.info(f"   Balance: {balance:.3f} SOL")
+                except:
+                    pass
+                
+                # Show any insights
+                if stats['trades'] > 0:
+                    trader.brain.show_insights()
+                
+            time.sleep(5)  # Check every 5 seconds
+            
+        except KeyboardInterrupt:
+            logging.info("\n🛑 System stopped by user")
+            trader.brain.show_insights()
+            break
+        except Exception as e:
+            logging.error(f"Error in main loop: {e}")
+            logging.error(traceback.format_exc())
+            time.sleep(30)
 
 
 def execute_enhanced_trade(token_address, position_size, trade_source):
