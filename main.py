@@ -2558,15 +2558,16 @@ def get_wallet_recent_buys_helius(wallet_address):
     return unique_buys
 
 class AdaptiveAlphaTrader:
-    """Watches alpha wallets and adapts strategy based on price action"""
+    """Enhanced trader that both follows alphas AND hunts independently"""
     
     def __init__(self, wallet_instance):
         self.wallet = wallet_instance
         self.alpha_wallets = []
-        self.monitoring = {}  # Tokens we're watching
+        self.monitoring = {}  # Tokens we're watching from alphas
         self.positions = {}   # Active positions
         self.brain = TradingBrain()  # Learning component
         self.last_check = {}  # Track last check time for each wallet
+        self.independent_hunting = True  # Enable autonomous hunting
         
     def add_alpha_wallet(self, wallet_address, name=""):
         """Add a profitable wallet to follow"""
@@ -2609,7 +2610,70 @@ class AdaptiveAlphaTrader:
                         
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
+
+def find_opportunities_independently(self):
+    """Hunt for opportunities without waiting for alpha signals"""
+    
+    try:
+        # Use your EXISTING token discovery function
+        new_tokens = enhanced_find_newest_tokens_with_free_apis()[:30]
+        
+        for token in new_tokens:
+            # Skip if already monitoring or in position
+            if token in self.monitoring or token in self.positions:
+                continue
                 
+            # Get token data
+            token_data = self.get_token_snapshot(token)
+            if not token_data:
+                continue
+                
+            # Check token age and basic criteria
+            age = token_data.get('age', 0)
+            liquidity = token_data.get('liquidity', 0)
+            holders = token_data.get('holders', 0)
+            
+            # Look for different patterns independently
+            
+            # 1. FRESH LAUNCH PATTERN (0-5 minutes old)
+            if 1 < age < 5 and liquidity > 20000 and holders > 50:
+                logging.info(f"🆕 Fresh launch found: {token[:8]}")
+                self.monitoring[token] = {
+                    'alpha_wallet': 'SELF_DISCOVERED',
+                    'alpha_entry': token_data['price'],
+                    'start_time': time.time(),
+                    'initial_data': token_data,
+                    'strategy': 'FRESH_LAUNCH'
+                }
+                
+            # 2. VOLUME SPIKE PATTERN (any age)
+            elif token_data.get('volume', 0) > 50000:  # High volume
+                logging.info(f"📊 Volume spike found: {token[:8]}")
+                self.monitoring[token] = {
+                    'alpha_wallet': 'SELF_DISCOVERED',
+                    'alpha_entry': token_data['price'],
+                    'start_time': time.time(),
+                    'initial_data': token_data,
+                    'strategy': 'VOLUME_SPIKE'
+                }
+                
+            # 3. DIP RECOVERY PATTERN (15-60 minutes old)
+            elif 15 < age < 60:
+                # Use your EXISTING jeet pattern analyzer!
+                metrics = analyze_token_for_jeet_pattern(token)
+                if metrics and metrics.get('price_from_ath', 0) < -30:
+                    logging.info(f"💎 Dip pattern found: {token[:8]}")
+                    self.monitoring[token] = {
+                        'alpha_wallet': 'SELF_DISCOVERED',
+                        'alpha_entry': token_data['price'],
+                        'start_time': time.time(),
+                        'initial_data': token_data,
+                        'strategy': 'DIP_PATTERN'
+                    }
+                    
+    except Exception as e:
+        logging.error(f"Error in independent hunting: {e}")
+    
     def on_alpha_buy_detected(self, wallet_address, token_address, amount):
         """Called when an alpha wallet buys - starts monitoring"""
         
@@ -2654,7 +2718,7 @@ class AdaptiveAlphaTrader:
             return None
             
     def analyze_and_execute(self):
-        """Check all monitored tokens and make trading decisions"""
+        """Enhanced to handle both alpha and self-discovered tokens"""
         
         for token_address in list(self.monitoring.keys()):
             data = self.monitoring[token_address]
@@ -2672,26 +2736,41 @@ class AdaptiveAlphaTrader:
                 del self.monitoring[token_address]
                 continue
                 
-            # ADAPTIVE STRATEGY DECISION
+            # Determine strategy based on source
             strategy = None
-            position_size = 0.3  # Base size with 9 SOL
+            position_size = 0.3  # Base size
             
-            # MOMENTUM: Token is pumping fast
-            if time_elapsed < 10 and price_change > 5:
-                strategy = 'MOMENTUM'
-                logging.info(f"🚀 MOMENTUM detected: +{price_change:.1f}% in {time_elapsed:.0f}min")
+            if data['alpha_wallet'] == 'SELF_DISCOVERED':
+                # Handle self-discovered tokens
                 
-            # DIP BUY: Token dumped, expecting recovery  
-            elif time_elapsed < 30 and price_change < -15 and current['liquidity'] > 10000:
-                strategy = 'DIP_BUY'
-                logging.info(f"💎 DIP detected: {price_change:.1f}% down")
-                
-            # SCALP: Stable token, quick profit
-            elif 10 < time_elapsed < 30 and -5 < price_change < 5:
-                strategy = 'SCALP'
-                position_size = 0.5  # Larger size for smaller profit
-                logging.info(f"⚡ SCALP opportunity: stable at {price_change:+.1f}%")
-                
+                if data['strategy'] == 'FRESH_LAUNCH':
+                    # Quick scalp on new tokens
+                    if time_elapsed < 10 and price_change > 0:
+                        strategy = 'LAUNCH_SCALP'
+                        position_size = 0.2  # Smaller size for higher risk
+                        
+                elif data['strategy'] == 'VOLUME_SPIKE':
+                    # Momentum play on volume
+                    if price_change > 5:
+                        strategy = 'VOLUME_MOMENTUM'
+                        position_size = 0.4
+                        
+                elif data['strategy'] == 'DIP_PATTERN':
+                    # Your original jeet strategy!
+                    if price_change > -40:  # Not dumping further
+                        strategy = 'DIP_RECOVERY'
+                        position_size = 0.3
+                        
+            else:
+                # Handle alpha wallet signals (existing logic)
+                if time_elapsed < 10 and price_change > 5:
+                    strategy = 'MOMENTUM'
+                elif time_elapsed < 30 and price_change < -15:
+                    strategy = 'DIP_BUY'
+                elif 10 < time_elapsed < 30 and -5 < price_change < 5:
+                    strategy = 'SCALP'
+                    position_size = 0.5
+                    
             # Execute if we found a strategy
             if strategy and token_address not in self.positions:
                 # Check with brain if we should trade
@@ -2700,11 +2779,13 @@ class AdaptiveAlphaTrader:
                     'alpha_wallet': data['alpha_wallet'],
                     'strategy': strategy,
                     'price_change': price_change,
-                    'liquidity': current['liquidity']
+                    'liquidity': current['liquidity'],
+                    'source': 'ALPHA' if data['alpha_wallet'] != 'SELF_DISCOVERED' else 'HUNT'
                 })
                 
                 if should_trade:
                     self.execute_trade(token_address, strategy, adjusted_size, current['price'])
+
                     
     def execute_trade(self, token_address, strategy, position_size, entry_price):
         """Execute the trade with strategy-specific parameters"""
@@ -2896,11 +2977,11 @@ class TradingBrain:
 
 
 def run_adaptive_ai_system():
-    """Main function to run the complete system with your configuration"""
+    """Enhanced main loop with both following and hunting"""
     
     logging.info("🤖 === ADAPTIVE AI TRADING SYSTEM STARTING ===")
-    logging.info(f"🔗 Using Helius RPC")
-    logging.info(f"📡 WebSocket: {HELIUS_WEBSOCKET_URL[:50]}...")
+    logging.info("📡 Following 7 alpha wallets")
+    logging.info("🔍 + Independent token hunting active")
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
@@ -2909,48 +2990,46 @@ def run_adaptive_ai_system():
     for address, name in ALPHA_WALLETS_CONFIG:
         trader.add_alpha_wallet(address, name)
         
-    logging.info(f"📡 Monitoring {len(ALPHA_WALLETS_CONFIG)} alpha wallets")
-    logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
-    logging.info("💰 Starting with 9 SOL capital")
-    
     # Main trading loop
     last_stats_time = 0
+    last_hunt_time = 0
     
     while True:
         try:
+            current_time = time.time()
+            
             # 1. Check all alpha wallets for new buys
             trader.check_alpha_wallets()
             
-            # 2. Analyze monitored tokens for opportunities
+            # 2. Hunt for opportunities independently every 30 seconds
+            if current_time - last_hunt_time > 30:
+                last_hunt_time = current_time
+                trader.find_opportunities_independently()
+            
+            # 3. Analyze monitored tokens for opportunities
             if trader.monitoring:
                 trader.analyze_and_execute()
             
-            # 3. Monitor existing positions
+            # 4. Monitor existing positions
             if trader.positions:
                 trader.monitor_positions()
             
-            # 4. Show stats every 5 minutes
-            current_time = time.time()
+            # 5. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
                 last_stats_time = current_time
                 
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
                 logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
+                
+                # Count sources
+                alpha_tokens = sum(1 for t in trader.monitoring.values() if t['alpha_wallet'] != 'SELF_DISCOVERED')
+                hunt_tokens = len(trader.monitoring) - alpha_tokens
+                
+                logging.info(f"   Sources: {alpha_tokens} from alphas, {hunt_tokens} self-discovered")
                 logging.info(f"   Positions: {len(trader.positions)} active")
                 logging.info(f"   Daily: {stats['trades']} trades, {stats['wins']} wins")
                 logging.info(f"   P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
-                
-                # Show wallet balance
-                try:
-                    balance = wallet.get_balance()
-                    logging.info(f"   Balance: {balance:.3f} SOL")
-                except:
-                    pass
-                
-                # Show any insights
-                if stats['trades'] > 0:
-                    trader.brain.show_insights()
                 
             time.sleep(5)  # Check every 5 seconds
             
@@ -2960,9 +3039,7 @@ def run_adaptive_ai_system():
             break
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
-            logging.error(traceback.format_exc())
             time.sleep(30)
-
 
 def execute_enhanced_trade(token_address, position_size, trade_source):
     """Enhanced trade execution with realistic profit targets"""
@@ -11575,36 +11652,36 @@ def execute_optimized_transaction(token_address, amount_sol):
         return None
 
 def main():
-    """Main entry point for JEET HARVESTER $500/day strategy"""
-    logging.info("============= JEET HARVESTER BOT STARTING =============")
-    logging.info("🌾 Strategy: Buy post-jeet dumps, sell recoveries")
-    logging.info("🎯 Target: $500/day through consistent 22% gains")
-    logging.info("📊 Pattern: 12-25min old tokens, down 45%+, 150+ holders")
+    """Main entry point - AI Adaptive Trading System"""
+    
+    # Clear banner
+    logging.info("=" * 60)
+    logging.info("🤖 AI ADAPTIVE TRADING SYSTEM v2.0")
+    logging.info("=" * 60)
+    logging.info("💎 Alpha Following: 7 profitable wallets")
+    logging.info("🔍 Independent Hunting: 3 strategies")
+    logging.info("🧠 Machine Learning: Improves with every trade")
+    logging.info("🎯 Target: $500/day through consistent profits")
+    logging.info("=" * 60)
+    
+    # Add start time to brain for tracking
+    TradingBrain.start_time = time.time()
     
     if initialize():
-        logging.info("✅ Initialization successful!")
+        logging.info("✅ System initialization successful!")
+        logging.info("🚀 Starting trading engine...\n")
         
         try:
-            # Start the Jeet Harvester strategy
-            ultimate_500_dollar_trading_loop()
+            # Run the enhanced AI system
+            run_adaptive_ai_system()
             
         except KeyboardInterrupt:
-            logging.info("\n🛑 Jeet Harvester stopped by user")
-            # Log final stats
-            final_profit = jeet_daily_stats['total_profit_usd']
-            total_trades = jeet_daily_stats['winning_trades'] + jeet_daily_stats['losing_trades']
-            win_rate = (jeet_daily_stats['winning_trades'] / total_trades * 100) if total_trades > 0 else 0
-            
-            logging.info(f"🌾 FINAL JEET HARVESTER STATS:")
-            logging.info(f"   💰 Total Profit: ${final_profit:.2f}")
-            logging.info(f"   📊 Win Rate: {win_rate:.1f}%")
-            logging.info(f"   🎯 Positions Closed: {jeet_daily_stats['positions_closed']}")
-            
+            logging.info("\n🛑 Shutdown requested by user")
         except Exception as e:
             logging.error(f"❌ Fatal error: {e}")
             logging.error(traceback.format_exc())
     else:
-        logging.error("❌ Initialization failed.")
+        logging.error("❌ Initialization failed. Check configuration.")
 
 if __name__ == "__main__":
     main()
