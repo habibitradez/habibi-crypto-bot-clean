@@ -2616,63 +2616,156 @@ def find_opportunities_independently(self):
     
     try:
         # Use your EXISTING token discovery function
-        new_tokens = enhanced_find_newest_tokens_with_free_apis()[:30]
+        logging.info("🔍 Scanning for independent opportunities...")
+        new_tokens = enhanced_find_newest_tokens_with_free_apis()[:50]  # Get more tokens to analyze
+        
+        opportunities_found = 0
         
         for token in new_tokens:
-            # Skip if already monitoring or in position
-            if token in self.monitoring or token in self.positions:
-                continue
-                
-            # Get token data
-            token_data = self.get_token_snapshot(token)
-            if not token_data:
-                continue
-                
-            # Check token age and basic criteria
-            age = token_data.get('age', 0)
-            liquidity = token_data.get('liquidity', 0)
-            holders = token_data.get('holders', 0)
-            
-            # Look for different patterns independently
-            
-            # 1. FRESH LAUNCH PATTERN (0-5 minutes old)
-            if 1 < age < 5 and liquidity > 20000 and holders > 50:
-                logging.info(f"🆕 Fresh launch found: {token[:8]}")
-                self.monitoring[token] = {
-                    'alpha_wallet': 'SELF_DISCOVERED',
-                    'alpha_entry': token_data['price'],
-                    'start_time': time.time(),
-                    'initial_data': token_data,
-                    'strategy': 'FRESH_LAUNCH'
-                }
-                
-            # 2. VOLUME SPIKE PATTERN (any age)
-            elif token_data.get('volume', 0) > 50000:  # High volume
-                logging.info(f"📊 Volume spike found: {token[:8]}")
-                self.monitoring[token] = {
-                    'alpha_wallet': 'SELF_DISCOVERED',
-                    'alpha_entry': token_data['price'],
-                    'start_time': time.time(),
-                    'initial_data': token_data,
-                    'strategy': 'VOLUME_SPIKE'
-                }
-                
-            # 3. DIP RECOVERY PATTERN (15-60 minutes old)
-            elif 15 < age < 60:
-                # Use your EXISTING jeet pattern analyzer!
-                metrics = analyze_token_for_jeet_pattern(token)
-                if metrics and metrics.get('price_from_ath', 0) < -30:
-                    logging.info(f"💎 Dip pattern found: {token[:8]}")
-                    self.monitoring[token] = {
-                        'alpha_wallet': 'SELF_DISCOVERED',
-                        'alpha_entry': token_data['price'],
-                        'start_time': time.time(),
-                        'initial_data': token_data,
-                        'strategy': 'DIP_PATTERN'
-                    }
+            try:
+                # Skip if already monitoring or in position
+                token_address = token if isinstance(token, str) else token.get('address', '')
+                if not token_address:
+                    continue
                     
+                if token_address in self.monitoring or token_address in self.positions:
+                    continue
+                    
+                # Get token data
+                token_data = self.get_token_snapshot(token_address)
+                if not token_data or token_data.get('price', 0) == 0:
+                    continue
+                    
+                # Extract key metrics
+                age = token_data.get('age', 0)
+                liquidity = token_data.get('liquidity', 0)
+                holders = token_data.get('holders', 0)
+                volume = token_data.get('volume', 0)
+                price = token_data.get('price', 0)
+                
+                # Pattern Detection Logic
+                
+                # 1. FRESH LAUNCH PATTERN (1-5 minutes old)
+                if 1 < age < 5 and liquidity > 15000 and holders > 30:
+                    # Additional checks for quality
+                    if holders < 500:  # Not too many holders (might be botted)
+                        logging.info(f"🆕 Fresh launch found: {token_address[:8]}")
+                        logging.info(f"   Age: {age:.1f}m, Liq: ${liquidity:,.0f}, Holders: {holders}")
+                        
+                        self.monitoring[token_address] = {
+                            'alpha_wallet': 'SELF_DISCOVERED',
+                            'alpha_entry': price,
+                            'start_time': time.time(),
+                            'initial_data': token_data,
+                            'strategy': 'FRESH_LAUNCH',
+                            'pattern_score': 80  # Confidence score
+                        }
+                        opportunities_found += 1
+                        
+                # 2. VOLUME SPIKE PATTERN (any age < 60 minutes)
+                elif age < 60 and volume > 30000:
+                    # Calculate volume to liquidity ratio
+                    vol_liq_ratio = volume / liquidity if liquidity > 0 else 0
+                    
+                    if vol_liq_ratio > 2.0:  # High volume relative to liquidity
+                        logging.info(f"📊 Volume spike found: {token_address[:8]}")
+                        logging.info(f"   Volume: ${volume:,.0f}, V/L Ratio: {vol_liq_ratio:.1f}")
+                        
+                        self.monitoring[token_address] = {
+                            'alpha_wallet': 'SELF_DISCOVERED',
+                            'alpha_entry': price,
+                            'start_time': time.time(),
+                            'initial_data': token_data,
+                            'strategy': 'VOLUME_SPIKE',
+                            'pattern_score': 70
+                        }
+                        opportunities_found += 1
+                        
+                # 3. DIP RECOVERY PATTERN (10-90 minutes old) - Your Jeet Strategy!
+                elif 10 < age < 90 and liquidity > 10000:
+                    # Use your existing jeet pattern analyzer
+                    metrics = analyze_token_for_jeet_pattern(token_address)
+                    
+                    if metrics:
+                        price_from_ath = metrics.get('price_from_ath', 0)
+                        
+                        # Look for significant dumps
+                        if -60 < price_from_ath < -25:  # Down 25-60% from ATH
+                            # Additional quality checks
+                            if (metrics.get('holders', 0) > 50 and 
+                                metrics.get('volume_24h', 0) > 10000 and
+                                metrics.get('liquidity', 0) > 10000):
+                                
+                                recovery_score = calculate_recovery_probability(metrics)
+                                
+                                logging.info(f"💎 Dip pattern found: {token_address[:8]}")
+                                logging.info(f"   Dump: {price_from_ath:.0f}%, Recovery Score: {recovery_score:.0f}")
+                                
+                                self.monitoring[token_address] = {
+                                    'alpha_wallet': 'SELF_DISCOVERED',
+                                    'alpha_entry': price,
+                                    'start_time': time.time(),
+                                    'initial_data': token_data,
+                                    'strategy': 'DIP_PATTERN',
+                                    'pattern_score': recovery_score,
+                                    'dump_percent': price_from_ath
+                                }
+                                opportunities_found += 1
+                                
+                # 4. CONSOLIDATION BREAKOUT PATTERN (30-120 minutes old)
+                elif 30 < age < 120 and liquidity > 20000:
+                    # Check if price has been stable (consolidating)
+                    # This would need price history, so we'll use a simple check
+                    if holders > 100 and volume > 15000:
+                        # Look for tokens with good fundamentals in consolidation
+                        logging.info(f"📈 Consolidation pattern found: {token_address[:8]}")
+                        logging.info(f"   Age: {age:.0f}m, Holders: {holders}, Vol: ${volume:,.0f}")
+                        
+                        self.monitoring[token_address] = {
+                            'alpha_wallet': 'SELF_DISCOVERED',
+                            'alpha_entry': price,
+                            'start_time': time.time(),
+                            'initial_data': token_data,
+                            'strategy': 'CONSOLIDATION',
+                            'pattern_score': 60
+                        }
+                        opportunities_found += 1
+                        
+                # 5. HOLDER GROWTH PATTERN (5-30 minutes old)
+                elif 5 < age < 30 and holders > 75:
+                    # Calculate holder growth rate (holders per minute)
+                    holder_rate = holders / age if age > 0 else 0
+                    
+                    if holder_rate > 5:  # More than 5 new holders per minute
+                        logging.info(f"👥 Holder growth pattern found: {token_address[:8]}")
+                        logging.info(f"   Holders: {holders}, Growth rate: {holder_rate:.1f}/min")
+                        
+                        self.monitoring[token_address] = {
+                            'alpha_wallet': 'SELF_DISCOVERED',
+                            'alpha_entry': price,
+                            'start_time': time.time(),
+                            'initial_data': token_data,
+                            'strategy': 'HOLDER_GROWTH',
+                            'pattern_score': 75
+                        }
+                        opportunities_found += 1
+                        
+                # Limit opportunities per scan to avoid overwhelming
+                if opportunities_found >= 5:
+                    break
+                    
+            except Exception as e:
+                logging.debug(f"Error analyzing token {token}: {e}")
+                continue
+                
+        if opportunities_found > 0:
+            logging.info(f"✅ Found {opportunities_found} independent opportunities")
+        else:
+            logging.debug("No new opportunities found this scan")
+            
     except Exception as e:
         logging.error(f"Error in independent hunting: {e}")
+        logging.error(traceback.format_exc())
     
     def on_alpha_buy_detected(self, wallet_address, token_address, amount):
         """Called when an alpha wallet buys - starts monitoring"""
