@@ -11815,26 +11815,149 @@ def main():
     logging.info("🤖 AI ADAPTIVE TRADING SYSTEM v2.0")
     logging.info("=" * 60)
     logging.info("💎 Alpha Following: 7 profitable wallets")
-    logging.info("🔍 Independent Hunting: 3 strategies")
+    logging.info("🔍 Independent Hunting: 5 pattern strategies")
     logging.info("🧠 Machine Learning: Improves with every trade")
     logging.info("🎯 Target: $500/day through consistent profits")
     logging.info("=" * 60)
     
-    if initialize():
-        logging.info("✅ System initialization successful!")
-        logging.info("🚀 Starting trading engine...\n")
-        
-        try:
-            # Run the new AI system instead of ultimate_500_dollar_trading_loop
-            run_adaptive_ai_system()
-            
-        except KeyboardInterrupt:
-            logging.info("\n🛑 Shutdown requested by user")
-        except Exception as e:
-            logging.error(f"❌ Fatal error: {e}")
-            logging.error(traceback.format_exc())
+    # Check strategy selection
+    strategy = CONFIG.get('STRATEGY', 'AI_ADAPTIVE')
+    if strategy == 'AI_ADAPTIVE':
+        logging.info("✅ AI ADAPTIVE mode activated")
+        logging.info(f"   Alpha Following: {'✅ Enabled' if CONFIG['ENABLE_ALPHA_FOLLOWING'] else '❌ Disabled'}")
+        logging.info(f"   Independent Hunting: {'✅ Enabled' if CONFIG['ENABLE_INDEPENDENT_HUNTING'] else '❌ Disabled'}")
+        logging.info(f"   ML Training After: {CONFIG['MIN_TRADES_FOR_ML_TRAINING']} trades")
     else:
-        logging.error("❌ Initialization failed. Check configuration.")
+        logging.info(f"📈 Running strategy: {strategy}")
+    
+    # Show current configuration
+    logging.info("\n📊 CONFIGURATION:")
+    logging.info(f"   Wallet Balance Target: {CONFIG['MIN_WALLET_BALANCE']} SOL minimum")
+    logging.info(f"   Base Position Size: {CONFIG['BASE_POSITION_SIZE']} SOL")
+    logging.info(f"   Max Concurrent Positions: {CONFIG['MAX_CONCURRENT_POSITIONS']}")
+    logging.info(f"   Profit Target: {CONFIG['PROFIT_TARGET_PCT']}%")
+    logging.info(f"   Stop Loss: {CONFIG['STOP_LOSS_PCT']}%")
+    logging.info(f"   Daily Loss Limit: {CONFIG['DAILY_LOSS_LIMIT']} SOL")
+    
+    # Show pattern detection thresholds
+    logging.info("\n🎯 PATTERN DETECTION:")
+    logging.info(f"   Fresh Launch: {AI_CONFIG['PATTERNS']['FRESH_LAUNCH']['MIN_AGE']}-{AI_CONFIG['PATTERNS']['FRESH_LAUNCH']['MAX_AGE']}m, >${CONFIG['FRESH_LAUNCH_MIN_LIQ']/1000:.0f}k liq")
+    logging.info(f"   Volume Spike: >${CONFIG['VOLUME_SPIKE_MIN_VOLUME']/1000:.0f}k volume")
+    logging.info(f"   Dip Pattern: {CONFIG['DIP_PATTERN_MIN_DUMP']}% to {CONFIG['DIP_PATTERN_MAX_DUMP']}% dump")
+    
+    # Add start time to brain for tracking
+    TradingBrain.start_time = time.time()
+    
+    try:
+        # Initialize the system
+        if initialize():
+            logging.info("\n✅ System initialization successful!")
+            
+            # Check wallet balance
+            try:
+                balance = wallet.get_balance()
+                logging.info(f"💰 Wallet Balance: {balance:.3f} SOL")
+                
+                if balance < CONFIG['MIN_WALLET_BALANCE']:
+                    logging.error(f"❌ Insufficient balance! Need at least {CONFIG['MIN_WALLET_BALANCE']} SOL")
+                    logging.error(f"   Current: {balance:.3f} SOL")
+                    return
+                    
+                if balance < CONFIG['STOP_TRADING_BALANCE']:
+                    logging.warning(f"⚠️  Low balance warning! Consider adding more SOL")
+                    logging.warning(f"   Stop trading at: {CONFIG['STOP_TRADING_BALANCE']} SOL")
+                    
+            except Exception as e:
+                logging.error(f"Could not check wallet balance: {e}")
+                # Continue anyway for testing
+            
+            logging.info("\n🚀 Starting AI trading engine...\n")
+            
+            # Check which strategy to run
+            if strategy == 'AI_ADAPTIVE':
+                # Run the new AI adaptive system
+                run_adaptive_ai_system()
+            elif strategy == 'JEET_HARVESTER':
+                # Run the original jeet harvester if selected
+                logging.info("Running legacy Jeet Harvester strategy...")
+                ultimate_500_dollar_trading_loop()
+            else:
+                logging.error(f"Unknown strategy: {strategy}")
+                
+        else:
+            logging.error("❌ Initialization failed. Check configuration.")
+            logging.error("   1. Verify wallet private key is set")
+            logging.error("   2. Check RPC connection")
+            logging.error("   3. Ensure Helius API key is valid")
+            
+    except KeyboardInterrupt:
+        logging.info("\n" + "=" * 60)
+        logging.info("🛑 SHUTDOWN REQUESTED BY USER")
+        logging.info("=" * 60)
+        
+        # Show final stats if available
+        try:
+            if 'trader' in globals() and hasattr(trader, 'brain'):
+                logging.info("\n📊 FINAL SESSION STATISTICS:")
+                stats = trader.brain.daily_stats
+                
+                # Calculate session duration
+                session_duration = (time.time() - TradingBrain.start_time) / 3600
+                
+                logging.info(f"   Session Duration: {session_duration:.1f} hours")
+                logging.info(f"   Total Trades: {stats['trades']}")
+                logging.info(f"   Winning Trades: {stats['wins']}")
+                
+                if stats['trades'] > 0:
+                    win_rate = (stats['wins'] / stats['trades']) * 100
+                    logging.info(f"   Win Rate: {win_rate:.1f}%")
+                    
+                logging.info(f"   Total P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
+                
+                if session_duration > 0:
+                    hourly_rate = stats['pnl_sol'] / session_duration
+                    logging.info(f"   Hourly Rate: {hourly_rate:+.3f} SOL/hour (${hourly_rate*240:+.0f}/hour)")
+                    daily_projection = hourly_rate * 24
+                    logging.info(f"   Daily Projection: ${daily_projection*240:+.0f}")
+                    
+                # Show pattern performance if available
+                if hasattr(trader.brain, 'pattern_stats') and trader.brain.pattern_stats:
+                    logging.info("\n📈 PATTERN PERFORMANCE:")
+                    for pattern, stats in trader.brain.pattern_stats.items():
+                        total = stats['wins'] + stats['losses']
+                        if total > 0:
+                            win_rate = (stats['wins'] / total) * 100
+                            avg_pnl = stats['total_pnl'] / total
+                            logging.info(f"   {pattern}: {total} trades, {win_rate:.0f}% win rate, {avg_pnl:+.3f} SOL avg")
+                            
+        except Exception as e:
+            logging.debug(f"Could not display final stats: {e}")
+            
+        logging.info("\n✅ Bot stopped gracefully")
+        logging.info("=" * 60)
+        
+    except Exception as e:
+        logging.error(f"\n❌ FATAL ERROR: {e}")
+        logging.error(traceback.format_exc())
+        logging.error("\nPlease check:")
+        logging.error("1. Your internet connection")
+        logging.error("2. Helius API status")
+        logging.error("3. Wallet configuration")
+        logging.error("4. Available SOL balance")
+        
+    finally:
+        # Cleanup
+        try:
+            if 'REQUEST_EXECUTOR' in globals():
+                REQUEST_EXECUTOR.shutdown(wait=False)
+            if 'RPC_SESSION' in globals():
+                RPC_SESSION.close()
+            if 'HELIUS_SESSION' in globals():
+                HELIUS_SESSION.close()
+        except:
+            pass
+            
+        logging.info("\n👋 Thank you for using AI Adaptive Trading System!")
 
 if __name__ == "__main__":
     main()
