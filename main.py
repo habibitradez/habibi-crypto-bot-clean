@@ -967,6 +967,13 @@ def run_adaptive_ai_system():
     # Verify all wallets were loaded
     logging.info(f"✅ Successfully loaded {loaded_count} of {len(ALPHA_WALLETS_CONFIG)} wallets")
     logging.info(f"📡 Monitoring {len(trader.alpha_wallets)} alpha wallets")
+    logging.info(f"DEBUG: First 5 wallets loaded:")
+    for i in range(min(5, len(trader.alpha_wallets))):
+    logging.info(f"   {i+1}. {trader.alpha_wallets[i]['name']} ({trader.alpha_wallets[i]['address'][:8]}...)")
+
+    logging.info(f"DEBUG: Last 5 wallets loaded:")
+    for i in range(max(0, len(trader.alpha_wallets)-5), len(trader.alpha_wallets)):
+    logging.info(f"   {i+1}. {trader.alpha_wallets[i]['name']} ({trader.alpha_wallets[i]['address'][:8]}...)")
     
     # Log first few and last few wallets to confirm
     if len(trader.alpha_wallets) > 0:
