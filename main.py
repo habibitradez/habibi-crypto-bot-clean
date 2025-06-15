@@ -950,7 +950,7 @@ def run_adaptive_ai_system():
     
     logging.info("🤖 === ADAPTIVE AI TRADING SYSTEM STARTING ===")
     logging.info(f"🔗 Using Helius RPC")
-    logging.info("📡 Following 7 alpha wallets")
+    logging.info(f"📡 Loading {len(ALPHA_WALLETS_CONFIG)} alpha wallets...")  # Updated to show actual count
     logging.info("🔍 + Independent token hunting active")
     logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
     logging.info("💰 Starting with 4 SOL capital (test mode)")
@@ -958,11 +958,21 @@ def run_adaptive_ai_system():
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
     
-    # Add your specific alpha wallets
+    # Add ALL alpha wallets with proper logging
+    loaded_count = 0
     for address, name in ALPHA_WALLETS_CONFIG:
         trader.add_alpha_wallet(address, name)
+        loaded_count += 1
         
-    logging.info(f"📡 Monitoring {len(ALPHA_WALLETS_CONFIG)} alpha wallets")
+    # Verify all wallets were loaded
+    logging.info(f"✅ Successfully loaded {loaded_count} of {len(ALPHA_WALLETS_CONFIG)} wallets")
+    logging.info(f"📡 Monitoring {len(trader.alpha_wallets)} alpha wallets")
+    
+    # Log first few and last few wallets to confirm
+    if len(trader.alpha_wallets) > 0:
+        logging.info(f"   First wallet: {trader.alpha_wallets[0]['name']} ({trader.alpha_wallets[0]['address'][:8]}...)")
+        if len(trader.alpha_wallets) > 1:
+            logging.info(f"   Last wallet: {trader.alpha_wallets[-1]['name']} ({trader.alpha_wallets[-1]['address'][:8]}...)")
     
     # Main trading loop
     last_stats_time = 0
@@ -994,6 +1004,7 @@ def run_adaptive_ai_system():
                 
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
+                logging.info(f"   Alpha Wallets: {len(trader.alpha_wallets)} active")  # Added wallet count
                 logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
                 
                 # Count sources
@@ -1012,6 +1023,16 @@ def run_adaptive_ai_system():
                 except:
                     pass
                 
+                # Show which wallets have been active
+                active_wallets = set()
+                for token_data in trader.monitoring.values():
+                    if token_data['alpha_wallet'] != 'SELF_DISCOVERED':
+                        wallet_name = next((w['name'] for w in trader.alpha_wallets if w['address'] == token_data['alpha_wallet']), "Unknown")
+                        active_wallets.add(wallet_name)
+                
+                if active_wallets:
+                    logging.info(f"   Active Alpha Wallets: {', '.join(active_wallets)}")
+                
                 # Show any insights
                 if stats['trades'] > 0:
                     trader.brain.show_insights()
@@ -1020,6 +1041,7 @@ def run_adaptive_ai_system():
             
         except KeyboardInterrupt:
             logging.info("\n🛑 System stopped by user")
+            logging.info(f"📊 Final Stats: Monitored {len(trader.alpha_wallets)} wallets")
             trader.brain.show_insights()
             break
         except Exception as e:
