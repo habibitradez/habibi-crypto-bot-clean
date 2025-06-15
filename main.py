@@ -3177,16 +3177,6 @@ def scan_multiple_dexs():
     
     return dex_tokens
 
-# Your alpha wallets to follow
-ALPHA_WALLETS_CONFIG = [
-    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
-    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
-    ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
-    ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
-    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
-    ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
-    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
-]
 
 def get_wallet_recent_transactions(wallet_address, limit=50):
     """Get recent transactions for a wallet using Helius API"""
