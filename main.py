@@ -864,28 +864,35 @@ def execute_trade(self, token_address, strategy, position_size, entry_price):
     else:  # SCALP
         targets = {'take_profit': 1.04, 'stop_loss': 0.98, 'trailing': False}
         
-    # Execute buy
-    logging.info(f"📞 Calling execute_via_javascript...")
-    success = execute_via_javascript(token_address, position_size, False)
+    # USE YOUR WORKING FUNCTION!
+    logging.info(f"📞 Executing trade using execute_optimized_transaction...")
+    signature = execute_optimized_transaction(token_address, position_size)
     
-    if success:
-        logging.info(f"✅ TRADE EXECUTED SUCCESSFULLY!")
+    if signature and signature != "simulation-signature":
+        logging.info(f"✅ TRADE EXECUTED! Signature: {signature[:16]}...")
+        
         self.positions[token_address] = {
             'strategy': strategy,
             'entry_price': entry_price,
             'size': position_size,
             'targets': targets,
             'entry_time': time.time(),
-            'peak_price': entry_price
+            'peak_price': entry_price,
+            'signature': signature
         }
+        
+        # Update brain stats
+        self.brain.daily_stats['trades'] += 1
         
         # Remove from monitoring
         if token_address in self.monitoring:
             del self.monitoring[token_address]
             
         logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+        return True
     else:
         logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
+        return False
             
     def monitor_positions(self):
         """Check all positions for exit conditions"""
@@ -919,30 +926,37 @@ def execute_trade(self, token_address, strategy, position_size, entry_price):
             if should_exit:
                 self.exit_position(token_address, current_price, exit_reason, pnl)
                 
-    def exit_position(self, token_address, exit_price, reason, pnl):
-        """Exit position and record results"""
+def exit_position(self, token_address, exit_price, reason, pnl):
+    """Exit position and record results"""
+    
+    pos = self.positions[token_address]
+    
+    # Execute sell using YOUR function
+    logging.info(f"💰 Selling {token_address[:8]} - {reason}")
+    
+    # You'll need to create execute_optimized_sell or modify execute_optimized_transaction
+    # For now, let's use what you have with a sell flag
+    signature = execute_optimized_sell(token_address, pos['size'])
+    
+    if signature:
+        # Record trade for learning
+        profit_sol = pos['size'] * pnl
+        self.brain.record_trade({
+            'token': token_address,
+            'strategy': pos['strategy'],
+            'pnl_percent': pnl * 100,
+            'profit_sol': profit_sol,
+            'exit_reason': reason,
+            'hold_time': (time.time() - pos['entry_time']) / 60
+        })
         
-        pos = self.positions[token_address]
+        del self.positions[token_address]
         
-        # Execute sell
-        success = execute_via_javascript(token_address, pos['size'], True)
+        logging.info(f"💰 Closed {pos['strategy']}: {pnl*100:+.1f}% ({profit_sol:+.3f} SOL)")
         
-        if success:
-            # Record trade for learning
-            profit_sol = pos['size'] * pnl
-            self.brain.record_trade({
-                'token': token_address,
-                'strategy': pos['strategy'],
-                'pnl_percent': pnl * 100,
-                'profit_sol': profit_sol,
-                'exit_reason': reason,
-                'hold_time': (time.time() - pos['entry_time']) / 60
-            })
-            
-            del self.positions[token_address]
-            
-            logging.info(f"💰 Closed {pos['strategy']}: {pnl*100:+.1f}% ({profit_sol:+.3f} SOL)")
-
+        # Update win stats
+        if profit_sol > 0:
+            self.brain.daily_stats['wins'] += 1
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
