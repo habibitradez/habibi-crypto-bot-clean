@@ -57,7 +57,22 @@ ALPHA_WALLETS_CONFIG = [
     ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
     ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
     ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
-    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
+    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7"),
+    ("BhLc8dz4rxdpF6LbR166hSsinaRWuZj4hTY6SuMF85pL", "Alpha8"),
+    ("6enzcYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiitzjB", "Alpha9"),
+    ("8p1miLkSfbiXcXvCqBKAoJrWGQVhc73J5dgtzT5jSYuZ", "Alpha10"),
+    ("EcHcM77XtepREy8juTWp5APB46bMte3eRtViHksNEcrb", "Alpha11"),
+    ("niggaNaU9wFYxhcokXGxCZB67aVwHTRfJoLsyUHESWe", "Alpha12"),
+    ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13"),
+    ("D9tXKiHKPUcPe7wC8f2kJJUzfsKNrFWTanrdt1fFJ1AK", "Alpha14"),
+    ("FYDbATeg1qtXfzT6WZFmST6hVcknwyeXXZCAcnGeqBjS", "Alpha15"),
+    ("3ZgrgEADJJtjyWYag6XfYd7zoD7LEwFhsoEpj7FFWUPo", "Alpha16"),
+    ("Ct9pXcNjhAwtvBkyybQoZc3ozGjcMnyFNdQ5AE1LkK1", "Alpha17"),
+    ("8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf", "Alpha18"),
+    ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19"),
+    ("EPqaXbdqfi8XiEJtJw1SwiiFzv9JKX4JrS7w1w5E6iGK", "Alpha20"),
+    ("86yzRC1iz2SWdUgmTwoEZSMHnziQJhCuLpWrxzRrdbEg", "Alpha21"),
+    ("CRWz4NYBzWfC8BtWYnWFD8nJn4BEwC89gGFg52XrS3CE", "Alpha22")
 ]
 
 daily_stats = {
