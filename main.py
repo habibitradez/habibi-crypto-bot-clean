@@ -10,7 +10,6 @@ import time
 import json
 import random
 import logging
-import datetime
 import requests
 import base64
 import traceback
@@ -34,7 +33,7 @@ from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 
 # Configure logging with both file and console output
-current_time = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
