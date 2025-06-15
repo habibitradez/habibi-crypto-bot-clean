@@ -1,5 +1,6 @@
 import websocket
-import threadingimport numpy as np
+import threading
+import numpy as np
 import pickle
 import subprocess
 import re
@@ -43,6 +44,22 @@ logging.basicConfig(
     ],
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# Your Helius Configuration
+HELIUS_API_KEY = "6e4e884f-d053-4682-81a5-3aeaa0b4c7dc"
+HELIUS_RPC_URL = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+HELIUS_WEBSOCKET_URL = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+
+# Your alpha wallets to follow
+ALPHA_WALLETS_CONFIG = [
+    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
+    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
+    ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
+    ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
+    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
+    ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
+    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
+]
 
 daily_stats = {
     'trades_executed': 0,
@@ -94,36 +111,70 @@ HELIUS_SESSION = create_optimized_session()
 # Thread pool for parallel requests
 REQUEST_EXECUTOR = ThreadPoolExecutor(max_workers=10)
 
-# Configuration from environment variables with fallbacks
+# Main Configuration with AI Updates
 CONFIG = {
-    'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', 'https://mainnet.helius-rpc.com/?api-key=6e4e884f-d053-4682-81a5-3aeaa0b4c7dc'),
-    'JUPITER_API_URL': 'https://quote-api.jup.ag',  # Base URL
+    # Core settings
+    'SOLANA_RPC_URL': os.environ.get('SOLANA_RPC_URL', HELIUS_RPC_URL),
+    'JUPITER_API_URL': 'https://quote-api.jup.ag',
     'WALLET_ADDRESS': os.environ.get('WALLET_ADDRESS', ''),
     'WALLET_PRIVATE_KEY': os.environ.get('WALLET_PRIVATE_KEY', ''),
     'SIMULATION_MODE': os.environ.get('SIMULATION_MODE', 'true').lower() == 'true',
-    'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', ''),
-    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '30')),  # 2x return
-    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '30')),  # Adding this for backward compatibility
+    'HELIUS_API_KEY': os.environ.get('HELIUS_API_KEY', HELIUS_API_KEY),
+    
+    # AI System Configuration (NEW)
+    'STRATEGY': os.getenv('STRATEGY', 'AI_ADAPTIVE'),
+    'ENABLE_ALPHA_FOLLOWING': os.getenv('ENABLE_ALPHA_FOLLOWING', 'true').lower() == 'true',
+    'ENABLE_INDEPENDENT_HUNTING': os.getenv('ENABLE_INDEPENDENT_HUNTING', 'true').lower() == 'true',
+    
+    # ML Settings (NEW)
+    'MIN_TRADES_FOR_ML_TRAINING': int(os.getenv('MIN_TRADES_FOR_ML_TRAINING', '100')),
+    'ML_CONFIDENCE_THRESHOLD': float(os.getenv('ML_CONFIDENCE_THRESHOLD', '0.6')),
+    
+    # Pattern Detection (NEW)
+    'FRESH_LAUNCH_MIN_LIQ': float(os.getenv('FRESH_LAUNCH_MIN_LIQ', '15000')),
+    'FRESH_LAUNCH_MIN_HOLDERS': int(os.getenv('FRESH_LAUNCH_MIN_HOLDERS', '30')),
+    'VOLUME_SPIKE_MIN_VOLUME': float(os.getenv('VOLUME_SPIKE_MIN_VOLUME', '30000')),
+    'DIP_PATTERN_MIN_DUMP': float(os.getenv('DIP_PATTERN_MIN_DUMP', '-25')),
+    'DIP_PATTERN_MAX_DUMP': float(os.getenv('DIP_PATTERN_MAX_DUMP', '-60')),
+    
+    # Position Management (UPDATED)
+    'BASE_POSITION_SIZE': float(os.getenv('BASE_POSITION_SIZE', '0.3')),
+    'MIN_POSITION_SIZE': float(os.getenv('MIN_POSITION_SIZE', '0.15')),
+    'MAX_POSITION_SIZE': float(os.getenv('MAX_POSITION_SIZE', '0.5')),
+    'MAX_CONCURRENT_POSITIONS': int(os.getenv('MAX_CONCURRENT_POSITIONS', '5')),
+    
+    # Timing (NEW)
+    'ALPHA_CHECK_INTERVAL': int(os.getenv('ALPHA_CHECK_INTERVAL', '30')),
+    'HUNT_CHECK_INTERVAL': int(os.getenv('HUNT_CHECK_INTERVAL', '30')),
+    
+    # Risk Management (NEW)
+    'DAILY_LOSS_LIMIT': float(os.getenv('DAILY_LOSS_LIMIT', '1.0')),
+    'MIN_WALLET_BALANCE': float(os.getenv('MIN_WALLET_BALANCE', '2.0')),
+    'STOP_TRADING_BALANCE': float(os.getenv('STOP_TRADING_BALANCE', '3.0')),
+    
+    # Trading parameters (UPDATED for AI)
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Reduced from 30
+    'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
-    'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),  # Adding this for backward compatibility
-    'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '5')),
-    'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),  # Adding this for backward compatibility
-    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
+    'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
+    'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),  # Tighter from 5
+    'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),
+    'TIME_LIMIT_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
     'BUY_COOLDOWN_MINUTES': int(os.environ.get('BUY_COOLDOWN_MINUTES', '60')),
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
-    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '3')),
-    'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '2')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.20')),  # Reduced to 0.10 SOL
+    'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),  # Increased from 3
+    'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Reduced for safety
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
-    'TOKENS_PER_DAY': int(os.environ.get('TOKENS_PER_DAY', '20')),        # Target 20 tokens per day
-    'PROFIT_PER_TOKEN': int(os.environ.get('PROFIT_PER_TOKEN', '50')),    # Target $50 profit per token
-    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '30')),        # Take profit at just 20% gain
-    'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '1800')), # Only hold for 60 seconds max
-    'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true', # Use pump.fun API
-    'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '60')),  # Only buy very new tokens
-    'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true', # Enable quick flip mode
+    'TOKENS_PER_DAY': int(os.environ.get('TOKENS_PER_DAY', '30')),  # Increased
+    'PROFIT_PER_TOKEN': int(os.environ.get('PROFIT_PER_TOKEN', '30')),  # Reduced
+    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '12')),  # Reduced from 30
+    'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '1800')),
+    'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true',
+    'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '60')),
+    'QUICK_FLIP_MODE': os.environ.get('QUICK_FLIP_MODE', 'true').lower() == 'true',
     'DISCOVERY_CHECK_INTERVAL': float(os.environ.get('DISCOVERY_CHECK_INTERVAL', '0.5')),
     'VALIDATION_TIMEOUT': int(os.environ.get('VALIDATION_TIMEOUT', '1')),
     'SKIP_MARKET_CAP_CHECK': os.environ.get('SKIP_MARKET_CAP_CHECK', 'true').lower() == 'true',
@@ -138,44 +189,85 @@ CONFIG = {
     'ZERO_BALANCE_TOKEN_CACHE': {},
     'ZERO_BALANCE_CACHE_EXPIRY': int(os.environ.get('ZERO_BALANCE_CACHE_EXPIRY', '3600')),
 
-    # ADD THE NEW CONFIGS HERE INSIDE THE MAIN CONFIG
+    # Existing nested configs
     'POSITION_SIZING': {
-    'fee_buffer': 2.0,
-    'max_position_pct': 0.15,
-    'min_profitable_size': 0.02
+        'fee_buffer': 2.0,
+        'max_position_pct': 0.15,
+        'min_profitable_size': 0.02
     },
 
     'LIQUIDITY_FILTER': {
-    'min_liquidity_usd': 10000,
-    'min_age_minutes': 1,
-    'max_age_minutes': 60,
-    'min_holders': 10,
-    'min_volume_usd': 5000
+        'min_liquidity_usd': 10000,
+        'min_age_minutes': 1,
+        'max_age_minutes': 60,
+        'min_holders': 10,
+        'min_volume_usd': 5000
     },
 
     'HOLD_TIME': {
-    'base_hold_seconds': 30,
-    'high_liquidity_bonus': 60,
-    'max_hold_seconds': 120,
-    'safety_multiplier': 0.1
+        'base_hold_seconds': 30,
+        'high_liquidity_bonus': 60,
+        'max_hold_seconds': 120,
+        'safety_multiplier': 0.1
     }
-}  # THIS CLOSES THE MAIN CONFIG
+}
 
-# JEET HARVESTER CONFIGURATION (The money maker)
+# AI-specific configuration (NEW)
+AI_CONFIG = {
+    'PATTERNS': {
+        'FRESH_LAUNCH': {
+            'MIN_AGE': 1,
+            'MAX_AGE': 5,
+            'MIN_LIQ': CONFIG['FRESH_LAUNCH_MIN_LIQ'],
+            'MIN_HOLDERS': CONFIG['FRESH_LAUNCH_MIN_HOLDERS'],
+            'POSITION_SIZE': 0.2
+        },
+        'VOLUME_SPIKE': {
+            'MIN_VOLUME': CONFIG['VOLUME_SPIKE_MIN_VOLUME'],
+            'VOL_LIQ_RATIO': 2.0,
+            'POSITION_SIZE': 0.4
+        },
+        'DIP_PATTERN': {
+            'MIN_DUMP': CONFIG['DIP_PATTERN_MIN_DUMP'],
+            'MAX_DUMP': CONFIG['DIP_PATTERN_MAX_DUMP'],
+            'MIN_HOLDERS': 50,
+            'POSITION_SIZE': 0.3
+        },
+        'CONSOLIDATION': {
+            'MIN_AGE': 30,
+            'MAX_AGE': 120,
+            'MIN_LIQUIDITY': 20000,
+            'POSITION_SIZE': 0.3
+        },
+        'HOLDER_GROWTH': {
+            'MIN_AGE': 5,
+            'MAX_AGE': 30,
+            'MIN_GROWTH_RATE': 5,
+            'POSITION_SIZE': 0.35
+        }
+    },
+    'RISK_LIMITS': {
+        'DAILY_LOSS_LIMIT': CONFIG.get('DAILY_LOSS_LIMIT', 1.0),
+        'MIN_WALLET_BALANCE': CONFIG.get('MIN_WALLET_BALANCE', 2.0),
+        'STOP_TRADING_BALANCE': CONFIG.get('STOP_TRADING_BALANCE', 3.0)
+    }
+}
+
+# JEET HARVESTER CONFIGURATION (Updated for AI flexibility)
 JEET_CONFIG = {
-    'MIN_AGE_MINUTES': 10,      # Sweet spot - after initial dump
-    'MAX_AGE_MINUTES': 30,      # Before recovery ends
-    'MIN_DUMP_PERCENT': -25,    # Must be down 45%+ from ATH
-    'MAX_DUMP_PERCENT': -80,    # Not more than 80% (might be rug)
-    'MIN_HOLDERS': 50,         # Proven community interest
-    'MIN_VOLUME_USD': 10000,    # $25k+ volume shows real trading
-    'MIN_LIQUIDITY_USD': 15000, # Lower threshold for more trades
-    'POSITION_SIZE_SOL': 0.3,   # Larger positions for consistency
-    'PROFIT_TARGET': 22,        # 22% profit target (not 25%)
-    'STOP_LOSS': 8,            # Tighter stop loss
-    'MAX_POSITIONS': 10,        # More concurrent positions
-    'SCAN_INTERVAL': 5,         # Check every 5 seconds
-    'HOLD_TIMEOUT': 25*60,      # 25 mins max hold
+    'MIN_AGE_MINUTES': 5,       # Reduced from 10
+    'MAX_AGE_MINUTES': 60,      # Increased from 30
+    'MIN_DUMP_PERCENT': -20,    # Reduced from -25
+    'MAX_DUMP_PERCENT': -80,
+    'MIN_HOLDERS': 30,          # Reduced from 50
+    'MIN_VOLUME_USD': 5000,     # Reduced from 10000
+    'MIN_LIQUIDITY_USD': 10000, # Reduced from 15000
+    'POSITION_SIZE_SOL': 0.2,   # Reduced from 0.3
+    'PROFIT_TARGET': 15,        # Reduced from 22
+    'STOP_LOSS': 8,
+    'MAX_POSITIONS': 10,
+    'SCAN_INTERVAL': 5,
+    'HOLD_TIMEOUT': 25*60,
 }
 
 # Global tracking for jeet positions
@@ -190,57 +282,56 @@ jeet_daily_stats = {
 }
 
 CAPITAL_PRESERVATION_CONFIG = {
-    'MIN_POSITION_SIZE': 0.20,
+    'MIN_POSITION_SIZE': 0.15,      # Updated for AI
     'MAX_LOSS_PERCENTAGE': 15,
     'MIN_BALANCE_SOL': 0.30,
     'POSITION_MULTIPLIER': 5,
     'EMERGENCY_STOP_ENABLED': True,
-    'ANTI_RUG_ENABLED': False,           # NEW
-    'MIN_LIQUIDITY_USD': 10000,         # NEW
-    'MIN_HOLD_TIME_SECONDS': 60,        # NEW
-    'MAX_HOLD_TIME_SECONDS': 1800         # NEW
+    'ANTI_RUG_ENABLED': False,
+    'MIN_LIQUIDITY_USD': 10000,
+    'MIN_HOLD_TIME_SECONDS': 60,
+    'MAX_HOLD_TIME_SECONDS': 1800
 }
 
 SNIPING_CONFIG = {
-    'TARGET_DAILY_PROFIT': 500,           
-    'POSITION_SIZE_SOL': 0.2,           
-    'MAX_CONCURRENT_SNIPES': 5,         
-    'QUICK_PROFIT_TARGETS': [15, 25, 35],
-    'STOP_LOSS_PERCENT': 10,            
-    'MAX_HOLD_TIME_MINUTES': 15,        
-    'MIN_MARKET_CAP': 5000,               
+    'TARGET_DAILY_PROFIT': 500,
+    'POSITION_SIZE_SOL': 0.15,      # Updated for AI
+    'MAX_CONCURRENT_SNIPES': 5,
+    'QUICK_PROFIT_TARGETS': [12, 20, 30],  # Updated for AI
+    'STOP_LOSS_PERCENT': 8,         # Updated for AI
+    'MAX_HOLD_TIME_MINUTES': 30,
+    'MIN_MARKET_CAP': 5000,
     'MAX_MARKET_CAP': 100000,
-    'STRATEGY': 'DIP_BUYER',  # New strategy
-    'TARGET_AGE': '2-24 hours',
-    'BUY_ON_DIP': -25,
-    'SELL_ON_BOUNCE': 15,
+    'STRATEGY': 'AI_ADAPTIVE',      # Changed from DIP_BUYER
+    'TARGET_AGE': '1-60 minutes',   # Updated
+    'BUY_ON_DIP': -20,             # Updated
+    'SELL_ON_BOUNCE': 12,          # Updated
 }
 
-# ADD THIS TOO - Speed optimization flags
+# Speed optimization flags
 SPEED_MODE = {
     'ENABLED': True,
     'SKIP_VALIDATIONS': ['market_cap', 'holder_count', 'social_signals'],
     'PRIORITY_FEES_MULTIPLIER': 2.0,
-    'USE_WEBSOCKET': False,  # Disable for speed
+    'USE_WEBSOCKET': False,
 }
 
+# Rest of your existing code continues here...
 def update_config_for_quicknode():
     """Update configuration to use QuickNode Metis Jupiter features."""
     global CONFIG
     
-    # Check if QuickNode should be enabled - use os.environ.get for proper environment variable access
     solana_rpc_url = os.environ.get('SOLANA_RPC_URL', '')
     use_quicknode = False
     
     if use_quicknode:
-        # Add QuickNode specific settings
         CONFIG.update({
             'USE_QUICKNODE_METIS': True,
-            'QUICKNODE_RATE_LIMIT': 50,  # 50 RPS from Launch plan
-            'QUICKNODE_REQUESTS_PER_MONTH': 130000000,  # 130M requests/month
+            'QUICKNODE_RATE_LIMIT': 50,
+            'QUICKNODE_REQUESTS_PER_MONTH': 130000000,
             'PREFER_QUICKNODE_TOKENS': True,
-            'QUICKNODE_MIN_LIQUIDITY': 1000,  # Minimum $1000 liquidity
-            'QUICKNODE_TIMEFRAME': '1h'  # Look for tokens from last hour
+            'QUICKNODE_MIN_LIQUIDITY': 1000,
+            'QUICKNODE_TIMEFRAME': '1h'
         })
         
         logging.info("✅ Updated configuration for QuickNode Metis Jupiter Swap API")
@@ -252,7 +343,6 @@ def update_config_for_quicknode():
         logging.info("ℹ️ QuickNode Metis not detected, using standard configuration")
         logging.info(f"   Current RPC: {solana_rpc_url[:50]}...")
 
-# Call the function after it's defined
 update_config_for_quicknode()
 
 def check_solders_version():
@@ -266,51 +356,41 @@ def check_solders_version():
         logging.error(f"Error checking Solders version: {str(e)}")
         return None
 
-# Diagnostics flag - set to True for very verbose logging
+# Diagnostics flag
 ULTRA_DIAGNOSTICS = True
 
 # Meme token pattern detection
 MEME_TOKEN_PATTERNS = [
-    # Classic meme terms
     "pump", "moon", "pepe", "doge", "shib", "inu", "cat", "elon", "musk", 
     "trump", "biden", "wojak", "chad", "frog", "dog", "puppy", "kitty", 
     "meme", "coin", "stonk", "ape", "rocket", "mars", "lambo", "diamond", 
     "hand", "hodl", "rich", "poor", "trader", "crypto", "token", 
-    
-    # Popular Solana meme coins
     "bonk", "wif", "dogwifhat", "popcat", "pnut", "peanut", "slerf",
     "myro", "giga", "gigachad", "moodeng", "pengu", "pudgy", "would",
-    
-    # Animal themes
     "bull", "bear", "hippo", "squirrel", "cat", "doge", "shiba", 
     "monkey", "ape", "panda", "fox", "bird", "eagle", "penguin",
-    
-    # Internet culture
     "viral", "trend", "hype", "fomo", "mochi", "michi", "ai", "gpt",
     "official", "og", "based", "alpha", "shill", "gem", "baby", "daddy",
     "mini", "mega", "super", "hyper", "ultra", "king", "queen", "lord",
-    
-    # Solana specific
     "sol", "solana", "solaxy", "solama", "moonlana", "soldoge", "fronk",
     "smog", "sunny", "saga", "spx", "degods", "wepe", "bab"
 ]
 
-# Global Variables Section
+# Global Variables
 circuit_breaker_active = False
 error_count_window = []
 last_circuit_reset_time = time.time()
 MAX_ERRORS_BEFORE_PAUSE = 10
-ERROR_WINDOW_SECONDS = 300  # 5 minutes
-CIRCUIT_BREAKER_COOLDOWN = 600  # 10 minutes
-daily_profit_usd = 0  # Track daily profit in USD
-trades_today = 0      # Track number of trades today
+ERROR_WINDOW_SECONDS = 300
+CIRCUIT_BREAKER_COOLDOWN = 600
+daily_profit_usd = 0
+trades_today = 0
 last_jupiter_call = 0
-JUPITER_CALL_DELAY = 1.5  # 1.5 seconds between Jupiter calls
+JUPITER_CALL_DELAY = 1.5
 
-# --------------------------------------------------
 # Rate limiting variables
 last_api_call_time = 0
-api_call_delay = 2.0  # Start with 1.5 seconds between calls
+api_call_delay = 2.0
 
 # Track tokens we're monitoring
 daily_profit = 0
@@ -329,19 +409,6 @@ errors_encountered = 0
 last_status_time = time.time()
 iteration_count = 0
 
-# SNIPING CONFIGURATION (Based on successful strategies)
-SNIPING_CONFIG = {
-    'TARGET_DAILY_PROFIT': 500,           # $500 daily target
-    'POSITION_SIZE_SOL': 0.05,             # 0.2 SOL per snipe (aggressive sizing)
-    'MAX_CONCURRENT_SNIPES': 3,           # Max 5 positions at once
-    'QUICK_PROFIT_TARGETS': [30, 50, 100], # 30%, 50%, 100% profit levels
-    'STOP_LOSS_PERCENT': 15,              # 15% stop loss
-    'MAX_HOLD_TIME_MINUTES': 30,          # Max 30 minutes per position
-    'SNIPE_DELAY_SECONDS': 2,             # Execute within 3 seconds
-    'MIN_MARKET_CAP': 5000,               # Min $5k market cap
-    'MAX_MARKET_CAP': 100000,             # Max $100k market cap (early entry)
-}
-
 # Global tracking for sniped positions
 sniped_positions = {}
 daily_snipe_stats = {
@@ -352,22 +419,10 @@ daily_snipe_stats = {
     'start_time': time.time()
 }
 
-# Rate limiting for wallet checks (if using copy trading later)
+# Rate limiting for wallet checks
 last_wallet_checks = {}
 
-# ===== END OF SNIPING ADDITIONS =====
-
-ALPHA_WALLETS_CONFIG = [
-    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
-    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
-    ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
-    ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
-    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
-    ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
-    ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7")
-]
-
-# SOL token address (used as base currency)
+# SOL token address
 SOL_TOKEN_ADDRESS = "So11111111111111111111111111111111111111112"
 
 # Predefined list of known tokens
@@ -381,7 +436,6 @@ KNOWN_TOKENS = [
     {"symbol": "SLERF", "address": "4LLdMU9BLbT39ZLjDgBeZirThcFB5oqkQaEQDyhC7FEW", "tradable": False},
     {"symbol": "WOULD", "address": "WoUDYBcg9YWY5KRrfKwJ3XHMEQWvGZvK7B2B9f11rpiJ", "tradable": False},
     {"symbol": "MOODENG", "address": "7xd71KP4HwQ4sM936xL8JQZHVnrEKcMDDvajdYfJBJCF", "tradable": False},
-    # Updated list of known tradable tokens
     {"symbol": "JUP", "address": "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", "tradable": True},
     {"symbol": "ORCA", "address": "orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE", "tradable": True},
     {"symbol": "SAMO", "address": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU", "tradable": True},
@@ -392,7 +446,7 @@ KNOWN_TOKENS = [
 
 # Define verified tokens list
 VERIFIED_TOKENS = [
-    "EKpQGSJtJMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
+    "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
 ]
 def decode_transaction_blob(blob_str: str) -> bytes:
     """Try to decode a transaction blob using multiple formats."""
