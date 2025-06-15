@@ -4718,6 +4718,33 @@ def has_locked_liquidity(token_address):
     except:
         return False
         
+def get_24h_volume(token_address):
+    """Get 24-hour trading volume for a token"""
+    try:
+        # First try Jupiter API for volume data
+        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+        
+        response = requests.get(jupiter_url, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            if 'data' in data and token_address in data['data']:
+                token_info = data['data'][token_address]
+                # Jupiter sometimes provides volume data
+                if 'volume24h' in token_info:
+                    return float(token_info['volume24h'])
+        
+        # If no volume data from Jupiter, estimate based on liquidity
+        liquidity = get_token_liquidity(token_address)
+        if liquidity and liquidity > 0:
+            # Estimate volume as 2x liquidity for active tokens
+            return liquidity * 2
+            
+        # Default volume for new tokens
+        return 25000
+        
+    except Exception as e:
+        logging.debug(f"Error getting 24h volume for {token_address[:8]}: {e}")
+        return 25000  # Default fallback
 
 def calculate_safety_score(age_minutes, liquidity, holders):
     """Calculate overall safety score for token"""
