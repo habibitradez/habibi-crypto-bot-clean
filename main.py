@@ -851,35 +851,41 @@ class AdaptiveAlphaTrader:
                 if should_trade:
                     self.execute_trade(token_address, strategy, adjusted_size, current['price'])
                     
-    def execute_trade(self, token_address, strategy, position_size, entry_price):
-        """Execute the trade with strategy-specific parameters"""
+def execute_trade(self, token_address, strategy, position_size, entry_price):
+    """Execute the trade with strategy-specific parameters"""
+    
+    logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
+    
+    # Set targets based on strategy
+    if strategy == 'MOMENTUM':
+        targets = {'take_profit': 1.12, 'stop_loss': 0.95, 'trailing': True}
+    elif strategy == 'DIP_BUY':
+        targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': False}
+    else:  # SCALP
+        targets = {'take_profit': 1.04, 'stop_loss': 0.98, 'trailing': False}
         
-        # Set targets based on strategy
-        if strategy == 'MOMENTUM':
-            targets = {'take_profit': 1.12, 'stop_loss': 0.95, 'trailing': True}
-        elif strategy == 'DIP_BUY':
-            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': False}
-        else:  # SCALP
-            targets = {'take_profit': 1.04, 'stop_loss': 0.98, 'trailing': False}
-            
-        # Execute buy
-        success = execute_via_javascript(token_address, position_size, False)
+    # Execute buy
+    logging.info(f"📞 Calling execute_via_javascript...")
+    success = execute_via_javascript(token_address, position_size, False)
+    
+    if success:
+        logging.info(f"✅ TRADE EXECUTED SUCCESSFULLY!")
+        self.positions[token_address] = {
+            'strategy': strategy,
+            'entry_price': entry_price,
+            'size': position_size,
+            'targets': targets,
+            'entry_time': time.time(),
+            'peak_price': entry_price
+        }
         
-        if success:
-            self.positions[token_address] = {
-                'strategy': strategy,
-                'entry_price': entry_price,
-                'size': position_size,
-                'targets': targets,
-                'entry_time': time.time(),
-                'peak_price': entry_price
-            }
+        # Remove from monitoring
+        if token_address in self.monitoring:
+            del self.monitoring[token_address]
             
-            # Remove from monitoring
-            if token_address in self.monitoring:
-                del self.monitoring[token_address]
-                
-            logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+        logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+    else:
+        logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
             
     def monitor_positions(self):
         """Check all positions for exit conditions"""
