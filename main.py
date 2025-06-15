@@ -2698,93 +2698,102 @@ def find_opportunities_independently(self):
         logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
         logging.info(f"   👥 Holders: {token_data['holders']}")
         
-    def get_token_snapshot(self, token_address):
-        """Get current token metrics using your existing functions"""
-        try:
-            # Use your existing functions
-            price = get_token_price(token_address)
-            if not price or price == 0:
-                return None
-                
-            return {
-                'price': price,
-                'liquidity': get_token_liquidity(token_address) or 0,
-                'holders': get_holder_count(token_address) or 0,
-                'volume': get_24h_volume(token_address) or 0,
-                'age': get_token_age_minutes(token_address) or 0
-            }
-        except Exception as e:
-            logging.error(f"Error getting token snapshot: {e}")
+def get_token_snapshot(self, token_address):
+    """Get current token metrics using your existing functions"""
+    try:
+        # Use your existing functions with correct names
+        price = get_token_price(token_address)
+        if not price or price == 0:
             return None
             
-    def analyze_and_execute(self):
-        """Enhanced to handle both alpha and self-discovered tokens"""
+        return {
+            'price': price,
+            'liquidity': get_token_liquidity(token_address) or 0,
+            'holders': get_token_holder_count(token_address) or 0,  # Your function name
+            'volume': get_token_volume_24h(token_address) or 0,     # Your function name
+            'age': get_token_age_minutes(token_address) or 0
+        }
+    except Exception as e:
+        logging.error(f"Error getting token snapshot: {e}")
+        return None
+            
+def analyze_and_execute(self):
+    """Check all monitored tokens and make trading decisions"""
+    
+    for token_address in list(self.monitoring.keys()):
+        data = self.monitoring[token_address]
+        current = self.get_token_snapshot(token_address)
         
-        for token_address in list(self.monitoring.keys()):
-            data = self.monitoring[token_address]
-            current = self.get_token_snapshot(token_address)
+        if not current:
+            continue
             
-            if not current:
-                continue
-                
-            # Calculate changes
-            time_elapsed = (time.time() - data['start_time']) / 60
-            price_change = ((current['price'] - data['alpha_entry']) / data['alpha_entry']) * 100
+        # Calculate changes
+        time_elapsed = (time.time() - data['start_time']) / 60
+        price_change = ((current['price'] - data['alpha_entry']) / data['alpha_entry']) * 100
+        
+        # Remove if too old
+        if time_elapsed > 60:
+            del self.monitoring[token_address]
+            continue
             
-            # Remove if too old
-            if time_elapsed > 60:
-                del self.monitoring[token_address]
-                continue
-                
-            # Determine strategy based on source
-            strategy = None
-            position_size = 0.3  # Base size
+        # Determine strategy based on source
+        strategy = None
+        position_size = 0.3  # Base size
+        
+        # NEW: Handle self-discovered tokens
+        if data['alpha_wallet'] == 'SELF_DISCOVERED':
+            # Handle self-discovered tokens based on their discovery strategy
             
-            if data['alpha_wallet'] == 'SELF_DISCOVERED':
-                # Handle self-discovered tokens
-                
-                if data['strategy'] == 'FRESH_LAUNCH':
-                    # Quick scalp on new tokens
-                    if time_elapsed < 10 and price_change > 0:
-                        strategy = 'LAUNCH_SCALP'
-                        position_size = 0.2  # Smaller size for higher risk
-                        
-                elif data['strategy'] == 'VOLUME_SPIKE':
-                    # Momentum play on volume
-                    if price_change > 5:
-                        strategy = 'VOLUME_MOMENTUM'
-                        position_size = 0.4
-                        
-                elif data['strategy'] == 'DIP_PATTERN':
-                    # Your original jeet strategy!
-                    if price_change > -40:  # Not dumping further
-                        strategy = 'DIP_RECOVERY'
-                        position_size = 0.3
-                        
-            else:
-                # Handle alpha wallet signals (existing logic)
-                if time_elapsed < 10 and price_change > 5:
-                    strategy = 'MOMENTUM'
-                elif time_elapsed < 30 and price_change < -15:
-                    strategy = 'DIP_BUY'
-                elif 10 < time_elapsed < 30 and -5 < price_change < 5:
-                    strategy = 'SCALP'
-                    position_size = 0.5
+            if data['strategy'] == 'FRESH_LAUNCH':
+                # Quick scalp on new tokens
+                if time_elapsed < 10 and price_change > 0:
+                    strategy = 'LAUNCH_SCALP'
+                    position_size = 0.2  # Smaller size for higher risk
+                    logging.info(f"🚀 LAUNCH SCALP: {token_address[:8]} up {price_change:.1f}%")
                     
-            # Execute if we found a strategy
-            if strategy and token_address not in self.positions:
-                # Check with brain if we should trade
-                should_trade, adjusted_size = self.brain.should_trade({
-                    'token': token_address,
-                    'alpha_wallet': data['alpha_wallet'],
-                    'strategy': strategy,
-                    'price_change': price_change,
-                    'liquidity': current['liquidity'],
-                    'source': 'ALPHA' if data['alpha_wallet'] != 'SELF_DISCOVERED' else 'HUNT'
-                })
+            elif data['strategy'] == 'VOLUME_SPIKE':
+                # Momentum play on volume
+                if price_change > 5:
+                    strategy = 'VOLUME_MOMENTUM'
+                    position_size = 0.4
+                    logging.info(f"📈 VOLUME MOMENTUM: {token_address[:8]} up {price_change:.1f}%")
+                    
+            elif data['strategy'] == 'DIP_PATTERN':
+                # Your original jeet strategy!
+                if price_change > -40:  # Not dumping further
+                    strategy = 'DIP_RECOVERY'
+                    position_size = 0.3
+                    logging.info(f"💎 DIP RECOVERY: {token_address[:8]} recovering from dip")
+                    
+        else:
+            # EXISTING: Handle alpha wallet signals
+            if time_elapsed < 10 and price_change > 5:
+                strategy = 'MOMENTUM'
+                logging.info(f"🚀 MOMENTUM detected: +{price_change:.1f}% in {time_elapsed:.0f}min")
                 
-                if should_trade:
-                    self.execute_trade(token_address, strategy, adjusted_size, current['price'])
+            elif time_elapsed < 30 and price_change < -15 and current['liquidity'] > 10000:
+                strategy = 'DIP_BUY'
+                logging.info(f"💎 DIP detected: {price_change:.1f}% down")
+                
+            elif 10 < time_elapsed < 30 and -5 < price_change < 5:
+                strategy = 'SCALP'
+                position_size = 0.5  # Larger size for smaller profit
+                logging.info(f"⚡ SCALP opportunity: stable at {price_change:+.1f}%")
+                
+        # Execute if we found a strategy
+        if strategy and token_address not in self.positions:
+            # Check with brain if we should trade
+            should_trade, adjusted_size = self.brain.should_trade({
+                'token': token_address,
+                'alpha_wallet': data['alpha_wallet'],
+                'strategy': strategy,
+                'price_change': price_change,
+                'liquidity': current['liquidity'],
+                'source': 'ALPHA' if data['alpha_wallet'] != 'SELF_DISCOVERED' else 'HUNT'
+            })
+            
+            if should_trade:
+                self.execute_trade(token_address, strategy, adjusted_size, current['price'])
 
                     
     def execute_trade(self, token_address, strategy, position_size, entry_price):
@@ -11664,15 +11673,12 @@ def main():
     logging.info("🎯 Target: $500/day through consistent profits")
     logging.info("=" * 60)
     
-    # Add start time to brain for tracking
-    TradingBrain.start_time = time.time()
-    
     if initialize():
         logging.info("✅ System initialization successful!")
         logging.info("🚀 Starting trading engine...\n")
         
         try:
-            # Run the enhanced AI system
+            # Run the new AI system instead of ultimate_500_dollar_trading_loop
             run_adaptive_ai_system()
             
         except KeyboardInterrupt:
