@@ -594,36 +594,41 @@ class AdaptiveAlphaTrader:
         self.last_check[wallet_address] = 0
         logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
         
-    def check_alpha_wallets(self):
-        """Check all alpha wallets for new buys"""
-        
-        current_time = time.time()
-        
-        for alpha in self.alpha_wallets:
-            # Check each wallet every 30 seconds to avoid rate limits
-            if current_time - self.last_check[alpha['address']] < 10:
-                continue
-                
-            self.last_check[alpha['address']] = current_time
+def check_alpha_wallets(self):
+    """Check all alpha wallets for new buys"""
+    
+    current_time = time.time()
+    
+    for alpha in self.alpha_wallets:
+        # Check EVERY 10 SECONDS for faster detection
+        if current_time - self.last_check[alpha['address']] < 10:
+            continue
             
-            try:
-                # Get recent buys using Helius
-                new_buys = get_wallet_recent_buys_helius(alpha['address'])
+        self.last_check[alpha['address']] = current_time
+        
+        try:
+            new_buys = get_wallet_recent_buys_helius(alpha['address'])
+            
+            if new_buys:
+                logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
                 
-                if new_buys:
-                    logging.info(f"🔍 Found {len(new_buys)} new buys from {alpha['name']}")
+            for buy in new_buys:
+                # INSTANT COPY if not already in position
+                if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
                     
-                for buy in new_buys:
-                    # Check if we're already monitoring this token
-                    if buy['token'] not in self.monitoring and buy['token'] not in self.positions:
-                        self.on_alpha_buy_detected(
-                            alpha['address'], 
-                            buy['token'], 
-                            buy.get('amount', 0)
-                        )
+                    # Quick validation
+                    token_data = self.get_token_snapshot(buy['token'])
+                    if token_data and token_data['liquidity'] > 5000:
                         
-            except Exception as e:
-                logging.error(f"Error checking wallet {alpha['name']}: {e}")
+                        logging.info(f"⚡ INSTANT COPY: Following {alpha['name']} into {buy['token'][:8]}")
+                        
+                        # Execute immediately with smaller position for safety
+                        self.execute_trade(buy['token'], 'COPY_TRADE', 0.1, token_data['price'])
+                    else:
+                        logging.warning(f"❌ Skipping {buy['token'][:8]} - insufficient liquidity")
+                        
+        except Exception as e:
+            logging.error(f"Error checking wallet {alpha['name']}: {e}")
     
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
@@ -866,16 +871,22 @@ def execute_trade(self, token_address, strategy, position_size, entry_price):
     
     logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
     
+    # CRITICAL: Skip low liquidity tokens
+    current_data = self.get_token_snapshot(token_address)
+    if current_data and current_data['liquidity'] < 5000:
+        logging.warning(f"⚠️ Skipping trade - liquidity too low: ${current_data['liquidity']}")
+        return False
+    
     # Set targets based on strategy
-    if strategy == 'MOMENTUM':
-        targets = {'take_profit': 1.12, 'stop_loss': 0.95, 'trailing': True}
+    if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
+        targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
     elif strategy == 'DIP_BUY':
-        targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': False}
+        targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
     else:  # SCALP
-        targets = {'take_profit': 1.04, 'stop_loss': 0.98, 'trailing': False}
+        targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
         
     # USE YOUR WORKING FUNCTION!
-    logging.info(f"📞 Executing trade using execute_optimized_transaction...")
+    logging.info(f"📞 Executing with execute_optimized_transaction...")
     signature = execute_optimized_transaction(token_address, position_size)
     
     if signature and signature != "simulation-signature":
@@ -891,7 +902,7 @@ def execute_trade(self, token_address, strategy, position_size, entry_price):
             'signature': signature
         }
         
-        # Update brain stats
+        # Update brain stats immediately
         self.brain.daily_stats['trades'] += 1
         
         # Remove from monitoring
@@ -899,6 +910,8 @@ def execute_trade(self, token_address, strategy, position_size, entry_price):
             del self.monitoring[token_address]
             
         logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+        logging.info(f"   Take Profit: {(targets['take_profit']-1)*100:.0f}%")
+        logging.info(f"   Stop Loss: {(1-targets['stop_loss'])*100:.0f}%")
         return True
     else:
         logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
@@ -5616,31 +5629,53 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
     
     return False, "All retry attempts failed"
 
-def execute_optimized_sell(token_address: str) -> bool:
-    """Execute sell for a token"""
+def execute_optimized_sell(token_address, amount_sol):
+    """Sell tokens using Jupiter - modified from your buy function"""
     try:
-        # Get token balance to sell
-        token_balance = get_token_balance(token_address)
-        if not token_balance or token_balance == 0:
-            logging.warning(f"No balance to sell for {token_address}")
-            return False
-            
-        # Execute sell via JavaScript
-        success, result = execute_via_javascript(token_address, token_balance, True)  # True = sell
+        logging.info(f"💰 Starting sell for {token_address[:8]}")
         
-        if success:
-            logging.info(f"✅ SELL SUCCESS: {token_address}")
-            # Remove from monitoring
-            if token_address in monitored_tokens:
-                del monitored_tokens[token_address]
-            return True
+        # Get token balance
+        token_balance = get_token_balance(wallet.pubkey(), token_address)
+        if not token_balance or token_balance == 0:
+            logging.error("No tokens to sell")
+            return None
+            
+        # Get Jupiter quote for SELL (token -> SOL)
+        quote_data, swap_data = get_jupiter_quote_and_swap(
+            token_address,      # Input mint (token)
+            SOL_TOKEN_ADDRESS,  # Output mint (SOL)
+            int(token_balance * 1e9),  # Use full balance
+            is_buy=False        # This is a sell
+        )
+        
+        if not swap_data:
+            logging.error("Failed to prepare sell swap")
+            return None
+        
+        # Submit transaction (same as buy)
+        tx_base64 = swap_data["swapTransaction"]
+        
+        signature = wallet._rpc_call("sendTransaction", [
+            tx_base64,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,
+                "maxRetries": 5,
+                "preflightCommitment": "processed"
+            }
+        ])
+        
+        if "result" in signature:
+            tx_signature = signature["result"]
+            logging.info(f"✅ Sell transaction submitted: {tx_signature[:16]}...")
+            return tx_signature
         else:
-            logging.error(f"❌ SELL FAILED: {token_address}")
-            return False
+            logging.error("Sell transaction failed")
+            return None
             
     except Exception as e:
-        logging.error(f"Error in execute_optimized_sell: {e}")
-        return False
+        logging.error(f"Error in sell: {e}")
+        return None
 
 def execute_partial_sell(token_address: str, percentage: float) -> bool:
     """Execute partial sell (33% at a time for progressive profits)"""
