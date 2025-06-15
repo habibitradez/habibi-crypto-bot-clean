@@ -601,7 +601,7 @@ class AdaptiveAlphaTrader:
         
         for alpha in self.alpha_wallets:
             # Check each wallet every 30 seconds to avoid rate limits
-            if current_time - self.last_check[alpha['address']] < 30:
+            if current_time - self.last_check[alpha['address']] < 10:
                 continue
                 
             self.last_check[alpha['address']] = current_time
@@ -940,9 +940,113 @@ class AdaptiveAlphaTrader:
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
-    """Get recent buys from a wallet - placeholder for now"""
-    # This is a simplified version - you'll need to implement the actual Helius API calls
-    return []
+    """Get recent buys from a wallet using Helius API"""
+    
+    try:
+        # Get recent signatures for the wallet
+        headers = {"Content-Type": "application/json"}
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [
+                wallet_address,
+                {
+                    "limit": 10,
+                    "commitment": "confirmed"
+                }
+            ]
+        }
+        
+        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=5)
+        
+        if response.status_code != 200:
+            return []
+            
+        signatures = response.json().get('result', [])
+        new_buys = []
+        
+        # Check each transaction
+        for sig_info in signatures:
+            # Skip if older than 5 minutes
+            if sig_info.get('blockTime', 0) < (time.time() - 300):
+                continue
+                
+            sig = sig_info['signature']
+            
+            # Get transaction details
+            tx_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTransaction",
+                "params": [
+                    sig,
+                    {
+                        "encoding": "jsonParsed",
+                        "commitment": "confirmed",
+                        "maxSupportedTransactionVersion": 0
+                    }
+                ]
+            }
+            
+            tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=5)
+            
+            if tx_response.status_code == 200:
+                tx_data = tx_response.json().get('result')
+                
+                if tx_data and tx_data.get('meta', {}).get('err') is None:
+                    # Look for swap instructions (Jupiter, Raydium, etc)
+                    instructions = tx_data.get('transaction', {}).get('message', {}).get('instructions', [])
+                    
+                    for instruction in instructions:
+                        program_id = instruction.get('programId', '')
+                        
+                        # Check if it's a swap (Jupiter, Raydium, Orca, etc)
+                        if program_id in ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  # Jupiter v6
+                                         'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  # Jupiter v4
+                                         '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium
+                                         'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc']:  # Orca
+                            
+                            # Extract token info from the transaction
+                            post_balances = tx_data.get('meta', {}).get('postTokenBalances', [])
+                            pre_balances = tx_data.get('meta', {}).get('preTokenBalances', [])
+                            
+                            # Find new tokens acquired
+                            for post in post_balances:
+                                # Check if this is the wallet's token
+                                if post.get('owner') == wallet_address:
+                                    mint = post.get('mint')
+                                    
+                                    # Check if this is a new token (not in pre-balances)
+                                    is_new = True
+                                    for pre in pre_balances:
+                                        if pre.get('mint') == mint and pre.get('owner') == wallet_address:
+                                            # Check if balance increased
+                                            pre_amount = float(pre.get('uiTokenAmount', {}).get('amount', 0))
+                                            post_amount = float(post.get('uiTokenAmount', {}).get('amount', 0))
+                                            if post_amount <= pre_amount:
+                                                is_new = False
+                                            break
+                                    
+                                    # Skip SOL and USDC
+                                    if mint not in ['So11111111111111111111111111111111111111112',
+                                                   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] and is_new:
+                                        new_buys.append({
+                                            'token': mint,
+                                            'amount': float(post.get('uiTokenAmount', {}).get('uiAmount', 0)),
+                                            'timestamp': sig_info.get('blockTime', 0),
+                                            'signature': sig
+                                        })
+                                        
+                                        logging.info(f"🎯 Detected buy: {wallet_address[:8]} bought {mint[:8]}")
+                                        break
+                            
+        return new_buys
+        
+    except Exception as e:
+        logging.error(f"Error getting wallet buys: {e}")
+        return []
 
 
 def run_adaptive_ai_system():
