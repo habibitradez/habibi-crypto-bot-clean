@@ -739,29 +739,39 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error in independent hunting: {e}")
             logging.error(traceback.format_exc())
     
-    def on_alpha_buy_detected(self, wallet_address, token_address, amount):
-        """Called when an alpha wallet buys - starts monitoring"""
+def on_alpha_buy_detected(self, wallet_address, token_address, amount):
+    """Called when an alpha wallet buys - starts monitoring"""
+    
+    # Get initial token data
+    token_data = self.get_token_snapshot(token_address)
+    if not token_data:
+        logging.warning(f"❌ Could not get data for token {token_address[:8]}")
+        return
+    
+    # SKIP TOKENS WITH $1 LIQUIDITY - THEY'RE LIKELY SCAMS
+    if token_data['liquidity'] <= 1:
+        logging.warning(f"⚠️  Skipping {token_address[:8]} - Only $1 liquidity (likely scam)")
+        return
         
-        # Get initial token data
-        token_data = self.get_token_snapshot(token_address)
-        if not token_data:
-            logging.warning(f"❌ Could not get data for token {token_address[:8]}")
-            return
-            
-        self.monitoring[token_address] = {
-            'alpha_wallet': wallet_address,
-            'alpha_entry': token_data['price'],
-            'start_time': time.time(),
-            'initial_data': token_data,
-            'strategy': None
-        }
+    # Only monitor tokens with real liquidity
+    if token_data['liquidity'] < 5000:  # Minimum $5k liquidity
+        logging.warning(f"⚠️  Skipping {token_address[:8]} - Low liquidity ${token_data['liquidity']}")
+        return
         
-        # Find wallet name
-        wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_address), "Unknown")
-        
-        logging.info(f"👀 {wallet_name} bought {token_address[:8]} at ${token_data['price']:.8f}")
-        logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
-        logging.info(f"   👥 Holders: {token_data['holders']}")
+    self.monitoring[token_address] = {
+        'alpha_wallet': wallet_address,
+        'alpha_entry': token_data['price'],
+        'start_time': time.time(),
+        'initial_data': token_data,
+        'strategy': None
+    }
+    
+    # Find wallet name
+    wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_address), "Unknown")
+    
+    logging.info(f"👀 {wallet_name} bought {token_address[:8]} at ${token_data['price']:.8f}")
+    logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
+    logging.info(f"   👥 Holders: {token_data['holders']}")
         
     def get_token_snapshot(self, token_address):
         """Get current token metrics using your existing functions"""
@@ -4843,12 +4853,52 @@ def get_token_age_minutes(token_address):
         
 
 def get_token_liquidity(token_address):
-    """Get token liquidity in USD"""
+    """Get token liquidity from pool"""
     try:
-        # Integrate with DEX APIs or your existing data source
-        return 50000  # Placeholder - implement with real data
-    except:
-        return 0
+        # Get the token's pool address (usually from Raydium)
+        pool_address = get_pool_address_for_token(token_address)
+        
+        if not pool_address:
+            return 0
+            
+        # Get pool info
+        headers = {"Content-Type": "application/json"}
+        
+        # Get pool token accounts
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                pool_address,
+                {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        
+        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=3)
+        
+        if response.status_code == 200:
+            accounts = response.json().get('result', {}).get('value', [])
+            
+            total_liquidity_usd = 0
+            
+            for account in accounts:
+                mint = account['account']['data']['parsed']['info']['mint']
+                amount = float(account['account']['data']['parsed']['info']['tokenAmount']['uiAmount'])
+                
+                # Get USD value
+                if mint == "So11111111111111111111111111111111111111112":  # SOL
+                    total_liquidity_usd += amount * 240  # SOL price
+                elif mint == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":  # USDC
+                    total_liquidity_usd += amount
+                    
+            return total_liquidity_usd
+            
+    except Exception as e:
+        logging.debug(f"Error getting liquidity: {e}")
+        
+    return 1  # This is probably your issue - returning 1 as default
         
 
 def get_holder_count(token_address):
@@ -10612,12 +10662,52 @@ def get_token_volume_24h(token_address):
         return 0
 
 def get_token_liquidity(token_address):
-    """Get current liquidity for a token"""
+    """Get token liquidity from pool"""
     try:
-        # Use your existing liquidity checking method
-        return check_token_liquidity(token_address)  # You likely have this
-    except:
-        return 0
+        # Get the token's pool address (usually from Raydium)
+        pool_address = get_pool_address_for_token(token_address)
+        
+        if not pool_address:
+            return 0
+            
+        # Get pool info
+        headers = {"Content-Type": "application/json"}
+        
+        # Get pool token accounts
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenAccountsByOwner",
+            "params": [
+                pool_address,
+                {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        
+        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=3)
+        
+        if response.status_code == 200:
+            accounts = response.json().get('result', {}).get('value', [])
+            
+            total_liquidity_usd = 0
+            
+            for account in accounts:
+                mint = account['account']['data']['parsed']['info']['mint']
+                amount = float(account['account']['data']['parsed']['info']['tokenAmount']['uiAmount'])
+                
+                # Get USD value
+                if mint == "So11111111111111111111111111111111111111112":  # SOL
+                    total_liquidity_usd += amount * 240  # SOL price
+                elif mint == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":  # USDC
+                    total_liquidity_usd += amount
+                    
+            return total_liquidity_usd
+            
+    except Exception as e:
+        logging.debug(f"Error getting liquidity: {e}")
+        
+    return 1  # This is probably your issue - returning 1 as default
 
 def monitor_token_price_for_consistent_profits(token_address):
     """FIXED: Progressive profit taking for $500/day consistency"""
