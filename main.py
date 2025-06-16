@@ -595,69 +595,69 @@ class AdaptiveAlphaTrader:
         logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
         
     def check_alpha_wallets(self):
-    """Check all alpha wallets for new buys"""
+        """Check all alpha wallets for new buys"""
     
-    current_time = time.time()
+        current_time = time.time()
     
-    for alpha in self.alpha_wallets:
-        # Check EVERY 10 SECONDS for faster detection
-        if current_time - self.last_check[alpha['address']] < 10:
-            continue
+        for alpha in self.alpha_wallets:
+            # Check EVERY 10 SECONDS for faster detection
+            if current_time - self.last_check[alpha['address']] < 10:
+                continue
             
-        self.last_check[alpha['address']] = current_time
+            self.last_check[alpha['address']] = current_time
         
-        try:
-            new_buys = get_wallet_recent_buys_helius(alpha['address'])
+            try:
+                new_buys = get_wallet_recent_buys_helius(alpha['address'])
             
-            if new_buys:
-                logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
+                if new_buys:
+                    logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
                 
-            for buy in new_buys:
-                # INSTANT COPY if not already in position
-                if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
+                for buy in new_buys:
+                    # INSTANT COPY if not already in position
+                    if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
                     
-                    # Get token data with error handling
-                    token_data = self.get_token_snapshot(buy['token'])
+                        # Get token data with error handling
+                        token_data = self.get_token_snapshot(buy['token'])
                     
-                    # Log what we found
-                    if token_data:
-                        logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
+                        # Log what we found
+                        if token_data:
+                            logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
                     
-                    # More aggressive approach for alpha copying
-                    if token_data and token_data.get('price', 0) > 0:
+                        # More aggressive approach for alpha copying
+                        if token_data and token_data.get('price', 0) > 0:
                         
-                        # Determine position size based on liquidity
-                        liquidity = token_data.get('liquidity', 0)
+                            # Determine position size based on liquidity
+                            liquidity = token_data.get('liquidity', 0)
                         
-                        if liquidity > 10000:  # Good liquidity
-                            position_size = 0.1
-                            logging.info(f"💎 HIGH LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
-                        elif liquidity > 1000:  # Medium liquidity
-                            position_size = 0.05
-                            logging.info(f"⚡ MED LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
-                        elif liquidity > 100:  # Low liquidity
-                            position_size = 0.02
-                            logging.info(f"🎯 LOW LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                            if liquidity > 10000:  # Good liquidity
+                                position_size = 0.1
+                                logging.info(f"💎 HIGH LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                            elif liquidity > 1000:  # Medium liquidity
+                                position_size = 0.05
+                                logging.info(f"⚡ MED LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                            elif liquidity > 100:  # Low liquidity
+                                position_size = 0.02
+                                logging.info(f"🎯 LOW LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                            else:
+                                # Very low liquidity - still try with tiny amount
+                                position_size = 0.01
+                                logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
+                        
+                            # Execute the trade
+                            self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'])
+                        
                         else:
-                            # Very low liquidity - still try with tiny amount
-                            position_size = 0.01
-                            logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
+                            # No token data or price - try anyway with minimal amount
+                            logging.warning(f"⚠️ No data for {buy['token'][:8]} - attempting blind copy with 0.01 SOL")
                         
-                        # Execute the trade
-                        self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'])
+                            # Sometimes alpha wallets buy tokens so new that APIs don't have data yet
+                            # These can be the biggest opportunities
+                            self.execute_trade(buy['token'], 'COPY_TRADE', 0.01, 0.00001)
                         
-                    else:
-                        # No token data or price - try anyway with minimal amount
-                        logging.warning(f"⚠️ No data for {buy['token'][:8]} - attempting blind copy with 0.01 SOL")
-                        
-                        # Sometimes alpha wallets buy tokens so new that APIs don't have data yet
-                        # These can be the biggest opportunities
-                        self.execute_trade(buy['token'], 'COPY_TRADE', 0.01, 0.00001)
-                        
-        except Exception as e:
-            logging.error(f"Error checking wallet {alpha['name']}: {e}")
-            logging.error(traceback.format_exc())
-    
+            except Exception as e:
+                logging.error(f"Error checking wallet {alpha['name']}: {e}")
+                logging.error(traceback.format_exc())
+            
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
         
