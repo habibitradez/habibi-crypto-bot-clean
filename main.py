@@ -5700,7 +5700,7 @@ def execute_optimized_sell(token_address, amount_sol):
         logging.info(f"💰 Starting sell for {token_address[:8]}")
         
         # Get token balance
-        token_balance = get_token_balance(wallet.public_key, token_address)
+        token_balance = wallet.get_token_balance(token_address)
         if not token_balance or token_balance == 0:
             logging.error("No tokens to sell")
             return None
