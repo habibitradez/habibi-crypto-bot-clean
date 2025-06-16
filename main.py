@@ -866,56 +866,47 @@ def on_alpha_buy_detected(self, wallet_address, token_address, amount):
                 if should_trade:
                     self.execute_trade(token_address, strategy, adjusted_size, current['price'])
                     
-def execute_trade(self, token_address, strategy, position_size, entry_price):
-    """Execute the trade with strategy-specific parameters"""
-    
-    logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
-    
-    # CRITICAL: Skip low liquidity tokens
-    current_data = self.get_token_snapshot(token_address)
-    if current_data and current_data['liquidity'] < 5000:
-        logging.warning(f"⚠️ Skipping trade - liquidity too low: ${current_data['liquidity']}")
-        return False
-    
-    # Set targets based on strategy
-    if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
-        targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
-    elif strategy == 'DIP_BUY':
-        targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
-    else:  # SCALP
-        targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
+    def execute_trade(self, token_address, strategy, position_size, entry_price):
+        """Execute the trade using your working function"""
         
-    # USE YOUR WORKING FUNCTION!
-    logging.info(f"📞 Executing with execute_optimized_transaction...")
-    signature = execute_optimized_transaction(token_address, position_size)
-    
-    if signature and signature != "simulation-signature":
-        logging.info(f"✅ TRADE EXECUTED! Signature: {signature[:16]}...")
+        logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
         
-        self.positions[token_address] = {
-            'strategy': strategy,
-            'entry_price': entry_price,
-            'size': position_size,
-            'targets': targets,
-            'entry_time': time.time(),
-            'peak_price': entry_price,
-            'signature': signature
-        }
-        
-        # Update brain stats immediately
-        self.brain.daily_stats['trades'] += 1
-        
-        # Remove from monitoring
-        if token_address in self.monitoring:
-            del self.monitoring[token_address]
+        # Set targets based on strategy
+        if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
+            targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
+        elif strategy == 'DIP_BUY':
+            targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
+        else:  # SCALP
+            targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
             
-        logging.info(f"✅ {strategy} position opened: {position_size} SOL")
-        logging.info(f"   Take Profit: {(targets['take_profit']-1)*100:.0f}%")
-        logging.info(f"   Stop Loss: {(1-targets['stop_loss'])*100:.0f}%")
-        return True
-    else:
-        logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
-        return False
+        # USE YOUR WORKING FUNCTION!
+        signature = execute_optimized_transaction(token_address, position_size)
+        
+        if signature and signature != "simulation-signature":
+            logging.info(f"✅ TRADE EXECUTED! Signature: {signature[:16]}...")
+            
+            self.positions[token_address] = {
+                'strategy': strategy,
+                'entry_price': entry_price,
+                'size': position_size,
+                'targets': targets,
+                'entry_time': time.time(),
+                'peak_price': entry_price,
+                'signature': signature
+            }
+            
+            # Update brain stats
+            self.brain.daily_stats['trades'] += 1
+            
+            # Remove from monitoring
+            if token_address in self.monitoring:
+                del self.monitoring[token_address]
+                
+            logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+            return True
+        else:
+            logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
+            return False
             
     def monitor_positions(self):
         """Check all positions for exit conditions"""
