@@ -10826,6 +10826,35 @@ def get_token_volume_24h(token_address):
     except:
         return 0
 
+def get_token_balance(wallet_address, token_address):
+    """Get token balance for a specific token"""
+    try:
+        # Get token accounts for this wallet
+        response = wallet._rpc_call("getTokenAccountsByOwner", [
+            str(wallet_address),
+            {"mint": token_address},
+            {"encoding": "jsonParsed"}
+        ])
+        
+        if "result" in response:
+            accounts = response["result"]["value"]
+            if accounts:
+                # Get the balance from the first account
+                balance = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
+                decimals = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["decimals"]
+                
+                # Return raw amount (not UI amount)
+                return int(balance)
+            else:
+                # No token account means 0 balance
+                return 0
+        
+        return 0
+        
+    except Exception as e:
+        logging.error(f"Error getting token balance: {e}")
+        return 0
+
 def get_token_liquidity(token_address):
     """Get token liquidity from pool"""
     try:
