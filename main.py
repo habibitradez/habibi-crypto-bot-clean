@@ -618,7 +618,7 @@ class AdaptiveAlphaTrader:
                         
                         # Quick validation
                         token_data = self.get_token_snapshot(buy['token'])
-                        if token_data and token_data['liquidity'] > 5000:
+                        if token_data and token_data['liquidity'] > 1000:
                             
                             logging.info(f"⚡ INSTANT COPY: Following {alpha['name']} into {buy['token'][:8]}")
                             
@@ -759,7 +759,7 @@ class AdaptiveAlphaTrader:
             return
             
         # Only monitor tokens with real liquidity
-        if token_data['liquidity'] < 5000:  # Minimum $5k liquidity
+        if token_data['liquidity'] < 1000:  # Minimum $5k liquidity
             logging.warning(f"⚠️  Skipping {token_address[:8]} - Low liquidity ${token_data['liquidity']}")
             return
             
