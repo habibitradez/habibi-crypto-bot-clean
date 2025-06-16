@@ -594,41 +594,41 @@ class AdaptiveAlphaTrader:
         self.last_check[wallet_address] = 0
         logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
         
-def check_alpha_wallets(self):
-    """Check all alpha wallets for new buys"""
-    
-    current_time = time.time()
-    
-    for alpha in self.alpha_wallets:
-        # Check EVERY 10 SECONDS for faster detection
-        if current_time - self.last_check[alpha['address']] < 10:
-            continue
-            
-        self.last_check[alpha['address']] = current_time
+    def check_alpha_wallets(self):
+        """Check all alpha wallets for new buys"""
         
-        try:
-            new_buys = get_wallet_recent_buys_helius(alpha['address'])
-            
-            if new_buys:
-                logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
+        current_time = time.time()
+        
+        for alpha in self.alpha_wallets:
+            # Check EVERY 10 SECONDS for faster detection
+            if current_time - self.last_check[alpha['address']] < 10:
+                continue
                 
-            for buy in new_buys:
-                # INSTANT COPY if not already in position
-                if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
+            self.last_check[alpha['address']] = current_time
+            
+            try:
+                new_buys = get_wallet_recent_buys_helius(alpha['address'])
+                
+                if new_buys:
+                    logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
                     
-                    # Quick validation
-                    token_data = self.get_token_snapshot(buy['token'])
-                    if token_data and token_data['liquidity'] > 5000:
+                for buy in new_buys:
+                    # INSTANT COPY if not already in position
+                    if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
                         
-                        logging.info(f"⚡ INSTANT COPY: Following {alpha['name']} into {buy['token'][:8]}")
-                        
-                        # Execute immediately with smaller position for safety
-                        self.execute_trade(buy['token'], 'COPY_TRADE', 0.1, token_data['price'])
-                    else:
-                        logging.warning(f"❌ Skipping {buy['token'][:8]} - insufficient liquidity")
-                        
-        except Exception as e:
-            logging.error(f"Error checking wallet {alpha['name']}: {e}")
+                        # Quick validation
+                        token_data = self.get_token_snapshot(buy['token'])
+                        if token_data and token_data['liquidity'] > 5000:
+                            
+                            logging.info(f"⚡ INSTANT COPY: Following {alpha['name']} into {buy['token'][:8]}")
+                            
+                            # Execute immediately with smaller position for safety
+                            self.execute_trade(buy['token'], 'COPY_TRADE', 0.1, token_data['price'])
+                        else:
+                            logging.warning(f"❌ Skipping {buy['token'][:8]} - insufficient liquidity")
+                            
+            except Exception as e:
+                logging.error(f"Error checking wallet {alpha['name']}: {e}")
     
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
@@ -744,39 +744,39 @@ def check_alpha_wallets(self):
             logging.error(f"Error in independent hunting: {e}")
             logging.error(traceback.format_exc())
     
-def on_alpha_buy_detected(self, wallet_address, token_address, amount):
-    """Called when an alpha wallet buys - starts monitoring"""
-    
-    # Get initial token data
-    token_data = self.get_token_snapshot(token_address)
-    if not token_data:
-        logging.warning(f"❌ Could not get data for token {token_address[:8]}")
-        return
-    
-    # SKIP TOKENS WITH $1 LIQUIDITY - THEY'RE LIKELY SCAMS
-    if token_data['liquidity'] <= 1:
-        logging.warning(f"⚠️  Skipping {token_address[:8]} - Only $1 liquidity (likely scam)")
-        return
+    def on_alpha_buy_detected(self, wallet_address, token_address, amount):
+        """Called when an alpha wallet buys - starts monitoring"""
         
-    # Only monitor tokens with real liquidity
-    if token_data['liquidity'] < 5000:  # Minimum $5k liquidity
-        logging.warning(f"⚠️  Skipping {token_address[:8]} - Low liquidity ${token_data['liquidity']}")
-        return
+        # Get initial token data
+        token_data = self.get_token_snapshot(token_address)
+        if not token_data:
+            logging.warning(f"❌ Could not get data for token {token_address[:8]}")
+            return
         
-    self.monitoring[token_address] = {
-        'alpha_wallet': wallet_address,
-        'alpha_entry': token_data['price'],
-        'start_time': time.time(),
-        'initial_data': token_data,
-        'strategy': None
-    }
-    
-    # Find wallet name
-    wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_address), "Unknown")
-    
-    logging.info(f"👀 {wallet_name} bought {token_address[:8]} at ${token_data['price']:.8f}")
-    logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
-    logging.info(f"   👥 Holders: {token_data['holders']}")
+        # SKIP TOKENS WITH $1 LIQUIDITY - THEY'RE LIKELY SCAMS
+        if token_data['liquidity'] <= 1:
+            logging.warning(f"⚠️  Skipping {token_address[:8]} - Only $1 liquidity (likely scam)")
+            return
+            
+        # Only monitor tokens with real liquidity
+        if token_data['liquidity'] < 5000:  # Minimum $5k liquidity
+            logging.warning(f"⚠️  Skipping {token_address[:8]} - Low liquidity ${token_data['liquidity']}")
+            return
+            
+        self.monitoring[token_address] = {
+            'alpha_wallet': wallet_address,
+            'alpha_entry': token_data['price'],
+            'start_time': time.time(),
+            'initial_data': token_data,
+            'strategy': None
+        }
+        
+        # Find wallet name
+        wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_address), "Unknown")
+        
+        logging.info(f"👀 {wallet_name} bought {token_address[:8]} at ${token_data['price']:.8f}")
+        logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
+        logging.info(f"   👥 Holders: {token_data['holders']}")
         
     def get_token_snapshot(self, token_address):
         """Get current token metrics using your existing functions"""
@@ -940,37 +940,38 @@ def on_alpha_buy_detected(self, wallet_address, token_address, amount):
             if should_exit:
                 self.exit_position(token_address, current_price, exit_reason, pnl)
                 
-def exit_position(self, token_address, exit_price, reason, pnl):
-    """Exit position and record results"""
-    
-    pos = self.positions[token_address]
-    
-    # Execute sell using YOUR function
-    logging.info(f"💰 Selling {token_address[:8]} - {reason}")
-    
-    # You'll need to create execute_optimized_sell or modify execute_optimized_transaction
-    # For now, let's use what you have with a sell flag
-    signature = execute_optimized_sell(token_address, pos['size'])
-    
-    if signature:
-        # Record trade for learning
-        profit_sol = pos['size'] * pnl
-        self.brain.record_trade({
-            'token': token_address,
-            'strategy': pos['strategy'],
-            'pnl_percent': pnl * 100,
-            'profit_sol': profit_sol,
-            'exit_reason': reason,
-            'hold_time': (time.time() - pos['entry_time']) / 60
-        })
+    def exit_position(self, token_address, exit_price, reason, pnl):
+        """Exit position and record results"""
         
-        del self.positions[token_address]
+        pos = self.positions[token_address]
         
-        logging.info(f"💰 Closed {pos['strategy']}: {pnl*100:+.1f}% ({profit_sol:+.3f} SOL)")
+        # Execute sell using YOUR function
+        logging.info(f"💰 Selling {token_address[:8]} - {reason}")
         
-        # Update win stats
-        if profit_sol > 0:
-            self.brain.daily_stats['wins'] += 1
+        # You'll need to create execute_optimized_sell or modify execute_optimized_transaction
+        # For now, let's use what you have with a sell flag
+        signature = execute_optimized_sell(token_address, pos['size'])
+        
+        if signature:
+            # Record trade for learning
+            profit_sol = pos['size'] * pnl
+            self.brain.record_trade({
+                'token': token_address,
+                'strategy': pos['strategy'],
+                'pnl_percent': pnl * 100,
+                'profit_sol': profit_sol,
+                'exit_reason': reason,
+                'hold_time': (time.time() - pos['entry_time']) / 60
+            })
+            
+            del self.positions[token_address]
+            
+            logging.info(f"💰 Closed {pos['strategy']}: {pnl*100:+.1f}% ({profit_sol:+.3f} SOL)")
+            
+            # Update win stats
+            if profit_sol > 0:
+                self.brain.daily_stats['wins'] += 1
+
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
