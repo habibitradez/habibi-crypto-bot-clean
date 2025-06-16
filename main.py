@@ -21,6 +21,7 @@ from datetime import datetime
 from collections import defaultdict
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
+from collections import deque
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
@@ -601,7 +602,7 @@ class AdaptiveAlphaTrader:
     
         for alpha in self.alpha_wallets:
             # Check EVERY 10 SECONDS for faster detection
-            if current_time - self.last_check[alpha['address']] < 10:
+            if current_time - self.last_check[alpha['address']] < 20:
                 continue
             
             self.last_check[alpha['address']] = current_time
@@ -1229,6 +1230,36 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
+
+# Global rate limiter for Jupiter
+class RateLimiter:
+    def __init__(self, max_requests=50, time_window=60):  # 50 requests per 60 seconds (leaving buffer)
+        self.max_requests = max_requests
+        self.time_window = time_window
+        self.requests = deque()
+    
+    def wait_if_needed(self):
+        """Wait if we've hit the rate limit"""
+        now = time.time()
+        
+        # Remove old requests outside the time window
+        while self.requests and self.requests[0] < now - self.time_window:
+            self.requests.popleft()
+        
+        # If at limit, wait
+        if len(self.requests) >= self.max_requests:
+            sleep_time = self.requests[0] + self.time_window - now + 1
+            if sleep_time > 0:
+                logging.warning(f"⏳ Rate limit reached, waiting {sleep_time:.1f}s...")
+                time.sleep(sleep_time)
+                # Clear old requests after waiting
+                self.wait_if_needed()
+        
+        # Record this request
+        self.requests.append(now)
+
+# Create global rate limiter
+jupiter_limiter = RateLimiter(max_requests=50, time_window=60)
 
 def decode_transaction_blob(blob_str: str) -> bytes:
     """Try to decode a transaction blob using multiple formats."""
@@ -10059,8 +10090,11 @@ def verify_token(token_address):
         return False
 
 def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dexes=None, slippage_bps=100):
-    """Get Jupiter quote with DEX filtering"""
+    """Get Jupiter quote with rate limiting and better error handling"""
     try:
+        # RATE LIMIT CHECK - CRITICAL!
+        jupiter_limiter.wait_if_needed()
+        
         # Build quote parameters
         quote_url = "https://quote-api.jup.ag/v6/quote"
         params = {
@@ -10069,22 +10103,51 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             "amount": str(amount),
             "slippageBps": str(slippage_bps),
             "onlyDirectRoutes": "false",
-            "asLegacyTransaction": "false"
+            "asLegacyTransaction": "false",
+            "maxAccounts": "64"  # Help with complex routes
         }
         
         # Add DEX filter if specified
         if dexes:
             params["dexes"] = ",".join(dexes)
         
-        quote_response = requests.get(quote_url, params=params, timeout=10)
+        # Add retry logic for quote
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                quote_response = requests.get(quote_url, params=params, timeout=10)
+                
+                if quote_response.status_code == 429:
+                    wait_time = (retry + 1) * 10  # 10, 20, 30 seconds
+                    logging.warning(f"Rate limited, waiting {wait_time}s before retry...")
+                    time.sleep(wait_time)
+                    continue
+                    
+                if quote_response.status_code == 200:
+                    break
+                    
+            except requests.exceptions.Timeout:
+                if retry < max_retries - 1:
+                    logging.warning(f"Timeout on quote, retry {retry + 1}/{max_retries}")
+                    time.sleep(2)
+                    continue
+                else:
+                    return None, None
         
         if quote_response.status_code != 200:
             logging.error(f"Quote failed: {quote_response.status_code}")
             try:
                 error_data = quote_response.json()
                 logging.error(f"Error details: {error_data}")
+                
+                # Handle specific errors
+                if quote_response.status_code == 404:
+                    logging.error("Token not found - might be too new")
+                elif quote_response.status_code == 429:
+                    logging.error("Still rate limited after retries")
+                    
             except:
-                logging.error(f"Raw error: {quote_response.text}")
+                logging.error(f"Raw error: {quote_response.text[:200]}")
             return None, None
             
         quote_data = quote_response.json()
@@ -10095,7 +10158,16 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             return None, None
         
         # Log the route for debugging
-        logging.info(f"Found route with {len(quote_data.get('routePlan', []))} steps")
+        out_amount = int(quote_data.get('outAmount', 0))
+        price_impact = float(quote_data.get('priceImpactPct', 0))
+        logging.info(f"Route found: {len(quote_data.get('routePlan', []))} steps, impact: {price_impact:.2f}%")
+        
+        # Check for bad price impact
+        if price_impact > 10:
+            logging.warning(f"High price impact: {price_impact:.2f}% - proceed with caution")
+        
+        # RATE LIMIT CHECK AGAIN before swap
+        jupiter_limiter.wait_if_needed()
         
         # Prepare swap transaction
         swap_url = "https://quote-api.jup.ag/v6/swap"
@@ -10104,18 +10176,42 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.pubkey()),
             "wrapAndUnwrapSol": True,
-            "computeUnitPriceMicroLamports": 20000,
+            "computeUnitPriceMicroLamports": 25000,  # Increased for better execution
             "asLegacyTransaction": False,
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto"
         }
+        
+        # Additional parameters for new tokens
+        if is_buy and slippage_bps > 200:
+            swap_payload["computeUnitPriceMicroLamports"] = 50000  # Higher priority for volatile tokens
         
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
-        swap_response = requests.post(swap_url, json=swap_payload, headers=headers, timeout=10)
+        # Retry logic for swap
+        for retry in range(max_retries):
+            try:
+                swap_response = requests.post(swap_url, json=swap_payload, headers=headers, timeout=15)
+                
+                if swap_response.status_code == 429:
+                    wait_time = (retry + 1) * 10
+                    logging.warning(f"Rate limited on swap, waiting {wait_time}s...")
+                    time.sleep(wait_time)
+                    continue
+                    
+                if swap_response.status_code == 200:
+                    break
+                    
+            except requests.exceptions.Timeout:
+                if retry < max_retries - 1:
+                    logging.warning(f"Timeout on swap, retry {retry + 1}/{max_retries}")
+                    time.sleep(2)
+                    continue
+                else:
+                    return None, None
         
         if swap_response.status_code != 200:
             logging.error(f"Swap preparation failed: {swap_response.status_code}")
@@ -10124,22 +10220,32 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
                 logging.error(f"Swap error details: {error_data}")
                 
                 # Common error handling
-                if "blockhash" in str(error_data):
-                    logging.error("Blockhash error - RPC issue")
+                if "blockhash" in str(error_data).lower():
+                    logging.error("Blockhash error - RPC sync issue")
                 elif "insufficient" in str(error_data).lower():
                     logging.error("Insufficient funds or liquidity")
-                elif "No route found" in str(error_data):
-                    logging.error("Token has no liquidity pools")
+                elif "slippage" in str(error_data).lower():
+                    logging.error("Slippage tolerance exceeded")
+                elif error_data.get('error') == 'Token account not found':
+                    logging.error("Need to create token account first")
                     
             except:
-                logging.error(f"Raw swap error: {swap_response.text}")
+                logging.error(f"Raw swap error: {swap_response.text[:200]}")
             return None, None
             
         swap_data = swap_response.json()
+        
+        # Validate swap transaction
+        if not swap_data.get('swapTransaction'):
+            logging.error("No swap transaction returned")
+            return None, None
+            
+        logging.info(f"✅ Swap prepared successfully")
         return quote_data, swap_data
         
     except Exception as e:
-        logging.error(f"Jupiter API error: {e}")
+        logging.error(f"Jupiter API error: {str(e)}")
+        logging.error(traceback.format_exc())
         return None, None
 
 def execute_raydium_swap(token_address, amount_sol, is_buy=True):
