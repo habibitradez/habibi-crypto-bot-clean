@@ -10143,7 +10143,6 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             "quoteResponse": quote_data,
             "userPublicKey": str(wallet.public_key),  # FIXED: was wallet.pubkey()
             "wrapAndUnwrapSol": True,
-            "computeUnitPriceMicroLamports": 25000,
             "asLegacyTransaction": False,
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto"
