@@ -10208,7 +10208,7 @@ def execute_raydium_swap(token_address, amount_sol, is_buy=True):
                 "amount": int(amount_sol * 1e9),
                 "slippage": 0.01,  # 1% slippage
                 "txVersion": "V0",
-                "wallet": str(wallet.public_key))
+                "wallet": str(wallet.public_key)
             }
             
             # Get swap transaction
