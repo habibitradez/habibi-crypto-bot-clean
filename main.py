@@ -595,40 +595,68 @@ class AdaptiveAlphaTrader:
         logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
         
     def check_alpha_wallets(self):
-        """Check all alpha wallets for new buys"""
-        
-        current_time = time.time()
-        
-        for alpha in self.alpha_wallets:
-            # Check EVERY 10 SECONDS for faster detection
-            if current_time - self.last_check[alpha['address']] < 10:
-                continue
-                
-            self.last_check[alpha['address']] = current_time
+    """Check all alpha wallets for new buys"""
+    
+    current_time = time.time()
+    
+    for alpha in self.alpha_wallets:
+        # Check EVERY 10 SECONDS for faster detection
+        if current_time - self.last_check[alpha['address']] < 10:
+            continue
             
-            try:
-                new_buys = get_wallet_recent_buys_helius(alpha['address'])
+        self.last_check[alpha['address']] = current_time
+        
+        try:
+            new_buys = get_wallet_recent_buys_helius(alpha['address'])
+            
+            if new_buys:
+                logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
                 
-                if new_buys:
-                    logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
+            for buy in new_buys:
+                # INSTANT COPY if not already in position
+                if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
                     
-                for buy in new_buys:
-                    # INSTANT COPY if not already in position
-                    if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
+                    # Get token data with error handling
+                    token_data = self.get_token_snapshot(buy['token'])
+                    
+                    # Log what we found
+                    if token_data:
+                        logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
+                    
+                    # More aggressive approach for alpha copying
+                    if token_data and token_data.get('price', 0) > 0:
                         
-                        # Quick validation
-                        token_data = self.get_token_snapshot(buy['token'])
-                        if token_data and token_data['liquidity'] > 100:
-                            
-                            logging.info(f"⚡ INSTANT COPY: Following {alpha['name']} into {buy['token'][:8]}")
-                            
-                            # Execute immediately with smaller position for safety
-                            self.execute_trade(buy['token'], 'COPY_TRADE', 0.1, token_data['price'])
+                        # Determine position size based on liquidity
+                        liquidity = token_data.get('liquidity', 0)
+                        
+                        if liquidity > 10000:  # Good liquidity
+                            position_size = 0.1
+                            logging.info(f"💎 HIGH LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                        elif liquidity > 1000:  # Medium liquidity
+                            position_size = 0.05
+                            logging.info(f"⚡ MED LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                        elif liquidity > 100:  # Low liquidity
+                            position_size = 0.02
+                            logging.info(f"🎯 LOW LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
                         else:
-                            logging.warning(f"❌ Skipping {buy['token'][:8]} - insufficient liquidity")
-                            
-            except Exception as e:
-                logging.error(f"Error checking wallet {alpha['name']}: {e}")
+                            # Very low liquidity - still try with tiny amount
+                            position_size = 0.01
+                            logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
+                        
+                        # Execute the trade
+                        self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'])
+                        
+                    else:
+                        # No token data or price - try anyway with minimal amount
+                        logging.warning(f"⚠️ No data for {buy['token'][:8]} - attempting blind copy with 0.01 SOL")
+                        
+                        # Sometimes alpha wallets buy tokens so new that APIs don't have data yet
+                        # These can be the biggest opportunities
+                        self.execute_trade(buy['token'], 'COPY_TRADE', 0.01, 0.00001)
+                        
+        except Exception as e:
+            logging.error(f"Error checking wallet {alpha['name']}: {e}")
+            logging.error(traceback.format_exc())
     
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
@@ -10030,94 +10058,154 @@ def verify_token(token_address):
         logging.error(traceback.format_exc())
         return False
 
-def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True):
-    """Get Jupiter quote and swap data with better error handling."""
+def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dexes=None, slippage_bps=100):
+    """Get Jupiter quote with DEX filtering"""
     try:
-        # 1. Prepare quote parameters
-        slippage = "300" if is_buy else "500"  # Lower slippage for buys, higher for sells
-        
-        quote_params = {
+        # Build quote parameters
+        quote_url = "https://quote-api.jup.ag/v6/quote"
+        params = {
             "inputMint": input_mint,
             "outputMint": output_mint,
             "amount": str(amount),
-            "slippageBps": slippage,
-            "onlyDirectRoutes": "false",  # Allow any route
-            "asLegacyTransaction": "true"  # Use legacy transaction format
+            "slippageBps": str(slippage_bps),
+            "onlyDirectRoutes": "false",
+            "asLegacyTransaction": "false"
         }
         
-        logging.info(f"Getting Jupiter quote: {json.dumps(quote_params)}")
+        # Add DEX filter if specified
+        if dexes:
+            params["dexes"] = ",".join(dexes)
         
-        # 2. Make quote request
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
+        quote_response = requests.get(quote_url, params=params, timeout=10)
         
-        # 3. Check for quote errors
         if quote_response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code} - {quote_response.text}")
+            logging.error(f"Quote failed: {quote_response.status_code}")
+            try:
+                error_data = quote_response.json()
+                logging.error(f"Error details: {error_data}")
+            except:
+                logging.error(f"Raw error: {quote_response.text}")
             return None, None
             
         quote_data = quote_response.json()
         
-        # 4. Verify quote data
-        if "outAmount" not in quote_data:
-            logging.error(f"Invalid quote response: {quote_data}")
+        # Check if we got a valid quote
+        if not quote_data.get('routePlan'):
+            logging.error("No route found for this token pair")
             return None, None
         
-        logging.info(f"Got Jupiter quote. Output amount: {quote_data.get('outAmount')}")
+        # Log the route for debugging
+        logging.info(f"Found route with {len(quote_data.get('routePlan', []))} steps")
         
-        # 5. Prepare swap with all required parameters
-        public_key = str(wallet.public_key)
+        # Prepare swap transaction
+        swap_url = "https://quote-api.jup.ag/v6/swap"
         
-        # Get fresh blockhash
-        blockhash = get_fresh_blockhash()
-        if not blockhash:
-            logging.error("Failed to get blockhash for swap")
-            return quote_data, None
-        
-        # Prepare swap params - EXACT FORMAT IS CRITICAL
-        swap_params = {
+        swap_payload = {
             "quoteResponse": quote_data,
-            "userPublicKey": public_key,
-            "wrapUnwrapSOL": True,  # Boolean, not string
-            "computeUnitPriceMicroLamports": 1000,  # Reasonable priority fee
-            "asLegacyTransaction": True,  # Boolean, not string
-            "useSharedAccounts": True,  # Use Jupiter's shared accounts
-            "dynamicComputeUnitLimit": True,  # Let Jupiter handle compute limits
-            "skipUserAccountsCheck": True  # Skip extra checks that might fail
+            "userPublicKey": str(wallet.pubkey()),
+            "wrapAndUnwrapSol": True,
+            "computeUnitPriceMicroLamports": 20000,
+            "asLegacyTransaction": False,
+            "dynamicComputeUnitLimit": True,
+            "prioritizationFeeLamports": "auto"
         }
         
-        if blockhash:
-            swap_params["blockhash"] = blockhash
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
         
-        logging.info(f"Preparing swap with params: {json.dumps(swap_params)}")
+        swap_response = requests.post(swap_url, json=swap_payload, headers=headers, timeout=10)
         
-        # 6. Make swap request
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        swap_response = requests.post(
-            swap_url,
-            json=swap_params,
-            headers={"Content-Type": "application/json"},
-            timeout=15
-        )
-        
-        # 7. Check for swap errors
         if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code} - {swap_response.text}")
-            return quote_data, None
+            logging.error(f"Swap preparation failed: {swap_response.status_code}")
+            try:
+                error_data = swap_response.json()
+                logging.error(f"Swap error details: {error_data}")
+                
+                # Common error handling
+                if "blockhash" in str(error_data):
+                    logging.error("Blockhash error - RPC issue")
+                elif "insufficient" in str(error_data).lower():
+                    logging.error("Insufficient funds or liquidity")
+                elif "No route found" in str(error_data):
+                    logging.error("Token has no liquidity pools")
+                    
+            except:
+                logging.error(f"Raw swap error: {swap_response.text}")
+            return None, None
             
         swap_data = swap_response.json()
-        
-        # 8. Verify swap data
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing transaction data: {swap_data}")
-            return quote_data, None
-        
         return quote_data, swap_data
         
     except Exception as e:
-        logging.error(f"Error in Jupiter quote/swap: {str(e)}")
-        logging.error(traceback.format_exc())
+        logging.error(f"Jupiter API error: {e}")
         return None, None
+
+def execute_raydium_swap(token_address, amount_sol, is_buy=True):
+    """Execute swap using Raydium for new tokens"""
+    try:
+        if is_buy:
+            logging.info(f"🔄 Attempting Raydium buy for {token_address[:8]}")
+            
+            # Raydium API endpoint
+            raydium_api = "https://api.raydium.io/v2/swap/compute"
+            
+            # Get pool info first
+            pool_info_url = f"https://api.raydium.io/v2/main/pool?mint={token_address}"
+            pool_response = requests.get(pool_info_url, timeout=5)
+            
+            if pool_response.status_code != 200:
+                logging.error("No Raydium pool found")
+                return None
+                
+            pool_data = pool_response.json()
+            if not pool_data.get('data'):
+                logging.error("Token has no Raydium pool")
+                return None
+                
+            # Prepare swap transaction
+            swap_params = {
+                "inputMint": "So11111111111111111111111111111111111111112" if is_buy else token_address,
+                "outputMint": token_address if is_buy else "So11111111111111111111111111111111111111112",
+                "amount": int(amount_sol * 1e9),
+                "slippage": 0.01,  # 1% slippage
+                "txVersion": "V0",
+                "wallet": str(wallet.pubkey())
+            }
+            
+            # Get swap transaction
+            swap_response = requests.post(
+                "https://api.raydium.io/v2/swap/transaction",
+                json=swap_params,
+                headers={"Content-Type": "application/json"},
+                timeout=10
+            )
+            
+            if swap_response.status_code == 200:
+                swap_data = swap_response.json()
+                tx_data = swap_data.get('data', {}).get('transaction')
+                
+                if tx_data:
+                    # Send transaction
+                    signature = wallet._rpc_call("sendTransaction", [
+                        tx_data,
+                        {
+                            "encoding": "base64",
+                            "skipPreflight": True,
+                            "maxRetries": 3
+                        }
+                    ])
+                    
+                    if "result" in signature:
+                        logging.info(f"✅ Raydium swap sent: {signature['result'][:16]}...")
+                        return signature["result"]
+                        
+        return None
+        
+    except Exception as e:
+        logging.error(f"Raydium swap error: {e}")
+        return None
 
 def execute_optimized_trade(token_address: str, amount_sol: float) -> Tuple[bool, Optional[str]]:
     """Enhanced execution with momentum validation and progress tracking"""
@@ -11690,131 +11778,148 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute an optimized transaction using robust Jupiter API handling."""
+    """Execute transaction with multiple DEX fallbacks"""
     try:
-        logging.info(f"Starting optimized transaction for {token_address} with {amount_sol} SOL")
+        logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
+        # Check balance
+        balance = wallet.get_balance()
+        if balance < amount_sol + 0.01:
+            logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
+            return None
+            
         if CONFIG['SIMULATION_MODE']:
-            logging.info(f"[SIMULATION] Bought token {token_address}")
-            token_buy_timestamps[token_address] = time.time()
+            logging.info("SIMULATION: Would execute trade")
             return "simulation-signature"
         
-        # 1. Check wallet balance
-        balance = wallet.get_balance()
-        if balance < amount_sol + 0.05:  # Include buffer for fees
-            logging.error(f"Insufficient balance: {balance} SOL")
-            return None
-            
-        logging.info(f"Wallet balance: {balance} SOL")
-        
-        # 2. Convert SOL amount to lamports
-        amount_lamports = int(amount_sol * 1_000_000_000)
-        
-        # 3. Get Jupiter quote and swap data with better error handling
+        # Method 1: Try Jupiter first (best for established tokens)
+        logging.info("Trying Jupiter...")
         quote_data, swap_data = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,  # Input mint
-            token_address,      # Output mint
-            amount_lamports,    # Amount
-            is_buy=True         # This is a buy
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(amount_sol * 1e9),
+            is_buy=True
         )
         
-        if not swap_data:
-            logging.error("Failed to prepare swap")
-            return None
-        
-        # 4. Submit transaction
-        tx_base64 = swap_data["swapTransaction"]
-        
-        # Submit with specialized parameters
-        signature = wallet._rpc_call("sendTransaction", [
-            tx_base64,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "processed"
-            }
-        ])
-        
-        # 5. Check for errors
-        if "result" not in signature:
-            error_message = signature.get("error", {}).get("message", "Unknown error")
-            logging.error(f"Transaction submission failed: {error_message}")
-            return None
-        
-        tx_signature = signature["result"]
-        
-        # 6. Check for all 1's signature
-        if tx_signature == "1" * len(tx_signature):
-            logging.warning("Got all 1's signature, trying alternative approach")
+        if swap_data:
+            tx_base64 = swap_data["swapTransaction"]
             
-            # Try with skipPreflight=False
-            alt_signature = wallet._rpc_call("sendTransaction", [
+            signature = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
-                    "skipPreflight": False,
-                    "maxRetries": 10,
-                    "preflightCommitment": "confirmed"
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "processed"
                 }
             ])
             
-            if "result" not in alt_signature:
-                error_message = alt_signature.get("error", {}).get("message", "Unknown error")
-                logging.error(f"Alternative submission failed: {error_message}")
-                return None
-                
-            tx_signature = alt_signature["result"]
-            
-            if tx_signature == "1" * len(tx_signature):
-                logging.error("Still received all 1's signature - transaction failed")
-                return None
+            if "result" in signature:
+                logging.info(f"✅ Jupiter transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
+            else:
+                logging.error(f"Jupiter transaction failed: {signature}")
         
-        # 7. Verify transaction success
-        logging.info(f"Transaction submitted with signature: {tx_signature}")
-        success = check_transaction_status(tx_signature, max_attempts=8)
+        # Method 2: If Jupiter fails, try Raydium (good for new tokens)
+        logging.warning("Jupiter failed, trying Raydium approach...")
         
-        if success:
-            logging.info(f"Transaction confirmed successfully!")
+        # For Raydium, we need to build the transaction differently
+        # Try using Jupiter with Raydium-only routes
+        quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(amount_sol * 1e9),
+            is_buy=True,
+            dexes=["Raydium", "Raydium CLMM"]  # Force Raydium only
+        )
+        
+        if swap_data_ray:
+            tx_base64 = swap_data_ray["swapTransaction"]
             
-            # Record transaction success
-            token_buy_timestamps[token_address] = time.time()
-            
-            # Initialize token monitoring
-            try:
-                initial_price = get_token_price(token_address)
-                if initial_price:
-                    monitored_tokens[token_address] = {
-                        'initial_price': initial_price,
-                        'highest_price': initial_price,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
-                    }
-                else:
-                    # Use placeholder value
-                    monitored_tokens[token_address] = {
-                        'initial_price': 0.0001,
-                        'highest_price': 0.0001,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
-                    }
-            except Exception as e:
-                logging.warning(f"Error setting initial price: {str(e)}")
-                # Use placeholder value
-                monitored_tokens[token_address] = {
-                    'initial_price': 0.0001,
-                    'highest_price': 0.0001,
-                    'partial_profit_taken': False,
-                    'buy_time': time.time()
+            signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 3
                 }
+            ])
             
-            return tx_signature
-        else:
-            logging.error(f"Transaction failed or could not be confirmed")
-            return None
+            if "result" in signature:
+                logging.info(f"✅ Raydium route transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
+        
+        # Method 3: Last resort - smaller amount with higher slippage
+        logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
+        
+        smaller_amount = amount_sol * 0.5  # Try with half the amount
+        quote_data_small, swap_data_small = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(smaller_amount * 1e9),
+            is_buy=True,
+            slippage_bps=500  # 5% slippage for new tokens
+        )
+        
+        if swap_data_small:
+            tx_base64 = swap_data_small["swapTransaction"]
+            
+            signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 3
+                }
+            ])
+            
+            if "result" in signature:
+                logging.info(f"✅ Small amount transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
+        
+        logging.error("All swap methods failed")
+        return None
+        
     except Exception as e:
-        logging.error(f"Error in optimized transaction: {str(e)}")
+        logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
+        return None
+
+def execute_direct_swap(token_address, amount_sol):
+    """Direct swap for brand new tokens"""
+    try:
+        # For very new tokens, sometimes you need to interact directly
+        # with the token's liquidity pool program
+        
+        logging.info(f"🎯 Attempting direct swap for {token_address[:8]}")
+        
+        # This is a simplified version - you'd need the actual pool program
+        # For now, return None to avoid errors
+        logging.warning("Direct swap not implemented - token too new")
+        return None
+        
+    except Exception as e:
+        logging.error(f"Direct swap error: {e}")
+        return None
+
+def execute_pumpfun_buy(token_address, amount_sol):
+    """Buy tokens launched on Pump.fun"""
+    try:
+        # Pump.fun uses a specific program ID
+        PUMP_FUN_PROGRAM = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        
+        # Check if token is from Pump.fun
+        # You would need to verify the token's program
+        
+        logging.info(f"🚀 Attempting Pump.fun buy for {token_address[:8]}")
+        
+        # Pump.fun specific transaction building would go here
+        # This is complex and requires their SDK
+        
+        return None
+        
+    except Exception as e:
+        logging.error(f"Pump.fun error: {e}")
         return None
 
 def create_priority_fee_instruction(micro_lamports=50000):
@@ -12000,97 +12105,113 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute an optimized transaction with direct construction and submission."""
+    """Execute transaction with multiple DEX fallbacks"""
     try:
-        logging.info(f"Starting optimized transaction for {token_address} with {amount_sol} SOL")
+        logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
-        # 1. Get secure keypair
-        keypair = get_secure_keypair()
-        
-        # 2. Convert SOL amount to lamports
-        amount_lamports = int(amount_sol * 1_000_000_000)
-        
-        # 3. Get Jupiter quote
-        quote_params = {
-            "inputMint": SOL_TOKEN_ADDRESS,
-            "outputMint": token_address,
-            "amount": str(amount_lamports),
-            "slippageBps": "100"
-        }
-        
-        quote_url = f"{CONFIG['JUPITER_API_URL']}/v6/quote"
-        quote_response = requests.get(quote_url, params=quote_params, timeout=15)
-        
-        if quote_response.status_code != 200:
-            logging.error(f"Failed to get Jupiter quote: {quote_response.status_code}")
+        # Check balance
+        balance = wallet.get_balance()
+        if balance < amount_sol + 0.01:
+            logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
             return None
             
-        quote_data = quote_response.json()
-        logging.info(f"Got Jupiter quote for {amount_sol} SOL -> {token_address}")
+        if CONFIG['SIMULATION_MODE']:
+            logging.info("SIMULATION: Would execute trade")
+            return "simulation-signature"
         
-        # 4. Prepare swap with all parameters
-        swap_params = {
-            "quoteResponse": quote_data,
-            "userPublicKey": str(keypair.pubkey()),
-            "wrapUnwrapSOL": True,
-            "computeUnitPriceMicroLamports": 50000,  # Higher priority fee
-            "prioritizationFeeLamports": 10000
-        }
-        
-        swap_url = f"{CONFIG['JUPITER_API_URL']}/v6/swap"
-        swap_response = requests.post(
-            swap_url,
-            json=swap_params,
-            headers={"Content-Type": "application/json"},
-            timeout=15
+        # Method 1: Try Jupiter first (best for established tokens)
+        logging.info("Trying Jupiter...")
+        quote_data, swap_data = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(amount_sol * 1e9),
+            is_buy=True
         )
         
-        if swap_response.status_code != 200:
-            logging.error(f"Failed to prepare swap: {swap_response.status_code}")
-            return None
+        if swap_data:
+            tx_base64 = swap_data["swapTransaction"]
             
-        swap_data = swap_response.json()
-        
-        if "swapTransaction" not in swap_data:
-            logging.error(f"Swap response missing transaction data")
-            return None
+            signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 5,
+                    "preflightCommitment": "processed"
+                }
+            ])
             
-        # 5. Directly submit the transaction with optimized parameters
-        tx_base64 = swap_data["swapTransaction"]
-        
-        # Submit with special parameters
-        signature = submit_transaction_with_special_params(tx_base64)
-        
-        if signature:
-            # Check transaction success
-            success = check_transaction_status(signature)
-            if success:
-                logging.info(f"Transaction confirmed successfully: {signature}")
-                
-                # Record transaction success
-                token_buy_timestamps[token_address] = time.time()
-                
-                # Initialize token monitoring
-                initial_price = get_token_price(token_address)
-                if initial_price:
-                    monitored_tokens[token_address] = {
-                        'initial_price': initial_price,
-                        'highest_price': initial_price,
-                        'partial_profit_taken': False,
-                        'buy_time': time.time()
-                    }
-                
-                return signature
+            if "result" in signature:
+                logging.info(f"✅ Jupiter transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
             else:
-                logging.error(f"Transaction failed or could not be confirmed")
-                return None
-        else:
-            logging.error("Failed to submit transaction")
-            return None
+                logging.error(f"Jupiter transaction failed: {signature}")
+        
+        # Method 2: If Jupiter fails, try Raydium (good for new tokens)
+        logging.warning("Jupiter failed, trying Raydium approach...")
+        
+        # For Raydium, we need to build the transaction differently
+        # Try using Jupiter with Raydium-only routes
+        quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(amount_sol * 1e9),
+            is_buy=True,
+            dexes=["Raydium", "Raydium CLMM"]  # Force Raydium only
+        )
+        
+        if swap_data_ray:
+            tx_base64 = swap_data_ray["swapTransaction"]
+            
+            signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 3
+                }
+            ])
+            
+            if "result" in signature:
+                logging.info(f"✅ Raydium route transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
+        
+        # Method 3: Last resort - smaller amount with higher slippage
+        logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
+        
+        smaller_amount = amount_sol * 0.5  # Try with half the amount
+        quote_data_small, swap_data_small = get_jupiter_quote_and_swap(
+            SOL_TOKEN_ADDRESS,
+            token_address,
+            int(smaller_amount * 1e9),
+            is_buy=True,
+            slippage_bps=500  # 5% slippage for new tokens
+        )
+        
+        if swap_data_small:
+            tx_base64 = swap_data_small["swapTransaction"]
+            
+            signature = wallet._rpc_call("sendTransaction", [
+                tx_base64,
+                {
+                    "encoding": "base64",
+                    "skipPreflight": True,
+                    "maxRetries": 3
+                }
+            ])
+            
+            if "result" in signature:
+                logging.info(f"✅ Small amount transaction sent: {signature['result'][:16]}...")
+                return signature["result"]
+        
+        logging.error("All swap methods failed")
+        return None
+        
     except Exception as e:
-        logging.error(f"Error in optimized transaction: {str(e)}")
+        logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
         return None
+
 
 def main():
     """Main entry point - AI Adaptive Trading System"""
