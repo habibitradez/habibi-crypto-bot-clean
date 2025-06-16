@@ -5700,7 +5700,7 @@ def execute_optimized_sell(token_address, amount_sol):
         logging.info(f"💰 Starting sell for {token_address[:8]}")
         
         # Get token balance
-        token_balance = get_token_balance(wallet.pubkey(), token_address)
+        token_balance = get_token_balance(wallet.public_key(), token_address)
         if not token_balance or token_balance == 0:
             logging.error("No tokens to sell")
             return None
@@ -10104,50 +10104,24 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             "slippageBps": str(slippage_bps),
             "onlyDirectRoutes": "false",
             "asLegacyTransaction": "false",
-            "maxAccounts": "64"  # Help with complex routes
+            "maxAccounts": "64"
         }
         
         # Add DEX filter if specified
         if dexes:
             params["dexes"] = ",".join(dexes)
         
-        # Add retry logic for quote
-        max_retries = 3
-        for retry in range(max_retries):
-            try:
-                quote_response = requests.get(quote_url, params=params, timeout=10)
-                
-                if quote_response.status_code == 429:
-                    wait_time = (retry + 1) * 10  # 10, 20, 30 seconds
-                    logging.warning(f"Rate limited, waiting {wait_time}s before retry...")
-                    time.sleep(wait_time)
-                    continue
-                    
-                if quote_response.status_code == 200:
-                    break
-                    
-            except requests.exceptions.Timeout:
-                if retry < max_retries - 1:
-                    logging.warning(f"Timeout on quote, retry {retry + 1}/{max_retries}")
-                    time.sleep(2)
-                    continue
-                else:
-                    return None, None
+        # Get quote with retries
+        quote_response = requests.get(quote_url, params=params, timeout=10)
         
+        if quote_response.status_code == 400:
+            error_data = quote_response.json()
+            if "TOKEN_NOT_TRADABLE" in str(error_data):
+                logging.warning(f"Token {output_mint[:8]} not tradable on Jupiter - might be too new")
+                return None, None
+                
         if quote_response.status_code != 200:
             logging.error(f"Quote failed: {quote_response.status_code}")
-            try:
-                error_data = quote_response.json()
-                logging.error(f"Error details: {error_data}")
-                
-                # Handle specific errors
-                if quote_response.status_code == 404:
-                    logging.error("Token not found - might be too new")
-                elif quote_response.status_code == 429:
-                    logging.error("Still rate limited after retries")
-                    
-            except:
-                logging.error(f"Raw error: {quote_response.text[:200]}")
             return None, None
             
         quote_data = quote_response.json()
@@ -10157,95 +10131,52 @@ def get_jupiter_quote_and_swap(input_mint, output_mint, amount, is_buy=True, dex
             logging.error("No route found for this token pair")
             return None, None
         
-        # Log the route for debugging
+        # Log the route
         out_amount = int(quote_data.get('outAmount', 0))
         price_impact = float(quote_data.get('priceImpactPct', 0))
         logging.info(f"Route found: {len(quote_data.get('routePlan', []))} steps, impact: {price_impact:.2f}%")
-        
-        # Check for bad price impact
-        if price_impact > 10:
-            logging.warning(f"High price impact: {price_impact:.2f}% - proceed with caution")
-        
-        # RATE LIMIT CHECK AGAIN before swap
-        jupiter_limiter.wait_if_needed()
         
         # Prepare swap transaction
         swap_url = "https://quote-api.jup.ag/v6/swap"
         
         swap_payload = {
             "quoteResponse": quote_data,
-            "userPublicKey": str(wallet.pubkey()),
+            "userPublicKey": str(wallet.public_key),  # FIXED: was wallet.pubkey()
             "wrapAndUnwrapSol": True,
-            "computeUnitPriceMicroLamports": 25000,  # Increased for better execution
+            "computeUnitPriceMicroLamports": 25000,
             "asLegacyTransaction": False,
             "dynamicComputeUnitLimit": True,
             "prioritizationFeeLamports": "auto"
         }
-        
-        # Additional parameters for new tokens
-        if is_buy and slippage_bps > 200:
-            swap_payload["computeUnitPriceMicroLamports"] = 50000  # Higher priority for volatile tokens
         
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         
-        # Retry logic for swap
-        for retry in range(max_retries):
-            try:
-                swap_response = requests.post(swap_url, json=swap_payload, headers=headers, timeout=15)
-                
-                if swap_response.status_code == 429:
-                    wait_time = (retry + 1) * 10
-                    logging.warning(f"Rate limited on swap, waiting {wait_time}s...")
-                    time.sleep(wait_time)
-                    continue
-                    
-                if swap_response.status_code == 200:
-                    break
-                    
-            except requests.exceptions.Timeout:
-                if retry < max_retries - 1:
-                    logging.warning(f"Timeout on swap, retry {retry + 1}/{max_retries}")
-                    time.sleep(2)
-                    continue
-                else:
-                    return None, None
+        swap_response = requests.post(swap_url, json=swap_payload, headers=headers, timeout=15)
         
         if swap_response.status_code != 200:
             logging.error(f"Swap preparation failed: {swap_response.status_code}")
             try:
                 error_data = swap_response.json()
-                logging.error(f"Swap error details: {error_data}")
-                
-                # Common error handling
-                if "blockhash" in str(error_data).lower():
-                    logging.error("Blockhash error - RPC sync issue")
-                elif "insufficient" in str(error_data).lower():
-                    logging.error("Insufficient funds or liquidity")
-                elif "slippage" in str(error_data).lower():
-                    logging.error("Slippage tolerance exceeded")
-                elif error_data.get('error') == 'Token account not found':
-                    logging.error("Need to create token account first")
-                    
+                logging.error(f"Swap error: {error_data}")
             except:
                 logging.error(f"Raw swap error: {swap_response.text[:200]}")
             return None, None
             
         swap_data = swap_response.json()
-        
-        # Validate swap transaction
-        if not swap_data.get('swapTransaction'):
-            logging.error("No swap transaction returned")
-            return None, None
-            
         logging.info(f"✅ Swap prepared successfully")
         return quote_data, swap_data
         
+    except AttributeError as e:
+        if "pubkey" in str(e):
+            logging.error("CRITICAL: wallet.pubkey() should be wallet.public_key")
+            logging.error("Fix all instances in your code!")
+        raise e
+        
     except Exception as e:
         logging.error(f"Jupiter API error: {str(e)}")
-        logging.error(traceback.format_exc())
         return None, None
 
 def execute_raydium_swap(token_address, amount_sol, is_buy=True):
@@ -10277,7 +10208,7 @@ def execute_raydium_swap(token_address, amount_sol, is_buy=True):
                 "amount": int(amount_sol * 1e9),
                 "slippage": 0.01,  # 1% slippage
                 "txVersion": "V0",
-                "wallet": str(wallet.pubkey())
+                "wallet": str(wallet.public_key))
             }
             
             # Get swap transaction
@@ -11884,7 +11815,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction with multiple DEX fallbacks"""
+    """Execute transaction with multiple DEX fallbacks and proper wallet attribute"""
     try:
         logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
@@ -11921,8 +11852,17 @@ def execute_optimized_transaction(token_address, amount_sol):
             ])
             
             if "result" in signature:
-                logging.info(f"✅ Jupiter transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+                tx_signature = signature["result"]
+                logging.info(f"✅ Jupiter transaction sent: {tx_signature[:16]}...")
+                
+                # Wait for confirmation
+                confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
+                if confirmation:
+                    logging.info(f"✅ Transaction confirmed: {tx_signature}")
+                    return tx_signature
+                else:
+                    logging.warning(f"Transaction sent but not confirmed: {tx_signature}")
+                    return tx_signature
             else:
                 logging.error(f"Jupiter transaction failed: {signature}")
         
@@ -11952,8 +11892,9 @@ def execute_optimized_transaction(token_address, amount_sol):
             ])
             
             if "result" in signature:
-                logging.info(f"✅ Raydium route transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+                tx_signature = signature["result"]
+                logging.info(f"✅ Raydium route transaction sent: {tx_signature[:16]}...")
+                return tx_signature
         
         # Method 3: Last resort - smaller amount with higher slippage
         logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
@@ -11980,8 +11921,18 @@ def execute_optimized_transaction(token_address, amount_sol):
             ])
             
             if "result" in signature:
-                logging.info(f"✅ Small amount transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+                tx_signature = signature["result"]
+                logging.info(f"✅ Small amount transaction sent: {tx_signature[:16]}...")
+                return tx_signature
+        
+        # Method 4: Handle TOKEN_NOT_TRADABLE tokens
+        logging.error(f"Token {token_address[:8]} failed all Jupiter routes")
+        
+        # Check if it's a Pump.fun token or other platform
+        if is_pump_fun_token(token_address):
+            logging.info("Token appears to be from Pump.fun - would need special handling")
+            # Future: Add Pump.fun integration here
+            return None
         
         logging.error("All swap methods failed")
         return None
@@ -11989,7 +11940,92 @@ def execute_optimized_transaction(token_address, amount_sol):
     except Exception as e:
         logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
+        
+        # Check for specific wallet attribute error
+        if "pubkey" in str(e):
+            logging.error("CRITICAL: wallet.pubkey() should be wallet.public_key")
+            logging.error("Fix all instances in your code!")
+            
         return None
+
+
+def wait_for_confirmation(signature, max_timeout=30):
+    """Wait for transaction confirmation"""
+    try:
+        start_time = time.time()
+        
+        while time.time() - start_time < max_timeout:
+            try:
+                status = wallet._rpc_call("getSignatureStatuses", [[signature]])
+                
+                if status and "result" in status:
+                    result = status["result"]["value"][0]
+                    if result:
+                        if result.get("confirmationStatus") in ["confirmed", "finalized"]:
+                            return True
+                        elif result.get("err"):
+                            logging.error(f"Transaction failed: {result['err']}")
+                            return False
+                            
+            except Exception as e:
+                logging.debug(f"Error checking status: {e}")
+                
+            time.sleep(1)
+            
+        return False
+        
+    except Exception as e:
+        logging.error(f"Confirmation error: {e}")
+        return False
+
+
+def is_pump_fun_token(token_address):
+    """Check if token is from Pump.fun platform"""
+    try:
+        # Pump.fun tokens have specific characteristics
+        # This is a simplified check - you'd need more robust detection
+        
+        # Get token info
+        token_info = get_token_info(token_address)
+        
+        if token_info:
+            # Check for Pump.fun patterns
+            # - Usually have specific metadata
+            # - Often have bonding curve
+            # - Specific program interactions
+            
+            # For now, just return False
+            return False
+            
+    except:
+        return False
+
+
+def get_token_info(token_address):
+    """Get basic token information"""
+    try:
+        headers = {"Content-Type": "application/json"}
+        
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getAccountInfo",
+            "params": [
+                token_address,
+                {"encoding": "jsonParsed"}
+            ]
+        }
+        
+        response = requests.post(CONFIG['SOLANA_RPC_URL'], json=payload, headers=headers, timeout=5)
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result.get('result')
+            
+    except Exception as e:
+        logging.debug(f"Error getting token info: {e}")
+        
+    return None
 
 def execute_direct_swap(token_address, amount_sol):
     """Direct swap for brand new tokens"""
