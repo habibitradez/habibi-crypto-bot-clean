@@ -5709,7 +5709,7 @@ def execute_optimized_sell(token_address, amount_sol):
         logging.info(f"💰 Starting sell for {token_address[:8]}")
         
         # Get token balance
-        token_balance = wallet.get_token_balance(token_address)
+        token_balance = get_token_balance(wallet.public_key, token_address)
         if not token_balance or token_balance == 0:
             logging.error("No tokens to sell")
             return None
@@ -5718,7 +5718,7 @@ def execute_optimized_sell(token_address, amount_sol):
         quote_data, swap_data = get_jupiter_quote_and_swap(
             token_address,      # Input mint (token)
             SOL_TOKEN_ADDRESS,  # Output mint (SOL)
-            int(token_balance * 1e9),  # Use full balance
+            int(token_balance), # Use full balance
             is_buy=False        # This is a sell
         )
         
@@ -5742,6 +5742,14 @@ def execute_optimized_sell(token_address, amount_sol):
         if "result" in signature:
             tx_signature = signature["result"]
             logging.info(f"✅ Sell transaction submitted: {tx_signature[:16]}...")
+            
+            # Wait for confirmation
+            confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
+            if confirmation:
+                logging.info(f"✅ Sell confirmed: {tx_signature}")
+            else:
+                logging.warning(f"Sell sent but not confirmed: {tx_signature}")
+                
             return tx_signature
         else:
             logging.error("Sell transaction failed")
@@ -5749,6 +5757,7 @@ def execute_optimized_sell(token_address, amount_sol):
             
     except Exception as e:
         logging.error(f"Error in sell: {e}")
+        logging.error(traceback.format_exc())
         return None
 
 def execute_partial_sell(token_address: str, percentage: float) -> bool:
