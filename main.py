@@ -1050,7 +1050,46 @@ class AdaptiveAlphaTrader:
                 
         except Exception as e:
             logging.error(f"Error in monitor_positions: {e}")
-                
+            
+
+        def record_trade_result(self, token, position, exit_price, exit_reason):
+            """Record the result of a closed trade"""
+        try:
+            entry_price = position['entry_price']
+            position_size = position['size']
+        
+            # Calculate P&L
+            pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+            pnl_sol = position_size * (pnl_pct / 100)
+        
+            # Update daily stats
+            self.brain.daily_stats['trades'] += 1
+            if pnl_sol > 0:
+                self.brain.daily_stats['wins'] += 1
+            self.brain.daily_stats['pnl_sol'] += pnl_sol
+        
+            # Record to brain
+            hold_time = (time.time() - position['entry_time']) / 60
+            self.brain.record_trade(
+                token_address=token,
+                strategy=position['strategy'],
+                entry_price=entry_price,
+                exit_price=exit_price,
+                pnl_pct=pnl_pct,
+                hold_time=hold_time
+            )
+        
+            # Log the result
+            logging.info(f"💰 Closed {position['strategy']}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL)")
+        
+            # Remove from positions
+            if token in self.positions:
+                del self.positions[token]
+            
+        except Exception as e:
+            logging.error(f"Error recording trade result: {e}")
+        
+    
     def exit_position(self, token_address, exit_price, reason, pnl):
         """Exit position and record results"""
         
@@ -1892,43 +1931,6 @@ def check_alpha_exits(self):
                 
     except Exception as e:
         logging.error(f"Error in check_alpha_exits: {e}")
-
-def record_trade_result(self, token, position, exit_price, exit_reason):
-    """Record the result of a closed trade"""
-    try:
-        entry_price = position['entry_price']
-        position_size = position['size']
-        
-        # Calculate P&L
-        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-        pnl_sol = position_size * (pnl_pct / 100)
-        
-        # Update daily stats
-        self.brain.daily_stats['trades'] += 1
-        if pnl_sol > 0:
-            self.brain.daily_stats['wins'] += 1
-        self.brain.daily_stats['pnl_sol'] += pnl_sol
-        
-        # Record to brain
-        hold_time = (time.time() - position['entry_time']) / 60
-        self.brain.record_trade(
-            token_address=token,
-            strategy=position['strategy'],
-            entry_price=entry_price,
-            exit_price=exit_price,
-            pnl_pct=pnl_pct,
-            hold_time=hold_time
-        )
-        
-        # Log the result
-        logging.info(f"💰 Closed {position['strategy']}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL)")
-        
-        # Remove from positions
-        if token in self.positions:
-            del self.positions[token]
-            
-    except Exception as e:
-        logging.error(f"Error recording trade result: {e}")
 
 def verify_all_functions_exist():
     """Verify all required functions exist before trading"""
