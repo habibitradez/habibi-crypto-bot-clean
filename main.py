@@ -5011,7 +5011,7 @@ def verify_wallet_setup():
         # Check simulation mode
         logging.info(f"✅ Simulation mode: {CONFIG.get('SIMULATION_MODE', 'Not set')}")
         
-        # Test RPC connection - FIXED: Added empty params list
+        # Test RPC connection
         test_response = wallet._rpc_call("getHealth", [])
         logging.info(f"✅ RPC health check: {test_response}")
         
@@ -5020,15 +5020,79 @@ def verify_wallet_setup():
             blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
             if "result" in blockhash_response:
                 logging.info("✅ Can fetch blockhash - RPC connection working")
+                blockhash = blockhash_response["result"]["value"]["blockhash"]
+                logging.info(f"   Current blockhash: {blockhash[:16]}...")
             else:
                 logging.warning("⚠️ Cannot fetch blockhash")
+                blockhash_response = None
+        except Exception as e:
+            logging.warning(f"⚠️ Blockhash test failed: {e}")
+            blockhash_response = None
+        
+        # Test if this is really mainnet
+        try:
+            # Get a known account (Serum program)
+            test_account = wallet._rpc_call("getAccountInfo", [
+                "9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+                {"encoding": "base64"}
+            ])
+            if "result" in test_account and test_account["result"]:
+                logging.info("✅ Connected to mainnet (found Serum program)")
+            else:
+                logging.warning("⚠️ Might not be mainnet - couldn't find known program")
+        except Exception as e:
+            logging.warning(f"⚠️ Could not verify mainnet connection: {e}")
+        
+        # Test transaction simulation with a dummy transaction
+        try:
+            if blockhash_response and "result" in blockhash_response:
+                # Create a simple self-transfer simulation
+                sim_response = wallet._rpc_call("simulateTransaction", [
+                    "AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",  # dummy transaction
+                    {"encoding": "base64", "commitment": "confirmed"}
+                ])
+                if "result" in sim_response:
+                    logging.info(f"✅ Transaction simulation works")
+                    if sim_response["result"].get("err"):
+                        logging.info(f"   Expected simulation error: {sim_response['result']['err']}")
+                else:
+                    logging.warning("⚠️ Transaction simulation returned unexpected format")
+            else:
+                logging.warning("⚠️ Skipping transaction simulation test - no blockhash")
+        except Exception as e:
+            logging.warning(f"⚠️ Transaction simulation test failed: {e}")
+        
+        # Check wallet signing capability
+        try:
+            # This is wallet implementation specific
+            # Just log that we'll find out when we try to send a real transaction
+            logging.info("✅ Wallet signing capability will be tested on first transaction")
         except:
-            logging.warning("⚠️ Blockhash test failed")
+            pass
+        
+        # Test Jupiter API connectivity
+        try:
+            test_quote_response = requests.get(
+                "https://quote-api.jup.ag/v6/quote",
+                params={
+                    "inputMint": "So11111111111111111111111111111111111111112",
+                    "outputMint": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                    "amount": "1000000"
+                },
+                timeout=5
+            )
+            if test_quote_response.status_code == 200:
+                logging.info("✅ Jupiter API connectivity confirmed")
+            else:
+                logging.warning(f"⚠️ Jupiter API returned status {test_quote_response.status_code}")
+        except Exception as e:
+            logging.warning(f"⚠️ Jupiter API test failed: {e}")
             
         logging.info("🔍 === END VERIFICATION ===")
         
     except Exception as e:
         logging.error(f"❌ Wallet verification failed: {e}")
+        logging.error(traceback.format_exc())
 
 def get_holder_count(token_address):
     """Get number of token holders"""
