@@ -79,10 +79,9 @@ ALPHA_WALLETS_CONFIG = [
     ("F1chUYt4XB84bF6MzfHgU2dtoWNyAXGdCfzDBLR2EM5s", "Alpha25"),
     ("BtMBMPkoNbnLF9Xn552guQq528KKXcsNBNNBre3oaQtr", "Alpha26"),
     ("D8BuboNjz2m6ioCrrKuXVBAdAYkbLSKdeRvjdd5UhfvM", "Alpha27"),
-    ("GRZLi4UPMS4HnWSAKDf7xQFvoVnTZLATsdNR4RL3dwXd", "Alpha28"),
-    ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha29"),
-    ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha30"),
-    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha31)
+    ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
+    ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
+    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30)
 ]
 
 daily_stats = {
@@ -654,7 +653,7 @@ class AdaptiveAlphaTrader:
                                 logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
                         
                             # Execute the trade
-                            self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'])
+                            self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'], source_wallet=alpha['address'])
                         
                         else:
                             # No token data or price - try anyway with minimal amount
@@ -910,11 +909,10 @@ class AdaptiveAlphaTrader:
                 if should_trade:
                     self.execute_trade(token_address, strategy, adjusted_size, current['price'])
                     
-    def execute_trade(self, token_address, strategy, position_size, entry_price):
-        """Execute the trade using your working function"""
-        
+    def execute_trade(self, token_address, strategy, position_size, entry_price, source_wallet=None):
+        """Execute the trade using your working function with source wallet tracking"""
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
-        
+    
         # Set targets based on strategy
         if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
             targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
@@ -922,13 +920,13 @@ class AdaptiveAlphaTrader:
             targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
         else:  # SCALP
             targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
-            
+    
         # USE YOUR WORKING FUNCTION!
         signature = execute_optimized_transaction(token_address, position_size)
-        
+    
         if signature and signature != "simulation-signature":
             logging.info(f"✅ TRADE EXECUTED! Signature: {signature[:16]}...")
-            
+        
             self.positions[token_address] = {
                 'strategy': strategy,
                 'entry_price': entry_price,
@@ -936,16 +934,17 @@ class AdaptiveAlphaTrader:
                 'targets': targets,
                 'entry_time': time.time(),
                 'peak_price': entry_price,
-                'signature': signature
+                'signature': signature,
+                'source_wallet': source_wallet  # Track which alpha we're following
             }
-            
+        
             # Update brain stats
             self.brain.daily_stats['trades'] += 1
-            
+        
             # Remove from monitoring
             if token_address in self.monitoring:
                 del self.monitoring[token_address]
-                
+        
             logging.info(f"✅ {strategy} position opened: {position_size} SOL")
             return True
         else:
@@ -953,36 +952,92 @@ class AdaptiveAlphaTrader:
             return False
             
     def monitor_positions(self):
-        """Check all positions for exit conditions"""
+        """Monitor all positions with trailing stops and alpha exit detection"""
+        try:
+            current_time = time.time()
         
-        for token_address, pos in list(self.positions.items()):
-            current_price = get_token_price(token_address)
-            if not current_price:
-                continue
+            for token, position in list(self.positions.items()):
+                try:
+                    # Get current price
+                    current_price = get_token_price(token)
+                    if not current_price:
+                        continue
                 
-            pnl = ((current_price - pos['entry_price']) / pos['entry_price'])
-            
-            # Update trailing stop if applicable
-            if pos['targets']['trailing'] and current_price > pos['peak_price']:
-                pos['peak_price'] = current_price
-                pos['targets']['stop_loss'] = 0.97  # 3% trailing
+                    entry_price = position['entry_price']
+                    position_size = position['size']
+                    entry_time = position['entry_time']
                 
-            # Check exit conditions
-            should_exit = False
-            exit_reason = ''
-            
-            if pnl >= (pos['targets']['take_profit'] - 1):
-                should_exit = True
-                exit_reason = 'take_profit'
-            elif pnl <= (pos['targets']['stop_loss'] - 1):
-                should_exit = True
-                exit_reason = 'stop_loss'
-            elif time.time() - pos['entry_time'] > 3600:  # 1 hour max
-                should_exit = True
-                exit_reason = 'timeout'
+                    # Calculate P&L
+                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                    pnl_sol = position_size * (pnl_pct / 100)
                 
-            if should_exit:
-                self.exit_position(token_address, current_price, exit_reason, pnl)
+                    # Update peak price for trailing stop
+                    if current_price > position.get('peak_price', entry_price):
+                        position['peak_price'] = current_price
+                        logging.info(f"📈 New peak for {token[:8]}: +{pnl_pct:.1f}%")
+                
+                    # Hold time
+                    hold_time = (current_time - entry_time) / 60
+                
+                    # TRAILING STOP LOGIC
+                    if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true' and pnl_pct >= float(CONFIG.get('TRAIL_TRIGGER_PCT', 15)):
+                        # Calculate trailing stop level
+                        trail_distance = float(CONFIG.get('TRAIL_DISTANCE_PCT', 5))
+                        peak_pnl_pct = ((position['peak_price'] - entry_price) / entry_price) * 100
+                        trail_stop_pct = peak_pnl_pct - trail_distance
+                    
+                        if pnl_pct <= trail_stop_pct:
+                            logging.info(f"📉 TRAILING STOP HIT for {token[:8]}")
+                            logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
+                            logging.info(f"💰 Selling {token[:8]} - trailing_stop")
+                        
+                            sell_result = execute_optimized_sell(token, position_size)
+                            if sell_result:
+                                self.record_trade_result(token, position, current_price, 'trailing_stop')
+                            continue
+                
+                    # REGULAR TAKE PROFIT (if trailing not enabled or not triggered)
+                    take_profit_pct = float(CONFIG.get('TAKE_PROFIT_PERCENT', 20))
+                    if pnl_pct >= take_profit_pct and CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() != 'true':
+                        logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
+                        logging.info(f"💰 Selling {token[:8]} - take_profit")
+                    
+                        sell_result = execute_optimized_sell(token, position_size)
+                        if sell_result:
+                            self.record_trade_result(token, position, current_price, 'take_profit')
+                        continue
+                
+                    # STOP LOSS
+                    stop_loss_pct = -float(CONFIG.get('STOP_LOSS_PERCENT', 8))
+                    if pnl_pct <= stop_loss_pct:
+                        logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
+                        logging.info(f"💰 Selling {token[:8]} - stop_loss")
+                    
+                        sell_result = execute_optimized_sell(token, position_size)
+                        if sell_result:
+                            self.record_trade_result(token, position, current_price, 'stop_loss')
+                        continue
+                
+                    # TIME-BASED EXIT
+                    max_hold_minutes = float(CONFIG.get('MAX_HOLD_TIME_MINUTES', 240))
+                    if hold_time > max_hold_minutes:
+                        logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
+                        logging.info(f"💰 Selling {token[:8]} - max_hold_time")
+                    
+                        sell_result = execute_optimized_sell(token, position_size)
+                        if sell_result:
+                            self.record_trade_result(token, position, current_price, 'timeout')
+                        continue
+                
+                    # Log position status
+                    if int(current_time) % 300 == 0:  # Every 5 minutes
+                        logging.info(f"📊 {token[:8]}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL) - {hold_time:.0f}m")
+                    
+                except Exception as e:
+                    logging.error(f"Error monitoring position {token}: {e}")
+                
+        except Exception as e:
+            logging.error(f"Error in monitor_positions: {e}")
                 
     def exit_position(self, token_address, exit_price, reason, pnl):
         """Exit position and record results"""
@@ -1127,16 +1182,15 @@ def get_wallet_recent_buys_helius(wallet_address):
         logging.error(f"Error getting wallet buys: {e}")
         return []
 
-
 def run_adaptive_ai_system():
     """Main function to run the complete system with your configuration"""
     
     logging.info("🤖 === ADAPTIVE AI TRADING SYSTEM STARTING ===")
     logging.info(f"🔗 Using Helius RPC")
-    logging.info(f"📡 Loading {len(ALPHA_WALLETS_CONFIG)} alpha wallets...")  # Updated to show actual count
+    logging.info(f"📡 Loading {len(ALPHA_WALLETS_CONFIG)} alpha wallets...")
     logging.info("🔍 + Independent token hunting active")
     logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
-    logging.info("💰 Starting with 4 SOL capital (test mode)")
+    logging.info("💰 Target: $500/day through consistent profits")
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
@@ -1167,6 +1221,7 @@ def run_adaptive_ai_system():
     # Main trading loop
     last_stats_time = 0
     last_hunt_time = 0
+    last_alpha_exit_check = 0  # ADD THIS
     
     while True:
         try:
@@ -1188,13 +1243,18 @@ def run_adaptive_ai_system():
             if trader.positions:
                 trader.monitor_positions()
             
+            # 4.5 Check for alpha exits (ADD THIS SECTION)
+            if current_time - last_alpha_exit_check > float(CONFIG.get('ALPHA_EXIT_CHECK_INTERVAL', 30)):
+                trader.check_alpha_exits()
+                last_alpha_exit_check = current_time
+            
             # 5. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
                 last_stats_time = current_time
                 
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
-                logging.info(f"   Alpha Wallets: {len(trader.alpha_wallets)} active")  # Added wallet count
+                logging.info(f"   Alpha Wallets: {len(trader.alpha_wallets)} active")
                 logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
                 
                 # Count sources
@@ -1221,11 +1281,28 @@ def run_adaptive_ai_system():
                         active_wallets.add(wallet_name)
                 
                 if active_wallets:
-                    logging.info(f"   Active Alpha Wallets: {', '.join(active_wallets)}")
+                    logging.info(f"   Active Alpha Wallets: {', '.join(list(active_wallets)[:5])}")  # Show first 5
                 
                 # Show any insights
                 if stats['trades'] > 0:
                     trader.brain.show_insights()
+                    
+                # Check if trailing stops are enabled
+                if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true':
+                    logging.info("   📈 Trailing stops: ACTIVE")
+                    
+                # Show top performing positions
+                if trader.positions:
+                    top_performers = []
+                    for token, pos in trader.positions.items():
+                        current_price = get_token_price(token)
+                        if current_price and pos['entry_price']:
+                            pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                            top_performers.append((token[:8], pnl_pct))
+                    
+                    top_performers.sort(key=lambda x: x[1], reverse=True)
+                    if top_performers:
+                        logging.info(f"   Top positions: {top_performers[0][0]} ({top_performers[0][1]:+.1f}%)")
                 
             time.sleep(5)  # Check every 5 seconds
             
@@ -1233,13 +1310,15 @@ def run_adaptive_ai_system():
             logging.info("\n🛑 System stopped by user")
             logging.info(f"📊 Final Stats: Monitored {len(trader.alpha_wallets)} wallets")
             trader.brain.show_insights()
+            # Save trading history
+            trader.brain.save_history()
             break
             
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
-
+            
 # Global rate limiter for Jupiter
 class RateLimiter:
     def __init__(self, max_requests=50, time_window=60):  # 50 requests per 60 seconds (leaving buffer)
@@ -1765,6 +1844,42 @@ def fast_rpc_call(method, params=None):
 
 # Usage example:
 # result = fast_rpc_call("getBalance", [wallet_address])
+
+def check_alpha_exits(self):
+    """Monitor if alpha wallets have sold their positions"""
+    try:
+        if not CONFIG.get('MONITOR_ALPHA_EXITS', 'true').lower() == 'true':
+            return
+            
+        for token, position in list(self.positions.items()):
+            # Only check COPY_TRADE positions
+            if position.get('strategy') != 'COPY_TRADE':
+                continue
+                
+            source_wallet = position.get('source_wallet')
+            if not source_wallet:
+                continue
+            
+            # Check if alpha still holds
+            try:
+                alpha_balance = get_token_balance(source_wallet, token)
+                
+                if alpha_balance == 0:
+                    logging.warning(f"🚨 ALPHA EXIT DETECTED: {source_wallet[:8]} sold {token[:8]}")
+                    logging.info(f"💰 Following alpha - selling {token[:8]} immediately")
+                    
+                    # Execute immediate sell
+                    sell_result = execute_optimized_sell(token, position['size'])
+                    
+                    if sell_result:
+                        logging.info(f"✅ Followed alpha exit for {token[:8]}")
+                        self.record_trade_result(token, position, get_token_price(token), 'alpha_exit')
+                    
+            except Exception as e:
+                logging.debug(f"Error checking alpha balance for {token[:8]}: {e}")
+                
+    except Exception as e:
+        logging.error(f"Error in check_alpha_exits: {e}")
 
 def get_token_price_standard(token_address: str) -> Optional[float]:
     """Standard method for getting token price - your original implementation."""
@@ -12424,7 +12539,7 @@ def main():
     logging.info("=" * 60)
     logging.info("🤖 AI ADAPTIVE TRADING SYSTEM v2.0")
     logging.info("=" * 60)
-    logging.info("💎 Alpha Following: 7 profitable wallets")
+    logging.info("💎 Alpha Following: 31 profitable wallets")
     logging.info("🔍 Independent Hunting: 5 pattern strategies")
     logging.info("🧠 Machine Learning: Improves with every trade")
     logging.info("🎯 Target: $500/day through consistent profits")
