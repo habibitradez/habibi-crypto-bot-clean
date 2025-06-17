@@ -188,7 +188,7 @@ CONFIG = {
     'CHECK_INTERVAL_MS': int(os.environ.get('CHECK_INTERVAL_MS', '5000')),
     'MAX_CONCURRENT_TOKENS': int(os.environ.get('MAX_CONCURRENT_TOKENS', '5')),  # Increased from 3
     'MAX_HOLD_TIME_MINUTES': int(os.environ.get('TIME_LIMIT_MINUTES', '30')),
-    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.15')),  # Reduced for safety
+    'BUY_AMOUNT_SOL': float(os.environ.get('BUY_AMOUNT_SOL', '0.30')),  # Reduced for safety
     'TOKEN_SCAN_LIMIT': int(os.environ.get('TOKEN_SCAN_LIMIT', '100')),
     'RETRY_ATTEMPTS': int(os.environ.get('RETRY_ATTEMPTS', '3')),
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
@@ -244,7 +244,7 @@ AI_CONFIG = {
             'MAX_AGE': 5,
             'MIN_LIQ': CONFIG['FRESH_LAUNCH_MIN_LIQ'],
             'MIN_HOLDERS': CONFIG['FRESH_LAUNCH_MIN_HOLDERS'],
-            'POSITION_SIZE': 0.2
+            'POSITION_SIZE': 0.3
         },
         'VOLUME_SPIKE': {
             'MIN_VOLUME': CONFIG['VOLUME_SPIKE_MIN_VOLUME'],
@@ -306,7 +306,7 @@ jeet_daily_stats = {
 }
 
 CAPITAL_PRESERVATION_CONFIG = {
-    'MIN_POSITION_SIZE': 0.15,      # Updated for AI
+    'MIN_POSITION_SIZE': 0.2,      # Updated for AI
     'MAX_LOSS_PERCENTAGE': 15,
     'MIN_BALANCE_SOL': 0.30,
     'POSITION_MULTIPLIER': 5,
@@ -319,7 +319,7 @@ CAPITAL_PRESERVATION_CONFIG = {
 
 SNIPING_CONFIG = {
     'TARGET_DAILY_PROFIT': 500,
-    'POSITION_SIZE_SOL': 0.15,      # Updated for AI
+    'POSITION_SIZE_SOL': 0.3,      # Updated for AI
     'MAX_CONCURRENT_SNIPES': 5,
     'QUICK_PROFIT_TARGETS': [12, 20, 30],  # Updated for AI
     'STOP_LOSS_PERCENT': 8,         # Updated for AI
@@ -640,17 +640,17 @@ class AdaptiveAlphaTrader:
                             liquidity = token_data.get('liquidity', 0)
                         
                             if liquidity > 10000:  # Good liquidity
-                                position_size = 0.1
+                                position_size = 0.3
                                 logging.info(f"💎 HIGH LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
                             elif liquidity > 1000:  # Medium liquidity
-                                position_size = 0.05
+                                position_size = 0.2
                                 logging.info(f"⚡ MED LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
                             elif liquidity > 100:  # Low liquidity
-                                position_size = 0.02
+                                position_size = 0.1
                                 logging.info(f"🎯 LOW LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
                             else:
                                 # Very low liquidity - still try with tiny amount
-                                position_size = 0.01
+                                position_size = 0.05
                                 logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
                         
                             # Execute the trade
