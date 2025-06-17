@@ -10845,7 +10845,7 @@ def get_token_volume_24h(token_address):
         return 0
 
 def get_token_balance(wallet_address, token_address):
-    """Get token balance for a specific token"""
+    """Get token balance for a specific token with debugging"""
     try:
         # Get token accounts for this wallet
         response = wallet._rpc_call("getTokenAccountsByOwner", [
@@ -10854,6 +10854,9 @@ def get_token_balance(wallet_address, token_address):
             {"encoding": "jsonParsed"}
         ])
         
+        # Debug logging
+        logging.debug(f"Token balance check for {token_address[:8]}: {response}")
+        
         if "result" in response:
             accounts = response["result"]["value"]
             if accounts:
@@ -10861,16 +10864,20 @@ def get_token_balance(wallet_address, token_address):
                 balance = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["amount"]
                 decimals = accounts[0]["account"]["data"]["parsed"]["info"]["tokenAmount"]["decimals"]
                 
+                logging.info(f"✅ Found token balance: {balance} (raw) for {token_address[:8]}")
+                
                 # Return raw amount (not UI amount)
                 return int(balance)
             else:
                 # No token account means 0 balance
+                logging.warning(f"⚠️ No token account found for {token_address[:8]}")
                 return 0
         
+        logging.error(f"❌ Invalid response structure for token balance check")
         return 0
         
     except Exception as e:
-        logging.error(f"Error getting token balance: {e}")
+        logging.error(f"Error getting token balance for {token_address[:8]}: {e}")
         return 0
 
 def get_token_liquidity(token_address):
@@ -11861,7 +11868,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction with multiple DEX fallbacks and proper wallet attribute"""
+    """Execute transaction with multiple DEX fallbacks and proper debugging"""
     try:
         logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
@@ -11887,7 +11894,10 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data:
             tx_base64 = swap_data["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            # Debug logging
+            logging.info(f"Transaction data length: {len(tx_base64)} chars")
+            
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -11897,9 +11907,19 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                tx_signature = signature["result"]
-                logging.info(f"✅ Jupiter transaction sent: {tx_signature[:16]}...")
+            # Debug log the full response
+            logging.debug(f"RPC Response: {signature_response}")
+            
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                # Check for placeholder signature
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ Got placeholder signature - transaction not actually sent!")
+                    return None
+                
+                logging.info(f"✅ Jupiter transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
                 
                 # Wait for confirmation
                 confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
@@ -11910,13 +11930,12 @@ def execute_optimized_transaction(token_address, amount_sol):
                     logging.warning(f"Transaction sent but not confirmed: {tx_signature}")
                     return tx_signature
             else:
-                logging.error(f"Jupiter transaction failed: {signature}")
+                error = signature_response.get("error", {})
+                logging.error(f"Jupiter transaction failed: {error}")
         
         # Method 2: If Jupiter fails, try Raydium (good for new tokens)
         logging.warning("Jupiter failed, trying Raydium approach...")
         
-        # For Raydium, we need to build the transaction differently
-        # Try using Jupiter with Raydium-only routes
         quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
             SOL_TOKEN_ADDRESS,
             token_address,
@@ -11928,7 +11947,7 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data_ray:
             tx_base64 = swap_data_ray["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -11937,9 +11956,15 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                tx_signature = signature["result"]
-                logging.info(f"✅ Raydium route transaction sent: {tx_signature[:16]}...")
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ Got placeholder signature from Raydium route")
+                    return None
+                    
+                logging.info(f"✅ Raydium route transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
                 return tx_signature
         
         # Method 3: Last resort - smaller amount with higher slippage
@@ -11957,7 +11982,7 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data_small:
             tx_base64 = swap_data_small["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -11966,19 +11991,16 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                tx_signature = signature["result"]
-                logging.info(f"✅ Small amount transaction sent: {tx_signature[:16]}...")
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ All methods returning placeholder signatures")
+                    return None
+                    
+                logging.info(f"✅ Small amount transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
                 return tx_signature
-        
-        # Method 4: Handle TOKEN_NOT_TRADABLE tokens
-        logging.error(f"Token {token_address[:8]} failed all Jupiter routes")
-        
-        # Check if it's a Pump.fun token or other platform
-        if is_pump_fun_token(token_address):
-            logging.info("Token appears to be from Pump.fun - would need special handling")
-            # Future: Add Pump.fun integration here
-            return None
         
         logging.error("All swap methods failed")
         return None
@@ -11986,17 +12008,11 @@ def execute_optimized_transaction(token_address, amount_sol):
     except Exception as e:
         logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
-        
-        # Check for specific wallet attribute error
-        if "pubkey" in str(e):
-            logging.error("CRITICAL: wallet.pubkey() should be wallet.public_key")
-            logging.error("Fix all instances in your code!")
-            
         return None
 
 
 def wait_for_confirmation(signature, max_timeout=30):
-    """Wait for transaction confirmation"""
+    """Wait for transaction confirmation with better error handling"""
     try:
         start_time = time.time()
         
@@ -12008,22 +12024,26 @@ def wait_for_confirmation(signature, max_timeout=30):
                     result = status["result"]["value"][0]
                     if result:
                         if result.get("confirmationStatus") in ["confirmed", "finalized"]:
+                            logging.info(f"✅ Transaction confirmed: {signature}")
+                            logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{signature}")
                             return True
                         elif result.get("err"):
-                            logging.error(f"Transaction failed: {result['err']}")
+                            logging.error(f"❌ Transaction failed: {result['err']}")
+                            logging.error(f"🔗 Failed tx: https://solscan.io/tx/{signature}")
                             return False
                             
             except Exception as e:
                 logging.debug(f"Error checking status: {e}")
                 
-            time.sleep(1)
-            
+            time.sleep(2)
+        
+        logging.warning(f"Transaction not confirmed after {max_timeout}s: {signature}")
+        logging.warning(f"🔗 Check manually: https://solscan.io/tx/{signature}")
         return False
         
     except Exception as e:
         logging.error(f"Confirmation error: {e}")
         return False
-
 
 def is_pump_fun_token(token_address):
     """Check if token is from Pump.fun platform"""
@@ -12293,7 +12313,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction with multiple DEX fallbacks"""
+    """Execute transaction with multiple DEX fallbacks and proper debugging"""
     try:
         logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
@@ -12319,7 +12339,10 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data:
             tx_base64 = swap_data["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            # Debug logging
+            logging.info(f"Transaction data length: {len(tx_base64)} chars")
+            
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -12329,17 +12352,35 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                logging.info(f"✅ Jupiter transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+            # Debug log the full response
+            logging.debug(f"RPC Response: {signature_response}")
+            
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                # Check for placeholder signature
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ Got placeholder signature - transaction not actually sent!")
+                    return None
+                
+                logging.info(f"✅ Jupiter transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
+                
+                # Wait for confirmation
+                confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
+                if confirmation:
+                    logging.info(f"✅ Transaction confirmed: {tx_signature}")
+                    return tx_signature
+                else:
+                    logging.warning(f"Transaction sent but not confirmed: {tx_signature}")
+                    return tx_signature
             else:
-                logging.error(f"Jupiter transaction failed: {signature}")
+                error = signature_response.get("error", {})
+                logging.error(f"Jupiter transaction failed: {error}")
         
         # Method 2: If Jupiter fails, try Raydium (good for new tokens)
         logging.warning("Jupiter failed, trying Raydium approach...")
         
-        # For Raydium, we need to build the transaction differently
-        # Try using Jupiter with Raydium-only routes
         quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
             SOL_TOKEN_ADDRESS,
             token_address,
@@ -12351,7 +12392,7 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data_ray:
             tx_base64 = swap_data_ray["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -12360,9 +12401,16 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                logging.info(f"✅ Raydium route transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ Got placeholder signature from Raydium route")
+                    return None
+                    
+                logging.info(f"✅ Raydium route transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
+                return tx_signature
         
         # Method 3: Last resort - smaller amount with higher slippage
         logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
@@ -12379,7 +12427,7 @@ def execute_optimized_transaction(token_address, amount_sol):
         if swap_data_small:
             tx_base64 = swap_data_small["swapTransaction"]
             
-            signature = wallet._rpc_call("sendTransaction", [
+            signature_response = wallet._rpc_call("sendTransaction", [
                 tx_base64,
                 {
                     "encoding": "base64",
@@ -12388,9 +12436,16 @@ def execute_optimized_transaction(token_address, amount_sol):
                 }
             ])
             
-            if "result" in signature:
-                logging.info(f"✅ Small amount transaction sent: {signature['result'][:16]}...")
-                return signature["result"]
+            if "result" in signature_response:
+                tx_signature = signature_response["result"]
+                
+                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
+                    logging.error("❌ All methods returning placeholder signatures")
+                    return None
+                    
+                logging.info(f"✅ Small amount transaction sent: {tx_signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
+                return tx_signature
         
         logging.error("All swap methods failed")
         return None
@@ -12436,7 +12491,7 @@ def main():
     # Show pattern detection thresholds
     logging.info("\n🎯 PATTERN DETECTION:")
     logging.info(f"   Fresh Launch: {AI_CONFIG['PATTERNS']['FRESH_LAUNCH']['MIN_AGE']}-{AI_CONFIG['PATTERNS']['FRESH_LAUNCH']['MAX_AGE']}m, >${CONFIG['FRESH_LAUNCH_MIN_LIQ']/1000:.0f}k liq")
-    logging.info(f"   Volume Spike: >${CONFIG['VOLUME_SPIKE_MIN_VOLUME']/1000:.0f}k volume")
+    logging.info(f"   Volume Spike: >{CONFIG['VOLUME_SPIKE_MIN_VOLUME']/1000:.0f}k volume")
     logging.info(f"   Dip Pattern: {CONFIG['DIP_PATTERN_MIN_DUMP']}% to {CONFIG['DIP_PATTERN_MAX_DUMP']}% dump")
     
     # Add start time to brain for tracking
@@ -12446,6 +12501,9 @@ def main():
         # Initialize the system
         if initialize():
             logging.info("\n✅ System initialization successful!")
+            
+            # ADD WALLET VERIFICATION HERE
+            verify_wallet_setup()
             
             # Check wallet balance
             try:
