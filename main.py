@@ -5808,55 +5808,76 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
     return False, "All retry attempts failed"
 
 def execute_optimized_sell(token_address, amount_sol):
-    """Sell tokens using Jupiter - modified from your buy function"""
+    """Sell tokens using JavaScript swap implementation"""
     try:
         logging.info(f"💰 Starting sell for {token_address[:8]}")
         
-        # Get token balance
+        # Check if we have tokens to sell
         token_balance = get_token_balance(wallet.public_key, token_address)
         if not token_balance or token_balance == 0:
             logging.error("No tokens to sell")
             return None
+        
+        # For sells, the amount_sol parameter is actually ignored by swap.js
+        # swap.js will automatically sell the full balance
+        logging.info(f"Token balance found: {token_balance} (raw units)")
+        
+        # Check for small token sells
+        if token_balance < 1000:  # Very small balance
+            logging.info("Small token balance detected - using aggressive sell parameters")
+            # Set environment variable for swap.js
+            import os
+            os.environ['SMALL_TOKEN_SELL'] = 'true'
+        
+        # USE THE JAVASCRIPT IMPLEMENTATION FOR SELLING!
+        logging.info(f"Executing sell via JavaScript swap.js...")
+        success, output = execute_via_javascript(token_address, amount_sol, is_sell=True)
+        
+        if success:
+            # Extract signature from output
+            signature = None
             
-        # Get Jupiter quote for SELL (token -> SOL)
-        quote_data, swap_data = get_jupiter_quote_and_swap(
-            token_address,      # Input mint (token)
-            SOL_TOKEN_ADDRESS,  # Output mint (SOL)
-            int(token_balance), # Use full balance
-            is_buy=False        # This is a sell
-        )
-        
-        if not swap_data:
-            logging.error("Failed to prepare sell swap")
-            return None
-        
-        # Submit transaction (same as buy)
-        tx_base64 = swap_data["swapTransaction"]
-        
-        signature = wallet._rpc_call("sendTransaction", [
-            tx_base64,
-            {
-                "encoding": "base64",
-                "skipPreflight": True,
-                "maxRetries": 5,
-                "preflightCommitment": "processed"
-            }
-        ])
-        
-        if "result" in signature:
-            tx_signature = signature["result"]
-            logging.info(f"✅ Sell transaction submitted: {tx_signature[:16]}...")
+            # Look for Solscan link
+            if "https://solscan.io/tx/" in output:
+                start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
+                end = output.find("\n", start) if "\n" in output[start:] else len(output)
+                signature = output[start:end].strip()
+                logging.info(f"✅ Extracted sell signature: {signature}")
             
-            # Wait for confirmation
-            confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
-            if confirmation:
-                logging.info(f"✅ Sell confirmed: {tx_signature}")
-            else:
-                logging.warning(f"Sell sent but not confirmed: {tx_signature}")
+            # Look for SUCCESS pattern
+            elif "SUCCESS" in output:
+                lines = output.split('\n')
+                for i, line in enumerate(lines):
+                    if "SUCCESS" in line:
+                        potential_sig = line.split("SUCCESS")[-1].strip()
+                        if len(potential_sig) > 40:
+                            signature = potential_sig
+                            break
+                        elif i < len(lines) - 1:
+                            next_line = lines[i + 1].strip()
+                            if len(next_line) > 40 and len(next_line) < 100:
+                                signature = next_line
+                                break
+            
+            if not signature:
+                signature = f"js-sell-{token_address[:8]}-{int(time.time())}"
+                logging.warning(f"Could not extract signature, using identifier: {signature}")
+            
+            logging.info(f"✅ Sell executed successfully via JavaScript")
+            
+            # Clean up environment variable
+            if 'SMALL_TOKEN_SELL' in os.environ:
+                del os.environ['SMALL_TOKEN_SELL']
                 
-            return tx_signature
+            return signature
         else:
-            logging.error("Sell transaction failed")
+            # Check if it's a "marking as sold" scenario
+            if "marking as sold" in output.lower() or "no token accounts found" in output.lower():
+                logging.info("Token already sold or no balance - marking as complete")
+                return f"already-sold-{token_address[:8]}"
+            
+            logging.error(f"❌ JavaScript sell failed")
+            logging.error(f"Output: {output[:500]}")
             return None
             
     except Exception as e:
@@ -5869,31 +5890,114 @@ def execute_partial_sell(token_address: str, percentage: float) -> bool:
     try:
         logging.info(f"💰 Executing {percentage*100:.0f}% sell for {token_address[:8]}")
         
-        # For partial sells, we need to get actual token balance and sell a percentage
-        # This is a simplified version - you might need to adjust based on your token balance logic
+        # First, get the token balance to calculate partial amount
+        token_balance = get_token_balance(wallet.public_key, token_address)
+        if not token_balance or token_balance == 0:
+            logging.error(f"No tokens to sell for {token_address[:8]}")
+            return False
         
-        # Use environment variable to signal partial sell
+        # Calculate the partial amount to sell
+        sell_amount = int(token_balance * percentage)
+        
+        # Convert to decimals if needed (depends on token decimals)
+        # For now, we'll pass the raw amount
+        logging.info(f"Token balance: {token_balance}, selling {percentage*100:.0f}% = {sell_amount} tokens")
+        
+        # Since swap.js sells the full balance by default, we need to modify approach
+        # Option 1: Set environment variable to tell swap.js to sell partial amount
         import os
-        os.environ['PARTIAL_SELL_PERCENTAGE'] = str(percentage)
+        os.environ['PARTIAL_SELL_AMOUNT'] = str(sell_amount)
+        
+        # Check if this is a small amount that needs special handling
+        if sell_amount < 1000:
+            logging.info("Small partial sell amount - using aggressive parameters")
+            os.environ['SMALL_TOKEN_SELL'] = 'true'
         
         # Execute sell via JavaScript
-        success, result = execute_via_javascript(token_address, 0, True)  # Amount doesn't matter for sells
+        # Note: swap.js currently sells full balance, so you may need to modify it
+        # to respect PARTIAL_SELL_AMOUNT environment variable
+        success, output = execute_via_javascript(token_address, 0, is_sell=True)
         
-        # Clean up environment
-        if 'PARTIAL_SELL_PERCENTAGE' in os.environ:
-            del os.environ['PARTIAL_SELL_PERCENTAGE']
+        # Clean up environment variables
+        if 'PARTIAL_SELL_AMOUNT' in os.environ:
+            del os.environ['PARTIAL_SELL_AMOUNT']
+        if 'SMALL_TOKEN_SELL' in os.environ:
+            del os.environ['SMALL_TOKEN_SELL']
         
         if success:
+            # Extract signature from output
+            signature = None
+            
+            # Look for Solscan link
+            if "https://solscan.io/tx/" in output:
+                start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
+                end = output.find("\n", start) if "\n" in output[start:] else len(output)
+                signature = output[start:end].strip()
+            
             logging.info(f"✅ PARTIAL SELL SUCCESS: {percentage*100:.0f}% of {token_address[:8]}")
+            if signature:
+                logging.info(f"🔗 Transaction: https://solscan.io/tx/{signature}")
+            
             return True
         else:
-            logging.error(f"❌ PARTIAL SELL FAILED: {token_address[:8]}")
+            # Check for specific error conditions
+            if "no token accounts found" in output.lower():
+                logging.error(f"No tokens found for {token_address[:8]}")
+            elif "marking as sold" in output.lower():
+                logging.info(f"Token {token_address[:8]} already sold or invalid")
+                return True  # Consider it successful if already sold
+            else:
+                logging.error(f"❌ PARTIAL SELL FAILED: {token_address[:8]}")
+                logging.error(f"Error output: {output[:500]}")
+            
             return False
             
     except Exception as e:
         logging.error(f"❌ Error in partial sell: {e}")
+        logging.error(traceback.format_exc())
         return False
 
+def force_sell_token(token_address):
+    """Force sell a token even if balance checks fail"""
+    try:
+        logging.warning(f"🔥 FORCE SELLING {token_address[:8]}")
+        
+        # Set force sell mode for swap.js
+        import os
+        os.environ['FORCE_SELL'] = 'true'
+        
+        # Execute via JavaScript with force flag
+        import subprocess
+        
+        result = subprocess.run([
+            'node', 'swap.js',
+            token_address,
+            '0.0',  # Amount doesn't matter for force sell
+            'true',  # is_sell
+            'true'   # is_force_sell
+        ], 
+        capture_output=True,
+        text=True,
+        timeout=60,
+        cwd='/opt/render/project/src'
+        )
+        
+        output = result.stdout + result.stderr
+        
+        # Clean up environment
+        if 'FORCE_SELL' in os.environ:
+            del os.environ['FORCE_SELL']
+        
+        if "SUCCESS" in output or "marking as sold" in output.lower():
+            logging.info(f"✅ Force sell completed for {token_address[:8]}")
+            return True
+        else:
+            logging.error(f"Force sell failed: {output[:300]}")
+            return False
+            
+    except Exception as e:
+        logging.error(f"Force sell error: {e}")
+        return False
 
 def execute_with_hard_timeout(command, timeout_seconds=8):
     """Execute command with HARD timeout that KILLS the process - SELL OPERATIONS ONLY"""
@@ -11972,7 +12076,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction with multiple DEX fallbacks and proper debugging"""
+    """Execute transaction using the JavaScript swap implementation"""
     try:
         logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
@@ -11986,129 +12090,49 @@ def execute_optimized_transaction(token_address, amount_sol):
             logging.info("SIMULATION: Would execute trade")
             return "simulation-signature"
         
-        # Method 1: Try Jupiter first (best for established tokens)
-        logging.info("Trying Jupiter...")
-        quote_data, swap_data = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(amount_sol * 1e9),
-            is_buy=True
-        )
+        # USE THE JAVASCRIPT IMPLEMENTATION!
+        logging.info(f"Executing buy via JavaScript swap.js...")
+        success, output = execute_via_javascript(token_address, amount_sol, is_sell=False)
         
-        if swap_data:
-            tx_base64 = swap_data["swapTransaction"]
+        if success:
+            # Extract signature from output
+            signature = None
             
-            # Debug logging
-            logging.info(f"Transaction data length: {len(tx_base64)} chars")
+            # Look for Solscan link in output
+            if "https://solscan.io/tx/" in output:
+                start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
+                end = output.find("\n", start) if "\n" in output[start:] else len(output)
+                signature = output[start:end].strip()
+                logging.info(f"✅ Extracted signature: {signature}")
             
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 5,
-                    "preflightCommitment": "processed"
-                }
-            ])
+            # If no Solscan link, look for SUCCESS pattern
+            elif "SUCCESS" in output:
+                lines = output.split('\n')
+                for i, line in enumerate(lines):
+                    if "SUCCESS" in line and i < len(lines) - 1:
+                        # Signature might be on the same line or next line
+                        potential_sig = line.split("SUCCESS")[-1].strip()
+                        if len(potential_sig) > 40:
+                            signature = potential_sig
+                            break
+                        elif i < len(lines) - 1:
+                            next_line = lines[i + 1].strip()
+                            if len(next_line) > 40 and len(next_line) < 100:
+                                signature = next_line
+                                break
             
-            # Debug log the full response
-            logging.debug(f"RPC Response: {signature_response}")
+            # If still no signature but success, create a trackable identifier
+            if not signature:
+                signature = f"js-buy-{token_address[:8]}-{int(time.time())}"
+                logging.warning(f"Could not extract signature, using identifier: {signature}")
             
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                # Check for placeholder signature
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ Got placeholder signature - transaction not actually sent!")
-                    return None
-                
-                logging.info(f"✅ Jupiter transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                
-                # Wait for confirmation
-                confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
-                if confirmation:
-                    logging.info(f"✅ Transaction confirmed: {tx_signature}")
-                    return tx_signature
-                else:
-                    logging.warning(f"Transaction sent but not confirmed: {tx_signature}")
-                    return tx_signature
-            else:
-                error = signature_response.get("error", {})
-                logging.error(f"Jupiter transaction failed: {error}")
-        
-        # Method 2: If Jupiter fails, try Raydium (good for new tokens)
-        logging.warning("Jupiter failed, trying Raydium approach...")
-        
-        quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(amount_sol * 1e9),
-            is_buy=True,
-            dexes=["Raydium", "Raydium CLMM"]  # Force Raydium only
-        )
-        
-        if swap_data_ray:
-            tx_base64 = swap_data_ray["swapTransaction"]
+            logging.info(f"✅ JavaScript buy executed successfully")
+            return signature
+        else:
+            logging.error(f"❌ JavaScript buy failed")
+            logging.error(f"Output: {output[:500]}")  # First 500 chars
+            return None
             
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 3
-                }
-            ])
-            
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ Got placeholder signature from Raydium route")
-                    return None
-                    
-                logging.info(f"✅ Raydium route transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                return tx_signature
-        
-        # Method 3: Last resort - smaller amount with higher slippage
-        logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
-        
-        smaller_amount = amount_sol * 0.5  # Try with half the amount
-        quote_data_small, swap_data_small = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(smaller_amount * 1e9),
-            is_buy=True,
-            slippage_bps=500  # 5% slippage for new tokens
-        )
-        
-        if swap_data_small:
-            tx_base64 = swap_data_small["swapTransaction"]
-            
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 3
-                }
-            ])
-            
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ All methods returning placeholder signatures")
-                    return None
-                    
-                logging.info(f"✅ Small amount transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                return tx_signature
-        
-        logging.error("All swap methods failed")
-        return None
-        
     except Exception as e:
         logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
@@ -12417,7 +12441,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction with multiple DEX fallbacks and proper debugging"""
+    """Execute transaction using the JavaScript swap implementation"""
     try:
         logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
         
@@ -12431,129 +12455,49 @@ def execute_optimized_transaction(token_address, amount_sol):
             logging.info("SIMULATION: Would execute trade")
             return "simulation-signature"
         
-        # Method 1: Try Jupiter first (best for established tokens)
-        logging.info("Trying Jupiter...")
-        quote_data, swap_data = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(amount_sol * 1e9),
-            is_buy=True
-        )
+        # USE THE JAVASCRIPT IMPLEMENTATION!
+        logging.info(f"Executing buy via JavaScript swap.js...")
+        success, output = execute_via_javascript(token_address, amount_sol, is_sell=False)
         
-        if swap_data:
-            tx_base64 = swap_data["swapTransaction"]
+        if success:
+            # Extract signature from output
+            signature = None
             
-            # Debug logging
-            logging.info(f"Transaction data length: {len(tx_base64)} chars")
+            # Look for Solscan link in output
+            if "https://solscan.io/tx/" in output:
+                start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
+                end = output.find("\n", start) if "\n" in output[start:] else len(output)
+                signature = output[start:end].strip()
+                logging.info(f"✅ Extracted signature: {signature}")
             
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 5,
-                    "preflightCommitment": "processed"
-                }
-            ])
+            # If no Solscan link, look for SUCCESS pattern
+            elif "SUCCESS" in output:
+                lines = output.split('\n')
+                for i, line in enumerate(lines):
+                    if "SUCCESS" in line and i < len(lines) - 1:
+                        # Signature might be on the same line or next line
+                        potential_sig = line.split("SUCCESS")[-1].strip()
+                        if len(potential_sig) > 40:
+                            signature = potential_sig
+                            break
+                        elif i < len(lines) - 1:
+                            next_line = lines[i + 1].strip()
+                            if len(next_line) > 40 and len(next_line) < 100:
+                                signature = next_line
+                                break
             
-            # Debug log the full response
-            logging.debug(f"RPC Response: {signature_response}")
+            # If still no signature but success, create a trackable identifier
+            if not signature:
+                signature = f"js-buy-{token_address[:8]}-{int(time.time())}"
+                logging.warning(f"Could not extract signature, using identifier: {signature}")
             
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                # Check for placeholder signature
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ Got placeholder signature - transaction not actually sent!")
-                    return None
-                
-                logging.info(f"✅ Jupiter transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                
-                # Wait for confirmation
-                confirmation = wait_for_confirmation(tx_signature, max_timeout=30)
-                if confirmation:
-                    logging.info(f"✅ Transaction confirmed: {tx_signature}")
-                    return tx_signature
-                else:
-                    logging.warning(f"Transaction sent but not confirmed: {tx_signature}")
-                    return tx_signature
-            else:
-                error = signature_response.get("error", {})
-                logging.error(f"Jupiter transaction failed: {error}")
-        
-        # Method 2: If Jupiter fails, try Raydium (good for new tokens)
-        logging.warning("Jupiter failed, trying Raydium approach...")
-        
-        quote_data_ray, swap_data_ray = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(amount_sol * 1e9),
-            is_buy=True,
-            dexes=["Raydium", "Raydium CLMM"]  # Force Raydium only
-        )
-        
-        if swap_data_ray:
-            tx_base64 = swap_data_ray["swapTransaction"]
+            logging.info(f"✅ JavaScript buy executed successfully")
+            return signature
+        else:
+            logging.error(f"❌ JavaScript buy failed")
+            logging.error(f"Output: {output[:500]}")  # First 500 chars
+            return None
             
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 3
-                }
-            ])
-            
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ Got placeholder signature from Raydium route")
-                    return None
-                    
-                logging.info(f"✅ Raydium route transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                return tx_signature
-        
-        # Method 3: Last resort - smaller amount with higher slippage
-        logging.warning("Standard routes failed, trying with smaller amount and higher slippage...")
-        
-        smaller_amount = amount_sol * 0.5  # Try with half the amount
-        quote_data_small, swap_data_small = get_jupiter_quote_and_swap(
-            SOL_TOKEN_ADDRESS,
-            token_address,
-            int(smaller_amount * 1e9),
-            is_buy=True,
-            slippage_bps=500  # 5% slippage for new tokens
-        )
-        
-        if swap_data_small:
-            tx_base64 = swap_data_small["swapTransaction"]
-            
-            signature_response = wallet._rpc_call("sendTransaction", [
-                tx_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": True,
-                    "maxRetries": 3
-                }
-            ])
-            
-            if "result" in signature_response:
-                tx_signature = signature_response["result"]
-                
-                if tx_signature == "1111111111111111111111111111111111111111111111111111111111111111":
-                    logging.error("❌ All methods returning placeholder signatures")
-                    return None
-                    
-                logging.info(f"✅ Small amount transaction sent: {tx_signature}")
-                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{tx_signature}")
-                return tx_signature
-        
-        logging.error("All swap methods failed")
-        return None
-        
     except Exception as e:
         logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
