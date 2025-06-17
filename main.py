@@ -979,6 +979,36 @@ class AdaptiveAlphaTrader:
                     # Hold time
                     hold_time = (current_time - entry_time) / 60
                 
+                    # STOP LOSS
+                    stop_loss_pct = -float(CONFIG.get('STOP_LOSS_PERCENT', 8))
+                    if pnl_pct <= stop_loss_pct:
+                        logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
+                        logging.info(f"💰 Selling {token[:8]} - stop_loss")
+                    
+                        sell_result = execute_optimized_sell(token, position_size)
+                        if sell_result and sell_result != "no-tokens":
+                            self.record_trade_result(token, position, current_price, 'stop_loss')
+                        elif sell_result == "no-tokens":
+                            # Already sold, just remove from tracking
+                            logging.info(f"Token {token[:8]} already sold - removing from positions")
+                            del self.positions[token]
+                        continue
+                
+                    # MAX HOLD TIME
+                    max_hold_minutes = float(CONFIG.get('MAX_HOLD_TIME_MINUTES', 240))
+                    if hold_time > max_hold_minutes:
+                        logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
+                        logging.info(f"💰 Selling {token[:8]} - max_hold_time")
+                    
+                        sell_result = execute_optimized_sell(token, position_size)
+                        if sell_result and sell_result != "no-tokens":
+                            self.record_trade_result(token, position, current_price, 'timeout')
+                        elif sell_result == "no-tokens":
+                            # Already sold, just remove from tracking
+                            logging.info(f"Token {token[:8]} already sold - removing from positions")
+                            del self.positions[token]
+                        continue
+                
                     # TRAILING STOP LOGIC
                     if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true' and pnl_pct >= float(CONFIG.get('TRAIL_TRIGGER_PCT', 15)):
                         # Calculate trailing stop level
@@ -992,45 +1022,27 @@ class AdaptiveAlphaTrader:
                             logging.info(f"💰 Selling {token[:8]} - trailing_stop")
                         
                             sell_result = execute_optimized_sell(token, position_size)
-                            if sell_result:
+                            if sell_result and sell_result != "no-tokens":
                                 self.record_trade_result(token, position, current_price, 'trailing_stop')
+                            elif sell_result == "no-tokens":
+                                del self.positions[token]
                             continue
                 
-                    # REGULAR TAKE PROFIT (if trailing not enabled or not triggered)
+                    # TAKE PROFIT
                     take_profit_pct = float(CONFIG.get('TAKE_PROFIT_PERCENT', 20))
-                    if pnl_pct >= take_profit_pct and CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() != 'true':
+                    if pnl_pct >= take_profit_pct:
                         logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
                         logging.info(f"💰 Selling {token[:8]} - take_profit")
                     
                         sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result:
+                        if sell_result and sell_result != "no-tokens":
                             self.record_trade_result(token, position, current_price, 'take_profit')
+                        elif sell_result == "no-tokens":
+                            del self.positions[token]
                         continue
                 
-                    # STOP LOSS
-                    stop_loss_pct = -float(CONFIG.get('STOP_LOSS_PERCENT', 8))
-                    if pnl_pct <= stop_loss_pct:
-                        logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
-                        logging.info(f"💰 Selling {token[:8]} - stop_loss")
-                    
-                        sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result:
-                            self.record_trade_result(token, position, current_price, 'stop_loss')
-                        continue
-                
-                    # TIME-BASED EXIT
-                    max_hold_minutes = float(CONFIG.get('MAX_HOLD_TIME_MINUTES', 240))
-                    if hold_time > max_hold_minutes:
-                        logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
-                        logging.info(f"💰 Selling {token[:8]} - max_hold_time")
-                    
-                        sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result:
-                            self.record_trade_result(token, position, current_price, 'timeout')
-                        continue
-                
-                    # Log position status
-                    if int(current_time) % 300 == 0:  # Every 5 minutes
+                    # Log position status every 5 minutes
+                    if int(current_time) % 300 == 0:
                         logging.info(f"📊 {token[:8]}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL) - {hold_time:.0f}m")
                     
                 except Exception as e:
@@ -1070,8 +1082,8 @@ class AdaptiveAlphaTrader:
             # Update win stats
             if profit_sol > 0:
                 self.brain.daily_stats['wins'] += 1
-
-
+                
+        
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API"""
@@ -1880,6 +1892,193 @@ def check_alpha_exits(self):
                 
     except Exception as e:
         logging.error(f"Error in check_alpha_exits: {e}")
+
+def record_trade_result(self, token, position, exit_price, exit_reason):
+    """Record the result of a closed trade"""
+    try:
+        entry_price = position['entry_price']
+        position_size = position['size']
+        
+        # Calculate P&L
+        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+        pnl_sol = position_size * (pnl_pct / 100)
+        
+        # Update daily stats
+        self.brain.daily_stats['trades'] += 1
+        if pnl_sol > 0:
+            self.brain.daily_stats['wins'] += 1
+        self.brain.daily_stats['pnl_sol'] += pnl_sol
+        
+        # Record to brain
+        hold_time = (time.time() - position['entry_time']) / 60
+        self.brain.record_trade(
+            token_address=token,
+            strategy=position['strategy'],
+            entry_price=entry_price,
+            exit_price=exit_price,
+            pnl_pct=pnl_pct,
+            hold_time=hold_time
+        )
+        
+        # Log the result
+        logging.info(f"💰 Closed {position['strategy']}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL)")
+        
+        # Remove from positions
+        if token in self.positions:
+            del self.positions[token]
+            
+    except Exception as e:
+        logging.error(f"Error recording trade result: {e}")
+
+def verify_all_functions_exist():
+    """Verify all required functions exist before trading"""
+    required_functions = [
+        'execute_optimized_transaction',
+        'execute_optimized_sell',
+        'monitor_positions',
+        'record_trade_result',
+        'check_alpha_exits',
+        'get_token_balance',
+        'execute_via_javascript'
+    ]
+    
+    missing = []
+    for func_name in required_functions:
+        if func_name not in globals() and not hasattr(AdaptiveAlphaTrader, func_name):
+            missing.append(func_name)
+    
+    if missing:
+        logging.error(f"❌ CRITICAL: Missing functions: {missing}")
+        logging.error("Bot will NOT trade until all functions are present!")
+        return False
+    
+    logging.info("✅ All required functions verified")
+    return True
+
+def verify_position_tokens(self):
+    """Verify we actually hold tokens for all positions"""
+    for token, position in list(self.positions.items()):
+        try:
+            balance = get_token_balance(wallet.public_key, token)
+            if balance == 0:
+                logging.warning(f"⚠️ Position tracked but no tokens held: {token[:8]}")
+                logging.warning(f"   Removing from positions")
+                del self.positions[token]
+        except Exception as e:
+            logging.error(f"Error verifying {token}: {e}")
+
+def pre_flight_checklist():
+    """Complete verification before allowing bot to trade"""
+    logging.info("🛡️ === PRE-FLIGHT SAFETY CHECK ===")
+    
+    all_good = True
+    errors = []
+    
+    # 1. Check wallet connection
+    try:
+        balance = wallet.get_balance()
+        logging.info(f"✅ Wallet connected: {balance:.3f} SOL")
+        if balance < CONFIG['MIN_WALLET_BALANCE']:
+            errors.append(f"Balance too low: {balance:.3f} SOL < {CONFIG['MIN_WALLET_BALANCE']} SOL")
+            all_good = False
+    except Exception as e:
+        errors.append(f"Wallet connection failed: {e}")
+        all_good = False
+    
+    # 2. Verify critical functions exist
+    required_functions = {
+        'execute_optimized_transaction': 'Buying tokens',
+        'execute_optimized_sell': 'Selling tokens',
+        'get_token_balance': 'Checking balances',
+        'execute_via_javascript': 'JavaScript bridge',
+        'force_sell_token': 'Force selling',
+        'monitor_positions': 'Position monitoring',
+        'wait_for_confirmation': 'Transaction confirmation'
+    }
+    
+    for func_name, purpose in required_functions.items():
+        if func_name not in globals():
+            errors.append(f"Missing function '{func_name}' needed for: {purpose}")
+            all_good = False
+        else:
+            logging.info(f"✅ {func_name} - {purpose}")
+    
+    # 3. Verify AdaptiveAlphaTrader methods
+    required_methods = {
+        'record_trade_result': 'Recording profits/losses',
+        'check_alpha_exits': 'Following alpha sells',
+        'monitor_positions': 'Managing positions',
+        'execute_trade': 'Opening positions'
+    }
+    
+    try:
+        test_trader = AdaptiveAlphaTrader(wallet)
+        for method_name, purpose in required_methods.items():
+            if not hasattr(test_trader, method_name):
+                errors.append(f"Missing method '{method_name}' needed for: {purpose}")
+                all_good = False
+            else:
+                logging.info(f"✅ {method_name} - {purpose}")
+    except Exception as e:
+        errors.append(f"Cannot create trader instance: {e}")
+        all_good = False
+    
+    # 4. Test JavaScript execution
+    try:
+        test_result = subprocess.run(
+            ['node', '--version'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            cwd='/opt/render/project/src'
+        )
+        if test_result.returncode == 0:
+            logging.info(f"✅ Node.js available: {test_result.stdout.strip()}")
+        else:
+            errors.append("Node.js not available")
+            all_good = False
+    except Exception as e:
+        errors.append(f"JavaScript environment check failed: {e}")
+        all_good = False
+    
+    # 5. Verify swap.js exists
+    import os
+    swap_js_path = '/opt/render/project/src/swap.js'
+    if os.path.exists(swap_js_path):
+        logging.info("✅ swap.js file found")
+    else:
+        errors.append("swap.js file not found")
+        all_good = False
+    
+    # 6. Check environment variables
+    critical_env_vars = [
+        'WALLET_PRIVATE_KEY',
+        'SOLANA_RPC_URL',
+        'HELIUS_API_KEY'
+    ]
+    
+    for var in critical_env_vars:
+        if var in os.environ and os.environ[var]:
+            logging.info(f"✅ {var} is set")
+        else:
+            errors.append(f"Missing environment variable: {var}")
+            all_good = False
+    
+    # 7. Test a simple buy/sell cycle (optional)
+    if all_good and CONFIG.get('TEST_TRADE_ON_START', False):
+        logging.info("🧪 Testing trade execution...")
+        # Could add a small test trade here
+    
+    # Final verdict
+    if all_good:
+        logging.info("✅ === ALL SYSTEMS GO - SAFE TO TRADE ===")
+        return True
+    else:
+        logging.error("❌ === FAILED PRE-FLIGHT CHECK ===")
+        for error in errors:
+            logging.error(f"   ❌ {error}")
+        logging.error("Bot will NOT trade until all issues are resolved!")
+        return False
 
 def get_token_price_standard(token_address: str) -> Optional[float]:
     """Standard method for getting token price - your original implementation."""
@@ -6064,6 +6263,32 @@ def force_sell_token(token_address):
     except Exception as e:
         logging.error(f"Force sell error: {e}")
         return False
+
+def emergency_sell_all_positions(self):
+    """Emergency sell all positions - failsafe"""
+    logging.warning("🚨 EMERGENCY SELL ALL ACTIVATED")
+    
+    for token, position in list(self.positions.items()):
+        try:
+            logging.warning(f"🔥 Force selling {token[:8]}")
+            # Try multiple methods
+            
+            # Method 1: Normal sell
+            result = execute_optimized_sell(token, position['size'])
+            
+            # Method 2: If normal fails, try force sell
+            if not result or result == "no-tokens":
+                force_sell_token(token)
+            
+            # Remove from positions regardless
+            if token in self.positions:
+                del self.positions[token]
+                
+        except Exception as e:
+            logging.error(f"Emergency sell failed for {token}: {e}")
+            # Still remove from tracking
+            if token in self.positions:
+                del self.positions[token]
 
 def execute_with_hard_timeout(command, timeout_seconds=8):
     """Execute command with HARD timeout that KILLS the process - SELL OPERATIONS ONLY"""
@@ -12545,6 +12770,18 @@ def main():
     logging.info("🎯 Target: $500/day through consistent profits")
     logging.info("=" * 60)
     
+    # CHECK FOR EMERGENCY SELL FIRST
+    if CONFIG.get('FORCE_SELL_ALL', 'false').lower() == 'true':
+        logging.warning("🚨 FORCE_SELL_ALL IS ACTIVE - EMERGENCY MODE")
+        try:
+            if initialize():
+                trader = AdaptiveAlphaTrader(wallet)
+                trader.emergency_sell_all_positions()
+                logging.warning("🚨 Emergency sell complete - set FORCE_SELL_ALL=false to resume normal trading")
+        except Exception as e:
+            logging.error(f"Emergency sell failed: {e}")
+        return  # Exit after emergency sell
+    
     # Check strategy selection
     strategy = CONFIG.get('STRATEGY', 'AI_ADAPTIVE')
     if strategy == 'AI_ADAPTIVE':
@@ -12578,7 +12815,13 @@ def main():
         if initialize():
             logging.info("\n✅ System initialization successful!")
             
-            # ADD WALLET VERIFICATION HERE
+            # RUN PRE-FLIGHT SAFETY CHECK
+            if not pre_flight_checklist():
+                logging.error("❌ Pre-flight check failed - stopping bot for safety")
+                logging.error("Fix all issues before restarting")
+                return
+            
+            # Verify wallet setup
             verify_wallet_setup()
             
             # Check wallet balance
@@ -12597,7 +12840,16 @@ def main():
                     
             except Exception as e:
                 logging.error(f"Could not check wallet balance: {e}")
-                # Continue anyway for testing
+                return  # Don't continue if can't check balance
+            
+            # VERIFY EXISTING POSITIONS IF CONFIGURED
+            if CONFIG.get('VERIFY_POSITIONS_ON_START', 'true').lower() == 'true':
+                logging.info("🔍 Verifying existing positions...")
+                try:
+                    temp_trader = AdaptiveAlphaTrader(wallet)
+                    temp_trader.verify_position_tokens()
+                except Exception as e:
+                    logging.error(f"Position verification failed: {e}")
             
             logging.info("\n🚀 Starting AI trading engine...\n")
             
