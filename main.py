@@ -1407,20 +1407,26 @@ class SolanaWallet:
             "method": method,
             "params": params
         }
-        
-        if ULTRA_DIAGNOSTICS:
-            logging.info(f"Making RPC call: {method} with params {json.dumps(params)}")
+    
+        if ULTRA_DIAGNOSTICS or method == "sendTransaction":  # Always log sendTransaction
+            logging.info(f"Making RPC call: {method}")
+            if method == "sendTransaction":
+                logging.info(f"Transaction data preview: {params[0][:100]}...")  # First 100 chars
             
         headers = {"Content-Type": "application/json"}
         try:
             response = requests.post(self.rpc_url, json=payload, headers=headers, timeout=15)
-            
+        
             if response.status_code == 200:
                 response_data = response.json()
-                
+            
+                # Special logging for sendTransaction
+                if method == "sendTransaction":
+                    logging.info(f"sendTransaction response: {response_data}")
+            
                 if 'error' in response_data:
                     logging.error(f"RPC error in response: {response_data['error']}")
-                    
+                
                 return response_data
             else:
                 error_text = f"RPC call failed with status {response.status_code}: {response.text}"
@@ -1428,7 +1434,7 @@ class SolanaWallet:
                 raise Exception(error_text)
         except Exception as e:
             logging.error(f"Error in RPC call {method}: {str(e)}")
-            
+        
             # Try fallback RPC if primary fails
             if fallback_rpc():
                 # Update RPC URL and retry the call
