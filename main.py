@@ -2069,7 +2069,7 @@ def pre_flight_checklist():
         'get_token_balance': 'Checking balances',
         'execute_via_javascript': 'JavaScript bridge',
         'force_sell_token': 'Force selling',
-        'monitor_positions': 'Position monitoring',
+        # REMOVED 'monitor_positions' from here - it's a class method, not a global function
         'wait_for_confirmation': 'Transaction confirmation'
     }
     
