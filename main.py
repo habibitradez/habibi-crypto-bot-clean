@@ -5011,17 +5011,19 @@ def verify_wallet_setup():
         # Check simulation mode
         logging.info(f"✅ Simulation mode: {CONFIG.get('SIMULATION_MODE', 'Not set')}")
         
-        # Test RPC connection
-        test_response = wallet._rpc_call("getHealth")
+        # Test RPC connection - FIXED: Added empty params list
+        test_response = wallet._rpc_call("getHealth", [])
         logging.info(f"✅ RPC health check: {test_response}")
         
-        # Check if wallet can sign
+        # Test getting recent blockhash
         try:
-            test_message = b"test"
-            # This depends on your wallet implementation
-            logging.info("✅ Wallet can sign transactions")
+            blockhash_response = wallet._rpc_call("getLatestBlockhash", [])
+            if "result" in blockhash_response:
+                logging.info("✅ Can fetch blockhash - RPC connection working")
+            else:
+                logging.warning("⚠️ Cannot fetch blockhash")
         except:
-            logging.warning("⚠️ Could not verify wallet signing capability")
+            logging.warning("⚠️ Blockhash test failed")
             
         logging.info("🔍 === END VERIFICATION ===")
         
