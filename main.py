@@ -5815,23 +5815,24 @@ def execute_optimized_sell(token_address, amount_sol):
         # Check if we have tokens to sell
         token_balance = get_token_balance(wallet.public_key, token_address)
         if not token_balance or token_balance == 0:
-            logging.error("No tokens to sell")
-            return None
+            logging.warning(f"No tokens to sell for {token_address[:8]}")
+            return "no-tokens"
         
-        # For sells, the amount_sol parameter is actually ignored by swap.js
-        # swap.js will automatically sell the full balance
         logging.info(f"Token balance found: {token_balance} (raw units)")
         
         # Check for small token sells
         if token_balance < 1000:  # Very small balance
             logging.info("Small token balance detected - using aggressive sell parameters")
-            # Set environment variable for swap.js
             import os
             os.environ['SMALL_TOKEN_SELL'] = 'true'
         
-        # USE THE JAVASCRIPT IMPLEMENTATION FOR SELLING!
-        logging.info(f"Executing sell via JavaScript swap.js...")
+        # ALWAYS USE JAVASCRIPT FOR SELLING!
+        logging.info(f"🚀 Executing sell via JavaScript swap.js...")
         success, output = execute_via_javascript(token_address, amount_sol, is_sell=True)
+        
+        # Clean up environment variable
+        if 'SMALL_TOKEN_SELL' in os.environ:
+            del os.environ['SMALL_TOKEN_SELL']
         
         if success:
             # Extract signature from output
@@ -5842,42 +5843,29 @@ def execute_optimized_sell(token_address, amount_sol):
                 start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
                 end = output.find("\n", start) if "\n" in output[start:] else len(output)
                 signature = output[start:end].strip()
-                logging.info(f"✅ Extracted sell signature: {signature}")
+                logging.info(f"✅ Sell transaction successful: {signature}")
+                logging.info(f"🔗 View on Solscan: https://solscan.io/tx/{signature}")
+            else:
+                logging.info(f"✅ SELL SUCCESS for {token_address[:8]}")
+                signature = f"js-sell-success-{token_address[:8]}-{int(time.time())}"
             
-            # Look for SUCCESS pattern
-            elif "SUCCESS" in output:
-                lines = output.split('\n')
-                for i, line in enumerate(lines):
-                    if "SUCCESS" in line:
-                        potential_sig = line.split("SUCCESS")[-1].strip()
-                        if len(potential_sig) > 40:
-                            signature = potential_sig
-                            break
-                        elif i < len(lines) - 1:
-                            next_line = lines[i + 1].strip()
-                            if len(next_line) > 40 and len(next_line) < 100:
-                                signature = next_line
-                                break
-            
-            if not signature:
-                signature = f"js-sell-{token_address[:8]}-{int(time.time())}"
-                logging.warning(f"Could not extract signature, using identifier: {signature}")
-            
-            logging.info(f"✅ Sell executed successfully via JavaScript")
-            
-            # Clean up environment variable
-            if 'SMALL_TOKEN_SELL' in os.environ:
-                del os.environ['SMALL_TOKEN_SELL']
-                
             return signature
-        else:
-            # Check if it's a "marking as sold" scenario
-            if "marking as sold" in output.lower() or "no token accounts found" in output.lower():
-                logging.info("Token already sold or no balance - marking as complete")
-                return f"already-sold-{token_address[:8]}"
             
-            logging.error(f"❌ JavaScript sell failed")
-            logging.error(f"Output: {output[:500]}")
+        else:
+            # Check if it's a "marking as sold" scenario (not really an error)
+            output_lower = output.lower()
+            if any(phrase in output_lower for phrase in [
+                "marking as sold",
+                "no token accounts found",
+                "token balance is zero",
+                "already sold",
+                "could not find token"
+            ]):
+                logging.info(f"✅ Token {token_address[:8]} already sold or no balance - marking complete")
+                return "already-sold"
+            
+            logging.error(f"❌ JavaScript sell failed for {token_address[:8]}")
+            logging.error(f"Error output: {output[:500]}...")
             return None
             
     except Exception as e:
@@ -12075,14 +12063,15 @@ def submit_via_helius(signed_transaction):
         logging.error(traceback.format_exc())
         return None
 
-def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction using the JavaScript swap implementation"""
+def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
+    """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
     try:
-        logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
+        action = "sell" if is_sell else "buy"
+        logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
         
         # Check balance
         balance = wallet.get_balance()
-        if balance < amount_sol + 0.01:
+        if not is_sell and balance < amount_sol + 0.01:
             logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
             return None
             
@@ -12090,54 +12079,33 @@ def execute_optimized_transaction(token_address, amount_sol):
             logging.info("SIMULATION: Would execute trade")
             return "simulation-signature"
         
-        # USE THE JAVASCRIPT IMPLEMENTATION!
-        logging.info(f"Executing buy via JavaScript swap.js...")
-        success, output = execute_via_javascript(token_address, amount_sol, is_sell=False)
+        # ALWAYS USE JAVASCRIPT FOR BOTH BUY AND SELL
+        logging.info(f"🚀 Executing {action} via JavaScript swap.js...")
+        success, output = execute_via_javascript(token_address, amount_sol, is_sell=is_sell)
         
         if success:
             # Extract signature from output
-            signature = None
-            
-            # Look for Solscan link in output
             if "https://solscan.io/tx/" in output:
                 start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
                 end = output.find("\n", start) if "\n" in output[start:] else len(output)
                 signature = output[start:end].strip()
-                logging.info(f"✅ Extracted signature: {signature}")
-            
-            # If no Solscan link, look for SUCCESS pattern
-            elif "SUCCESS" in output:
-                lines = output.split('\n')
-                for i, line in enumerate(lines):
-                    if "SUCCESS" in line and i < len(lines) - 1:
-                        # Signature might be on the same line or next line
-                        potential_sig = line.split("SUCCESS")[-1].strip()
-                        if len(potential_sig) > 40:
-                            signature = potential_sig
-                            break
-                        elif i < len(lines) - 1:
-                            next_line = lines[i + 1].strip()
-                            if len(next_line) > 40 and len(next_line) < 100:
-                                signature = next_line
-                                break
-            
-            # If still no signature but success, create a trackable identifier
-            if not signature:
-                signature = f"js-buy-{token_address[:8]}-{int(time.time())}"
-                logging.warning(f"Could not extract signature, using identifier: {signature}")
-            
-            logging.info(f"✅ JavaScript buy executed successfully")
-            return signature
+                logging.info(f"✅ Real {action} transaction: {signature}")
+                return signature
+            else:
+                logging.info(f"✅ {action.upper()} SUCCESS via JavaScript")
+                return f"js-{action}-success-{token_address[:8]}-{int(time.time())}"
         else:
-            logging.error(f"❌ JavaScript buy failed")
-            logging.error(f"Output: {output[:500]}")  # First 500 chars
+            # For sells, check if it's already sold
+            if is_sell and ("no token accounts found" in output.lower() or "marking as sold" in output.lower()):
+                logging.info(f"Token {token_address[:8]} already sold or no balance")
+                return "already-sold"
+                
+            logging.error(f"❌ JavaScript {action} failed")
             return None
             
     except Exception as e:
         logging.error(f"Transaction error: {e}")
-        logging.error(traceback.format_exc())
         return None
-
 
 def wait_for_confirmation(signature, max_timeout=30):
     """Wait for transaction confirmation with better error handling"""
@@ -12440,14 +12408,15 @@ def submit_via_helius(signed_transaction):
         logging.error(traceback.format_exc())
         return None
 
-def execute_optimized_transaction(token_address, amount_sol):
-    """Execute transaction using the JavaScript swap implementation"""
+def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
+    """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
     try:
-        logging.info(f"Starting optimized transaction for {token_address[:8]} with {amount_sol} SOL")
+        action = "sell" if is_sell else "buy"
+        logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
         
         # Check balance
         balance = wallet.get_balance()
-        if balance < amount_sol + 0.01:
+        if not is_sell and balance < amount_sol + 0.01:
             logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
             return None
             
@@ -12455,54 +12424,33 @@ def execute_optimized_transaction(token_address, amount_sol):
             logging.info("SIMULATION: Would execute trade")
             return "simulation-signature"
         
-        # USE THE JAVASCRIPT IMPLEMENTATION!
-        logging.info(f"Executing buy via JavaScript swap.js...")
-        success, output = execute_via_javascript(token_address, amount_sol, is_sell=False)
+        # ALWAYS USE JAVASCRIPT FOR BOTH BUY AND SELL
+        logging.info(f"🚀 Executing {action} via JavaScript swap.js...")
+        success, output = execute_via_javascript(token_address, amount_sol, is_sell=is_sell)
         
         if success:
             # Extract signature from output
-            signature = None
-            
-            # Look for Solscan link in output
             if "https://solscan.io/tx/" in output:
                 start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
                 end = output.find("\n", start) if "\n" in output[start:] else len(output)
                 signature = output[start:end].strip()
-                logging.info(f"✅ Extracted signature: {signature}")
-            
-            # If no Solscan link, look for SUCCESS pattern
-            elif "SUCCESS" in output:
-                lines = output.split('\n')
-                for i, line in enumerate(lines):
-                    if "SUCCESS" in line and i < len(lines) - 1:
-                        # Signature might be on the same line or next line
-                        potential_sig = line.split("SUCCESS")[-1].strip()
-                        if len(potential_sig) > 40:
-                            signature = potential_sig
-                            break
-                        elif i < len(lines) - 1:
-                            next_line = lines[i + 1].strip()
-                            if len(next_line) > 40 and len(next_line) < 100:
-                                signature = next_line
-                                break
-            
-            # If still no signature but success, create a trackable identifier
-            if not signature:
-                signature = f"js-buy-{token_address[:8]}-{int(time.time())}"
-                logging.warning(f"Could not extract signature, using identifier: {signature}")
-            
-            logging.info(f"✅ JavaScript buy executed successfully")
-            return signature
+                logging.info(f"✅ Real {action} transaction: {signature}")
+                return signature
+            else:
+                logging.info(f"✅ {action.upper()} SUCCESS via JavaScript")
+                return f"js-{action}-success-{token_address[:8]}-{int(time.time())}"
         else:
-            logging.error(f"❌ JavaScript buy failed")
-            logging.error(f"Output: {output[:500]}")  # First 500 chars
+            # For sells, check if it's already sold
+            if is_sell and ("no token accounts found" in output.lower() or "marking as sold" in output.lower()):
+                logging.info(f"Token {token_address[:8]} already sold or no balance")
+                return "already-sold"
+                
+            logging.error(f"❌ JavaScript {action} failed")
             return None
             
     except Exception as e:
         logging.error(f"Transaction error: {e}")
-        logging.error(traceback.format_exc())
         return None
-
 
 def main():
     """Main entry point - AI Adaptive Trading System"""
