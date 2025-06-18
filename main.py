@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("D8BuboNjz2m6ioCrrKuXVBAdAYkbLSKdeRvjdd5UhfvM", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30)
+    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30")
 ]
 
 daily_stats = {
@@ -6698,6 +6698,8 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
 
 def execute_optimized_sell(token_address, amount_sol):
     """Sell tokens using JavaScript swap implementation"""
+    global wallet
+    
     try:
         import os  # CRITICAL FIX - Import os at the beginning
         import time
@@ -11446,6 +11448,8 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
 
 def execute_via_javascript(token_address, amount, is_sell=False):
     """Execute trade via JavaScript with proper amount handling and sell fixes"""
+    global wallet
+    
     try:
         import subprocess
         
@@ -12972,6 +12976,8 @@ def submit_via_helius(signed_transaction):
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
+    global wallet
+    
     try:
         action = "sell" if is_sell else "buy"
         logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
@@ -13318,6 +13324,8 @@ def submit_via_helius(signed_transaction):
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
+    global wallet
+    
     try:
         action = "sell" if is_sell else "buy"
         logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
@@ -13363,6 +13371,8 @@ def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
 
 def get_all_token_balances(wallet_pubkey):
     """Get all SPL token balances for the wallet"""
+    global wallet
+    
     try:
         import requests
         
