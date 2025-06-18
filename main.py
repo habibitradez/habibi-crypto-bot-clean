@@ -177,7 +177,7 @@ CONFIG = {
     
     # Trading parameters (UPDATED for AI)
     'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Reduced from 30
-    'FORCE_SELL_ALL': os.environ.get('FORCE_SELL_ALL', 'false')),
+    'FORCE_SELL_ALL': os.environ.get('FORCE_SELL_ALL', 'false'),
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
