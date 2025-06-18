@@ -1799,6 +1799,11 @@ def get_wallet_recent_buys_helius(wallet_address):
 def run_adaptive_ai_system():
     """Main function to run the complete system with your configuration"""
     
+        # Add this check
+    if wallet is None:
+        logging.error("❌ Wallet not initialized! Cannot start trading system.")
+        return
+    
     logging.info("🤖 === ADAPTIVE AI TRADING SYSTEM STARTING ===")
     logging.info(f"🔗 Using Helius RPC")
     logging.info(f"📡 Loading {len(ALPHA_WALLETS_CONFIG)} alpha wallets...")
