@@ -177,6 +177,7 @@ CONFIG = {
     
     # Trading parameters (UPDATED for AI)
     'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Reduced from 30
+    'FORCE_SELL_ALL': os.environ.get('FORCE_SELL_ALL', 'false')),
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),
     'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
@@ -1174,30 +1175,139 @@ class AdaptiveAlphaTrader:
     def emergency_sell_all_positions(self):
         """Emergency sell all positions - failsafe"""
         logging.warning("🚨 EMERGENCY SELL ALL ACTIVATED")
-        
+    
+        # Step 1: Sell all tracked positions (your existing code)
         for token, position in list(self.positions.items()):
             try:
-                logging.warning(f"🔥 Force selling {token[:8]}")
+                logging.warning(f"🔥 Force selling tracked position {token[:8]}")
                 # Try multiple methods
-                
+            
                 # Method 1: Normal sell
                 result = execute_optimized_sell(token, position['size'])
-                
+            
                 # Method 2: If normal fails, try force sell
                 if not result or result == "no-tokens":
                     force_sell_token(token)
-                
+            
                 # Remove from positions regardless
                 if token in self.positions:
                     del self.positions[token]
-                    
+                
             except Exception as e:
                 logging.error(f"Emergency sell failed for {token}: {e}")
                 # Still remove from tracking
                 if token in self.positions:
                     del self.positions[token]
-                
+    
+        # Step 2: Find and sell ANY other tokens in wallet (untracked ones)
+        logging.warning("🔍 Searching for untracked tokens in wallet...")
+        try:
+            import requests
         
+            # Get all token accounts
+            response = requests.post(
+                os.environ.get('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        str(self.wallet.public_key),
+                        {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                        {"encoding": "jsonParsed"}
+                    ]
+                },
+                timeout=10
+            )
+        
+            if response.status_code == 200:
+                result = response.json()
+                if 'result' in result and 'value' in result['result']:
+                    for account in result['result']['value']:
+                        try:
+                            mint = account['account']['data']['parsed']['info']['mint']
+                            balance = int(account['account']['data']['parsed']['info']['tokenAmount']['amount'])
+                        
+                            # Skip SOL and empty balances
+                            if mint == "So11111111111111111111111111111111111111112" or balance == 0:
+                                continue
+                            
+                            # Skip if already processed
+                            if mint in self.positions:
+                                continue
+                            
+                            logging.warning(f"🔥 Found untracked token {mint[:8]} - force selling")
+                        
+                            # Try to sell it
+                            try:
+                                execute_optimized_sell(mint, balance)
+                            except:
+                                # Try force sell as backup
+                                try:
+                                    force_sell_token(mint)
+                                except:
+                                    logging.error(f"Could not sell {mint[:8]}")
+                                
+                        except Exception as e:
+                            logging.error(f"Error processing token account: {e}")
+                        
+        except Exception as e:
+            logging.error(f"Error getting all wallet tokens: {e}")
+    
+        # Step 3: Clear all monitoring
+        self.monitoring.clear()
+        logging.warning("✅ Cleared all monitoring positions")
+    
+        # Step 4: Show final balance
+        try:
+            final_balance = self.wallet.get_balance()
+            logging.warning(f"💰 EMERGENCY SELL COMPLETE - Final balance: {final_balance:.3f} SOL")
+        except:
+            logging.warning("✅ EMERGENCY SELL COMPLETE")
+
+
+    def get_all_wallet_tokens(self):
+        """Get all SPL tokens in wallet"""
+        try:
+            import requests
+        
+            response = requests.post(
+                os.environ.get('SOLANA_RPC_URL'),
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenAccountsByOwner",
+                    "params": [
+                        str(self.wallet.public_key),
+                        {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                        {"encoding": "jsonParsed"}
+                    ]
+                },
+                timeout=10
+            )
+        
+            token_balances = {}
+             if response.status_code == 200:
+                result = response.json()
+                if 'result' in result and 'value' in result['result']:
+                    for account in result['result']['value']:
+                        mint = account['account']['data']['parsed']['info']['mint']
+                        balance = int(account['account']['data']['parsed']['info']['tokenAmount']['amount'])
+                        decimals = account['account']['data']['parsed']['info']['tokenAmount']['decimals']
+                    
+                        if balance > 0:
+                            # Convert to human-readable amount
+                            human_balance = balance / (10 ** decimals)
+                            token_balances[mint] = human_balance
+                            logging.info(f"   Found {human_balance:.2f} of token {mint[:8]}")
+                        
+            return token_balances
+        
+        except Exception as e:
+            logging.error(f"Error getting all token balances: {e}")
+            return {}
+
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API"""
@@ -12833,6 +12943,42 @@ def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
         logging.error(f"Transaction error: {e}")
         logging.error(traceback.format_exc())
         return None
+
+def get_all_token_balances(wallet_pubkey):
+    """Get all SPL token balances for the wallet"""
+    try:
+        import requests
+        
+        # Use Helius or your RPC to get all token accounts
+        response = requests.post(
+            SOLANA_RPC_URL,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenAccountsByOwner",
+                "params": [
+                    str(wallet_pubkey),
+                    {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                    {"encoding": "jsonParsed"}
+                ]
+            }
+        )
+        
+        token_balances = {}
+        if response.status_code == 200:
+            result = response.json()
+            if 'result' in result and 'value' in result['result']:
+                for account in result['result']['value']:
+                    mint = account['account']['data']['parsed']['info']['mint']
+                    balance = int(account['account']['data']['parsed']['info']['tokenAmount']['amount'])
+                    if balance > 0:
+                        token_balances[mint] = balance
+                        
+        return token_balances
+        
+    except Exception as e:
+        logging.error(f"Error getting token balances: {e}")
+        return {}
 
 def main():
     """Main entry point - AI Adaptive Trading System"""
