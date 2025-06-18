@@ -52,11 +52,11 @@ HELIUS_WEBSOCKET_URL = f"wss://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
 
 # Your alpha wallets to follow
 ALPHA_WALLETS_CONFIG = [
-    ("6jvYtr9G5WQnKs3cFsFtKmEfkbEnUXFhBKsmZad26QPV", "Alpha1"),
-    ("CY7Z9oVW1wgY2hjcfajwD84P4UCD3TbrFqp2w3WzEoxr", "Alpha2"),
+    ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "Alpha1"),
+    ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha2"),
     ("y33PBNx4g727Srk85emSuM6mpjx7BY1qKwRV6nxWAUz", "Alpha3"),
     ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4"),
-    ("j1opmdubY84LUeidrPCsSGskTCYmeJVzds1UWm6nngb", "Alpha5"),
+    ("CPScg3CeaRPQHzesEpWkUzkSPyBrHMPpXnHzgpRBm3eZ", "Alpha5"),
     ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
     ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7"),
     ("BhLc8dz4rxdpF6LbR166hSsinaRWuZj4hTY6SuMF85pL", "Alpha8"),
@@ -71,7 +71,7 @@ ALPHA_WALLETS_CONFIG = [
     ("Ct9pXcNjhAwtvBkyybQoZc3ozGjcMnyFNdQ5AE1LkK1", "Alpha17"),
     ("8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf", "Alpha18"),
     ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19"),
-    ("EPqaXbdqfi8XiEJtJw1SwiiFzv9JKX4JrS7w1w5E6iGK", "Alpha20"),
+    ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20"),
     ("86yzRC1iz2SWdUgmTwoEZSMHnziQJhCuLpWrxzRrdbEg", "Alpha21"),
     ("CRWz4NYBzWfC8BtWYnWFD8nJn4BEwC89gGFg52XrS3CE", "Alpha22"),
     ("4CqecFud362LKgALvChyhj6276he3Sy8yKim1uvFNV1m", "Alpha23"),
