@@ -9874,7 +9874,12 @@ def initialize():
     """Initialize the bot and verify connectivity."""
     global wallet
     
-    logging.info(f"Starting bot initialization...")
+    logging.info("Starting bot initialization...")
+    
+    # Debug: Check if private key exists
+    if not CONFIG.get('WALLET_PRIVATE_KEY'):
+        logging.error("❌ WALLET_PRIVATE_KEY not found in CONFIG")
+        return False
     
     # Add additional logging for critical configuration values
     logging.info(f"SOLANA_RPC_URL: {CONFIG['SOLANA_RPC_URL']}")
