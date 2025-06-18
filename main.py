@@ -1287,7 +1287,7 @@ class AdaptiveAlphaTrader:
             )
         
             token_balances = {}
-             if response.status_code == 200:
+            if response.status_code == 200:
                 result = response.json()
                 if 'result' in result and 'value' in result['result']:
                     for account in result['result']['value']:
