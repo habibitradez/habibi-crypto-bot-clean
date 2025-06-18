@@ -9910,7 +9910,7 @@ def initialize():
                 masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
                 logging.info(f"Using private key: {masked_key}")
                 
-            main_wallet = WalletManager(CONFIG['WALLET_PRIVATE_KEY'])
+                main_wallet = WalletManager(CONFIG['WALLET_PRIVATE_KEY'])
                 private_key=CONFIG['WALLET_PRIVATE_KEY'],
                 rpc_url=CONFIG['SOLANA_RPC_URL']
             )
