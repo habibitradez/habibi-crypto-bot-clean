@@ -592,6 +592,7 @@ class AdaptiveAlphaTrader:
         self.brain = TradingBrain()  # Learning component
         self.last_check = {}  # Track last check time for each wallet
         self.independent_hunting = True  # Enable autonomous hunting
+        self.wallet_styles = {}
         self.wallet_performance = defaultdict(lambda: {
             'trades_signaled': 0,
             'trades_copied': 0,
@@ -1515,7 +1516,7 @@ class AdaptiveAlphaTrader:
             logging.info(f"🔍 Analyzing wallet {wallet_address[:8]} trading patterns...")
             
             # Get recent trades
-            recent_trades = get_wallet_recent_trades_detailed(wallet_address, days=days_to_analyze)
+            recent_trades = get_wallet_recent_buys_helius(wallet_address, days=days_to_analyze)
             
             if not recent_trades:
                 return 'UNKNOWN'
