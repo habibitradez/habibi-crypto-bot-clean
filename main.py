@@ -592,76 +592,169 @@ class AdaptiveAlphaTrader:
         self.brain = TradingBrain()  # Learning component
         self.last_check = {}  # Track last check time for each wallet
         self.independent_hunting = True  # Enable autonomous hunting
+        self.wallet_performance = defaultdict(lambda: {
+            'trades_signaled': 0,
+            'trades_copied': 0,
+            'wins': 0,
+            'losses': 0,
+            'total_pnl': 0,
+            'avg_hold_time': 0,
+            'best_trade': 0,
+            'worst_trade': 0
+        })
         
-    def add_alpha_wallet(self, wallet_address, name=""):
-        """Add a profitable wallet to follow"""
+    def add_alpha_wallet(self, wallet_address, name="", style=None):
+        """Enhanced version with style support"""
+        
+        # If style="AUTO", analyze the wallet
+        if style == "AUTO":
+            detected_style, params, stats = self.analyze_and_classify_wallet(wallet_address)
+            style = detected_style
+        else:
+            # Use default style if not specified
+            style = style or 'SCALPER'
+            params = self.get_style_params(style)
+            
         self.alpha_wallets.append({
             'address': wallet_address,
             'name': name,
+            'style': style,  # Add style
             'trades_copied': 0,
             'profit_generated': 0
         })
+        
+        # Store style parameters
+        if not hasattr(self, 'wallet_styles'):
+            self.wallet_styles = {}
+        self.wallet_styles[wallet_address] = params
+        
         self.last_check[wallet_address] = 0
-        logging.info(f"✅ Following alpha wallet: {name} ({wallet_address[:8]}...)")
+        logging.info(f"✅ Following {style} wallet: {name} ({wallet_address[:8]}...)")
         
     def check_alpha_wallets(self):
-        """Check all alpha wallets for new buys"""
+        """Enhanced check with wallet style awareness"""
         current_time = time.time()
-        
+    
         for alpha in self.alpha_wallets:
-            # Check EVERY 10 SECONDS for faster detection
-            if current_time - self.last_check[alpha['address']] < 20:
+            # Skip if not active
+            if not alpha.get('active', True):
                 continue
             
-            self.last_check[alpha['address']] = current_time
+            # Dynamic check intervals based on wallet style
+            wallet_style = alpha.get('style', 'SCALPER')
+        
+            if wallet_style == 'BOT_TRADER':
+                check_interval = 5  # Check every 5 seconds for bots
+            elif wallet_style == 'SNIPER':
+                check_interval = 10  # 10 seconds for snipers
+            elif wallet_style == 'HOLDER':
+                check_interval = 30  # 30 seconds for holders
+            else:
+                check_interval = 20  # Default 20 seconds
             
+            if current_time - self.last_check[alpha['address']] < check_interval:
+                continue
+        
+            self.last_check[alpha['address']] = current_time
+        
             try:
                 new_buys = get_wallet_recent_buys_helius(alpha['address'])
-                
+            
                 if new_buys:
-                    logging.info(f"🚨 {alpha['name']} made {len(new_buys)} buys!")
-                    
+                     # Alert differently based on wallet style
+                    if wallet_style == 'BOT_TRADER':
+                        logging.warning(f"🤖 BOT SIGNAL: {alpha['name']} made {len(new_buys)} buys!")
+                    else:
+                        logging.info(f"🚨 {alpha['name']} ({wallet_style}) made {len(new_buys)} buys!")
+                
                 for buy in new_buys:
                     # INSTANT COPY if not already in position
                     if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
-                        
+                    
                         # Get token data with error handling
                         token_data = self.get_token_snapshot(buy['token'])
-                        
+                    
                         # Log what we found
                         if token_data:
                             logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
-                        
+                    
+                        # Get wallet style parameters
+                        style_params = self.wallet_styles.get(alpha['address'], self.get_style_params('SCALPER'))
+                        min_liquidity = style_params.get('min_liquidity', 1000)
+                    
                         # More aggressive approach for alpha copying
                         if token_data and token_data.get('price', 0) > 0:
-                            
-                            # Determine position size based on liquidity
                             liquidity = token_data.get('liquidity', 0)
-                            
-                            if liquidity > 10000:  # Good liquidity
-                                position_size = 0.3
-                                logging.info(f"💎 HIGH LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
-                            elif liquidity > 1000:  # Medium liquidity
-                                position_size = 0.2
-                                logging.info(f"⚡ MED LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
-                            elif liquidity > 100:  # Low liquidity
-                                position_size = 0.1
-                                logging.info(f"🎯 LOW LIQ COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL")
+                        
+                            # Skip if liquidity too low for this wallet style
+                            if liquidity < min_liquidity:
+                                logging.warning(f"⚠️ Skipping {buy['token'][:8]} - liquidity ${liquidity} below {wallet_style} minimum ${min_liquidity}")
+                                continue
+                        
+                            # Base position sizing
+                            if liquidity > 50000:  # Excellent liquidity
+                                base_position = 0.3
+                                liq_tier = "EXCELLENT"
+                            elif liquidity > 10000:  # Good liquidity
+                                base_position = 0.2
+                                liq_tier = "HIGH"
+                            elif liquidity > 5000:  # Medium liquidity
+                                base_position = 0.15
+                                liq_tier = "MED"
+                            elif liquidity > 1000:  # Low liquidity
+                                base_position = 0.1
+                                liq_tier = "LOW"
                             else:
-                                # Very low liquidity - still try with tiny amount
-                                position_size = 0.05
-                                logging.info(f"⚠️ RISKY COPY: Following {alpha['name']} into {buy['token'][:8]} with {position_size} SOL (${liquidity:.0f} liq)")
-                            
+                                base_position = 0.05
+                                liq_tier = "RISKY"
+                        
+                            # Adjust position size based on wallet performance
+                            wallet_perf = self.wallet_performance.get(alpha['address'], {})
+                            win_rate = (wallet_perf.get('wins', 0) / wallet_perf.get('trades_copied', 1)) * 100 if wallet_perf.get('trades_copied', 0) > 0 else 50
+                        
+                            # Position multipliers based on wallet win rate
+                            if win_rate >= 90:  # Bot-like performance
+                                multiplier = 2.0
+                                confidence = "🤖 BOT"
+                            elif win_rate >= 80:  # Your 82% wallets
+                                multiplier = 1.5
+                                confidence = "💎 HIGH"
+                            elif win_rate >= 60:
+                                multiplier = 1.2
+                                confidence = "✅ GOOD"
+                            else:
+                                multiplier = 1.0
+                                confidence = "📊 NORMAL"
+                        
+                            # Apply wallet style multiplier
+                            style_multiplier = style_params.get('position_size_multiplier', 1.0)
+                        
+                            # Final position size
+                            position_size = base_position * multiplier * style_multiplier
+                            position_size = min(position_size, 0.5)  # Cap at 0.5 SOL max
+                        
+                            logging.info(f"{confidence} {liq_tier} LIQ COPY: Following {alpha['name']} ({win_rate:.0f}% WR) into {buy['token'][:8]} with {position_size:.2f} SOL")
+                        
+                            # Execute with priority for bot wallets
+                            if wallet_style == 'BOT_TRADER':
+                                logging.warning(f"🤖 EXECUTING BOT COPY IMMEDIATELY!")
+                        
                             # Execute the trade
-                            self.execute_trade(buy['token'], 'COPY_TRADE', position_size, token_data['price'], source_wallet=alpha['address'])
-                            
+                            self.execute_trade(
+                                buy['token'], 
+                                'COPY_TRADE', 
+                                position_size, 
+                                token_data['price'], 
+                                source_wallet=alpha['address']
+                            )
+                        
                         else:
-                            # No token data or price - try anyway with minimal amount
-                            logging.warning(f"⚠️ No data for {buy['token'][:8]} - attempting blind copy with 0.01 SOL")
-                            
-                            # Sometimes alpha wallets buy tokens so new that APIs don't have data yet
-                            # These can be the biggest opportunities
-                            self.execute_trade(buy['token'], 'COPY_TRADE', 0.01, 0.00001)
+                            # No token data - only copy if it's a high WR wallet
+                            if win_rate >= 80:
+                                logging.warning(f"⚠️ No data for {buy['token'][:8]} but {alpha['name']} has {win_rate:.0f}% WR - blind copying with 0.05 SOL")
+                                self.execute_trade(buy['token'], 'COPY_TRADE', 0.05, 0.00001, source_wallet=alpha['address'])
+                            else:
+                                logging.info(f"❌ Skipping {buy['token'][:8]} - no data and wallet WR only {win_rate:.0f}%")
                             
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
@@ -1265,7 +1358,7 @@ class AdaptiveAlphaTrader:
         except:
             logging.warning("✅ EMERGENCY SELL COMPLETE")
 
-
+    
     def get_all_wallet_tokens(self):
         """Get all SPL tokens in wallet"""
         try:
@@ -1307,6 +1400,291 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error getting all token balances: {e}")
             return {}
 
+    def analyze_wallet_performance(self):
+        """Show which alpha wallets are actually profitable"""
+        logging.info("🔍 === ALPHA WALLET PERFORMANCE ANALYSIS ===")
+        
+        wallet_rankings = []
+        
+        for wallet_addr, stats in self.wallet_performance.items():
+            if stats['trades_copied'] > 0:
+                win_rate = (stats['wins'] / stats['trades_copied']) * 100
+                avg_pnl = stats['total_pnl'] / stats['trades_copied']
+                
+                # Find wallet name
+                wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == wallet_addr), wallet_addr[:8])
+                
+                wallet_rankings.append({
+                    'name': wallet_name,
+                    'address': wallet_addr,
+                    'win_rate': win_rate,
+                    'total_pnl': stats['total_pnl'],
+                    'avg_pnl': avg_pnl,
+                    'trades': stats['trades_copied'],
+                    'score': (win_rate * 0.5) + (avg_pnl * 100 * 0.5)  # Combined score
+                })
+        
+        # Sort by score
+        wallet_rankings.sort(key=lambda x: x['score'], reverse=True)
+        
+        logging.info("\n🏆 TOP PERFORMING WALLETS:")
+        for i, wallet in enumerate(wallet_rankings[:10]):
+            logging.info(f"{i+1}. {wallet['name']}: {wallet['win_rate']:.0f}% WR, {wallet['total_pnl']:+.3f} SOL, {wallet['trades']} trades")
+            
+        logging.info("\n❌ WORST PERFORMING WALLETS:")
+        for wallet in wallet_rankings[-5:]:
+            logging.info(f"   {wallet['name']}: {wallet['win_rate']:.0f}% WR, {wallet['total_pnl']:+.3f} SOL")
+            
+        return wallet_rankings
+
+    def get_top_wallets(self, top_n=10):
+        """Get only the best performing wallets"""
+        rankings = self.analyze_wallet_performance()
+    
+        # Only follow wallets with:
+        # - At least 5 trades
+        # - Win rate > 40%
+        # - Positive total P&L
+    
+        good_wallets = [
+            w for w in rankings 
+            if w['trades'] >= 5 
+            and w['win_rate'] > 40 
+            and w['total_pnl'] > 0
+        ]
+    
+        return good_wallets[:top_n]
+
+    def dynamic_wallet_management(self):
+        """Periodically update which wallets to follow"""
+        if self.brain.daily_stats['trades'] % 50 == 0:  # Every 50 trades
+            logging.info("🔄 Updating alpha wallet list based on performance...")
+        
+            top_wallets = self.get_top_wallets(15)
+        
+            # Disable poor performers
+            for wallet in self.alpha_wallets:
+                wallet_stats = self.wallet_performance[wallet['address']]
+                if wallet_stats['trades_copied'] > 10 and wallet_stats['total_pnl'] < -0.1:
+                    wallet['active'] = False
+                    logging.warning(f"❌ Disabling poor performer: {wallet['name']}")
+
+    def check_market_conditions(self):
+        """Determine if it's the market or the signals"""
+        try:
+            # Check how many tokens are actually pumping
+            recent_tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+        
+            pumping = 0
+            dumping = 0
+        
+            for token in recent_tokens:
+                try:
+                    # Get 5-minute price change
+                    price_change = get_price_change_5min(token)
+                    if price_change > 10:
+                        pumping += 1
+                    elif price_change < -10:
+                        dumping += 1
+                except:
+                    pass
+                
+            pump_rate = pumping / len(recent_tokens) * 100
+            dump_rate = dumping / len(recent_tokens) * 100
+        
+            logging.info(f"📊 MARKET CONDITIONS:")
+            logging.info(f"   Pumping tokens: {pump_rate:.0f}%")
+            logging.info(f"   Dumping tokens: {dump_rate:.0f}%")
+        
+            if dump_rate > 60:
+                logging.warning("🐻 BEAR MARKET DETECTED - Reduce position sizes")
+                return "BEARISH"
+            elif pump_rate > 30:
+                logging.info("🐂 BULL MARKET DETECTED - Normal trading")
+                return "BULLISH"
+            else:
+                return "NEUTRAL"
+            
+        except Exception as e:
+            logging.error(f"Error checking market: {e}")
+            return "UNKNOWN"
+
+    def analyze_and_classify_wallet(self, wallet_address, days_to_analyze=7):
+        """Automatically detect wallet trading style"""
+        try:
+            logging.info(f"🔍 Analyzing wallet {wallet_address[:8]} trading patterns...")
+            
+            # Get recent trades
+            recent_trades = get_wallet_recent_trades_detailed(wallet_address, days=days_to_analyze)
+            
+            if not recent_trades:
+                return 'UNKNOWN'
+            
+            # Analyze patterns
+            hold_times = []
+            win_rate = 0
+            wins = 0
+            avg_profit = 0
+            trade_frequency = len(recent_trades) / days_to_analyze
+            
+            for trade in recent_trades:
+                if 'hold_time' in trade:
+                    hold_times.append(trade['hold_time'])
+                if trade.get('profit', 0) > 0:
+                    wins += 1
+                    
+            avg_hold_time = sum(hold_times) / len(hold_times) if hold_times else 0
+            win_rate = (wins / len(recent_trades)) * 100 if recent_trades else 0
+            
+            # Classification logic
+            if win_rate >= 95 and trade_frequency > 10:
+                style = 'BOT_TRADER'  # Likely an MEV/Sniper bot
+                params = {
+                    'max_hold_time': 5,  # Very quick
+                    'stop_loss': 3,      # Tight stop
+                    'take_profit': 8,    # Small but consistent
+                    'position_size_multiplier': 2.0,  # Double size for high certainty
+                    'min_liquidity': 10000,
+                    'copy_delay': 0  # Copy IMMEDIATELY
+                }
+                
+            elif avg_hold_time < 15 and trade_frequency > 20:
+                style = 'SNIPER'
+                params = self.get_style_params('SNIPER')
+                
+            elif avg_hold_time < 45:
+                style = 'SCALPER'
+                params = self.get_style_params('SCALPER')
+                
+            elif avg_hold_time < 180:
+                style = 'SWINGER'
+                params = self.get_style_params('SWINGER')
+                
+            elif win_rate > 60 and avg_hold_time > 180:
+                style = 'HOLDER'
+                params = {
+                    'max_hold_time': 720,  # 12 hours for high WR
+                    'stop_loss': 30,       # Give room
+                    'take_profit': 150,    # Big targets
+                    'position_size_multiplier': 1.8,
+                    'min_liquidity': 50000
+                }
+            else:
+                style = 'MIXED'
+                params = self.get_style_params('SCALPER')
+            
+            logging.info(f"✅ Wallet Classification Complete:")
+            logging.info(f"   Style: {style}")
+            logging.info(f"   Win Rate: {win_rate:.1f}%")
+            logging.info(f"   Avg Hold: {avg_hold_time:.0f} minutes")
+            logging.info(f"   Trade Frequency: {trade_frequency:.1f}/day")
+            
+            # Special handling for bot wallets
+            if style == 'BOT_TRADER':
+                logging.info(f"   🤖 DETECTED BOT WALLET - PREMIUM SIGNALS!")
+                logging.info(f"   🎯 Will copy trades with 2x position size")
+            
+            return style, params, {
+                'win_rate': win_rate,
+                'avg_hold': avg_hold_time,
+                'frequency': trade_frequency
+            }
+            
+        except Exception as e:
+            logging.error(f"Error analyzing wallet {wallet_address[:8]}: {e}")
+            return 'UNKNOWN', self.get_style_params('SCALPER'), {}
+
+    def add_alpha_wallet(self, wallet_address, name="", style="AUTO"):
+        """Enhanced to auto-detect style"""
+    
+        if style == "AUTO":
+            # Analyze the wallet automatically
+            detected_style, params, stats = self.analyze_and_classify_wallet(wallet_address)
+        
+            # Override for known bot wallets
+            if stats.get('win_rate', 0) >= 98:
+                detected_style = 'BOT_TRADER'
+                logging.warning(f"🤖 {name} appears to be a BOT with {stats['win_rate']:.0f}% win rate!")
+            
+            style = detected_style
+        else:
+            params = self.get_style_params(style)
+        
+        self.alpha_wallets.append({
+            'address': wallet_address,
+            'name': name,
+            'style': style,
+            'trades_copied': 0,
+            'profit_generated': 0,
+            'active': True,
+            'stats': stats if style == "AUTO" else {}
+        })
+    
+        self.wallet_styles[wallet_address] = params
+        self.last_check[wallet_address] = 0
+    
+        logging.info(f"✅ Following {style} wallet: {name} ({wallet_address[:8]}...)")
+
+
+    def display_wallet_dashboard(self):
+        """Show all wallets with their auto-detected styles"""
+        logging.info("\n📊 === ALPHA WALLET DASHBOARD ===")
+    
+        # Group by style
+        by_style = defaultdict(list)
+        for wallet in self.alpha_wallets:
+            by_style[wallet['style']].append(wallet)
+    
+        # Display each group
+        for style, wallets in by_style.items():
+            logging.info(f"\n{style} WALLETS ({len(wallets)}):")
+            for w in wallets:
+                perf = self.wallet_performance.get(w['address'], {})
+                if perf.get('trades_copied', 0) > 0:
+                    wr = (perf['wins'] / perf['trades_copied']) * 100
+                    logging.info(f"   {w['name']:15} - {wr:.0f}% WR, {perf['total_pnl']:+.3f} SOL")
+                else:
+                    logging.info(f"   {w['name']:15} - No trades yet")
+
+
+    def reclassify_wallets_periodically(self):
+        """Re-analyze wallets every 24 hours"""
+        if not hasattr(self, 'last_reclassification'):
+            self.last_reclassification = time.time()
+        
+        if time.time() - self.last_reclassification > 86400:  # 24 hours
+            logging.info("🔄 Re-analyzing all wallet styles...")
+        
+            for wallet in self.alpha_wallets:
+                old_style = wallet['style']
+                new_style, params, stats = self.analyze_and_classify_wallet(wallet['address'])
+            
+                if new_style != old_style:
+                    logging.warning(f"📊 {wallet['name']} style changed: {old_style} → {new_style}")
+                    wallet['style'] = new_style
+                    self.wallet_styles[wallet['address']] = params
+                
+            self.last_reclassification = time.time()
+
+    def get_style_params(self, style):
+        """Get parameters based on wallet style"""
+        styles = {
+            'SCALPER': {
+                'max_hold_time': 30,
+                'stop_loss': 8,
+                'take_profit': 20,
+                'position_size_multiplier': 1.0,
+                'min_liquidity': 5000
+            },
+            'BOT_TRADER': {
+                'max_hold_time': 5,
+                'stop_loss': 3,
+                'take_profit': 8,
+                'position_size_multiplier': 2.0,
+                'min_liquidity': 10000
+            }
+        }
+        return styles.get(style, styles['SCALPER'])
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
@@ -1436,17 +1814,44 @@ def run_adaptive_ai_system():
     for address, name in ALPHA_WALLETS_CONFIG:
         trader.add_alpha_wallet(address, name)
         loaded_count += 1
+    
+    # ADD HIGH WIN-RATE WALLETS HERE
+    logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
+    
+    high_wr_wallets = [
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot"),
+        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1"),
+        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2"),
+        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "82% Winner 3"),
+        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4")
+    ]
+    
+    # Add each high WR wallet
+    for address, name in high_wr_wallets:
+        trader.add_alpha_wallet(address, name, style="AUTO")  # Will auto-detect style
+        loaded_count += 1
+        logging.info(f"   Added high WR wallet: {name}")
         
     # Verify all wallets were loaded
-    logging.info(f"✅ Successfully loaded {loaded_count} of {len(ALPHA_WALLETS_CONFIG)} wallets")
+    total_wallets = len(ALPHA_WALLETS_CONFIG) + len(high_wr_wallets)
+    logging.info(f"✅ Successfully loaded {loaded_count} of {total_wallets} wallets")
     logging.info(f"📡 Monitoring {len(trader.alpha_wallets)} alpha wallets")
+    
+    # Show wallet breakdown
+    logging.info(f"   Regular wallets: {len(ALPHA_WALLETS_CONFIG)}")
+    logging.info(f"   High WR wallets: {len(high_wr_wallets)}")
+    
     logging.info(f"DEBUG: First 5 wallets loaded:")
     for i in range(min(5, len(trader.alpha_wallets))):
-        logging.info(f"   {i+1}. {trader.alpha_wallets[i]['name']} ({trader.alpha_wallets[i]['address'][:8]}...)")
+        wallet = trader.alpha_wallets[i]
+        style = wallet.get('style', 'UNKNOWN')
+        logging.info(f"   {i+1}. {wallet['name']} ({wallet['address'][:8]}...) - Style: {style}")
     
     logging.info(f"DEBUG: Last 5 wallets loaded:")
     for i in range(max(0, len(trader.alpha_wallets)-5), len(trader.alpha_wallets)):
-        logging.info(f"   {i+1}. {trader.alpha_wallets[i]['name']} ({trader.alpha_wallets[i]['address'][:8]}...)")
+        wallet = trader.alpha_wallets[i]
+        style = wallet.get('style', 'UNKNOWN')
+        logging.info(f"   {i+1}. {wallet['name']} ({wallet['address'][:8]}...) - Style: {style}")
     
     # Log first few and last few wallets to confirm
     if len(trader.alpha_wallets) > 0:
