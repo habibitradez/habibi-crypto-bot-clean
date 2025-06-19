@@ -12972,54 +12972,6 @@ def submit_via_helius(signed_transaction):
         logging.error(traceback.format_exc())
         return None
 
-def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
-    print("EXECUTING VERSION 1 of execute_optimized_transaction")
-    """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
-    global wallet
-    
-    try:
-        action = "sell" if is_sell else "buy"
-        logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
-        
-        # Check balance
-        balance = wallet.get_balance()  # Change to wallet
-        if not is_sell and balance < amount_sol + 0.01:
-            logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
-            return None
-            
-        if CONFIG['SIMULATION_MODE']:
-            logging.info("SIMULATION: Would execute trade")
-            return "simulation-signature"
-        
-        # ALWAYS USE JAVASCRIPT FOR BOTH BUY AND SELL
-        logging.info(f"🚀 Executing {action} via JavaScript swap.js...")
-        success, output = execute_via_javascript(token_address, amount_sol, is_sell=is_sell)
-        
-        if success:
-            # Extract signature from output
-            if "https://solscan.io/tx/" in output:
-                start = output.find("https://solscan.io/tx/") + len("https://solscan.io/tx/")
-                end = output.find("\n", start) if "\n" in output[start:] else len(output)
-                signature = output[start:end].strip()
-                logging.info(f"✅ Real {action} transaction: {signature}")
-                return signature
-            else:
-                logging.info(f"✅ {action.upper()} SUCCESS via JavaScript")
-                return f"js-{action}-success-{token_address[:8]}-{int(time.time())}"
-        else:
-            # For sells, check if it's already sold
-            if is_sell and ("no token accounts found" in output.lower() or "marking as sold" in output.lower()):
-                logging.info(f"Token {token_address[:8]} already sold or no balance")
-                return "already-sold"
-                
-            logging.error(f"❌ JavaScript {action} failed")
-            return None
-            
-    except Exception as e:
-        logging.error(f"Transaction error: {e}")
-        logging.error(traceback.format_exc())
-        return None
-
 def wait_for_confirmation(signature, max_timeout=30):
     """Wait for transaction confirmation with better error handling"""
     try:
@@ -13325,6 +13277,11 @@ def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     print("EXECUTING VERSION 2 of execute_optimized_transaction")
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
     global wallet
+    
+    # FIX: If wallet is not the right type, recreate it
+    if not hasattr(wallet, 'get_balance'):
+        print(f"WARNING: wallet was corrupted (type: {type(wallet)}), recreating...")
+        wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'])
     
     try:
         action = "sell" if is_sell else "buy"
