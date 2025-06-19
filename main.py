@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("D8BuboNjz2m6ioCrrKuXVBAdAYkbLSKdeRvjdd5UhfvM", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30)
+    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30")
 ]
 
 daily_stats = {
@@ -1497,31 +1497,21 @@ class AdaptiveAlphaTrader:
         try:
             logging.info(f"🔍 Analyzing wallet {wallet_address[:8]} trading patterns...")
             
-            # Get recent trades
-            recent_trades = get_wallet_recent_buys_helius(wallet_address, days=days_to_analyze)
+            # Get recent trades (without days parameter)
+            recent_trades = get_wallet_recent_buys_helius(wallet_address)
             
             if not recent_trades:
-                return 'UNKNOWN'
+                return 'UNKNOWN', self.get_style_params('SCALPER'), {}
             
-            # Analyze patterns
-            hold_times = []
-            win_rate = 0
-            wins = 0
-            avg_profit = 0
-            trade_frequency = len(recent_trades) / days_to_analyze
+            # Analyze patterns based on what we have
+            trade_count = len(recent_trades)
             
-            for trade in recent_trades:
-                if 'hold_time' in trade:
-                    hold_times.append(trade['hold_time'])
-                if trade.get('profit', 0) > 0:
-                    wins += 1
-                    
-            avg_hold_time = sum(hold_times) / len(hold_times) if hold_times else 0
-            win_rate = (wins / len(recent_trades)) * 100 if recent_trades else 0
+            # Since we can't get hold times from get_wallet_recent_buys_helius,
+            # we'll classify based on trading frequency
             
-            # Classification logic
-            if win_rate >= 95 and trade_frequency > 10:
-                style = 'BOT_TRADER'  # Likely an MEV/Sniper bot
+            # Classification logic based on trade count
+            if trade_count >= 50:
+                style = 'BOT_TRADER'  # Very high frequency
                 params = {
                     'max_hold_time': 5,  # Very quick
                     'stop_loss': 3,      # Tight stop
@@ -1530,37 +1520,38 @@ class AdaptiveAlphaTrader:
                     'min_liquidity': 10000,
                     'copy_delay': 0  # Copy IMMEDIATELY
                 }
+                estimated_win_rate = 90
                 
-            elif avg_hold_time < 15 and trade_frequency > 20:
+            elif trade_count >= 30:
                 style = 'SNIPER'
                 params = self.get_style_params('SNIPER')
+                estimated_win_rate = 75
                 
-            elif avg_hold_time < 45:
+            elif trade_count >= 15:
                 style = 'SCALPER'
                 params = self.get_style_params('SCALPER')
+                estimated_win_rate = 65
                 
-            elif avg_hold_time < 180:
+            elif trade_count >= 5:
                 style = 'SWINGER'
                 params = self.get_style_params('SWINGER')
+                estimated_win_rate = 60
                 
-            elif win_rate > 60 and avg_hold_time > 180:
+            else:
                 style = 'HOLDER'
                 params = {
-                    'max_hold_time': 720,  # 12 hours for high WR
+                    'max_hold_time': 720,  # 12 hours for selective traders
                     'stop_loss': 30,       # Give room
                     'take_profit': 150,    # Big targets
                     'position_size_multiplier': 1.8,
                     'min_liquidity': 50000
                 }
-            else:
-                style = 'MIXED'
-                params = self.get_style_params('SCALPER')
+                estimated_win_rate = 70
             
             logging.info(f"✅ Wallet Classification Complete:")
             logging.info(f"   Style: {style}")
-            logging.info(f"   Win Rate: {win_rate:.1f}%")
-            logging.info(f"   Avg Hold: {avg_hold_time:.0f} minutes")
-            logging.info(f"   Trade Frequency: {trade_frequency:.1f}/day")
+            logging.info(f"   Recent Trades: {trade_count}")
+            logging.info(f"   Estimated Type: {style}")
             
             # Special handling for bot wallets
             if style == 'BOT_TRADER':
@@ -1568,14 +1559,13 @@ class AdaptiveAlphaTrader:
                 logging.info(f"   🎯 Will copy trades with 2x position size")
             
             return style, params, {
-                'win_rate': win_rate,
-                'avg_hold': avg_hold_time,
-                'frequency': trade_frequency
+                'trade_count': trade_count,
+                'estimated_win_rate': estimated_win_rate
             }
             
         except Exception as e:
             logging.error(f"Error analyzing wallet {wallet_address[:8]}: {e}")
-            return 'UNKNOWN', self.get_style_params('SCALPER'), {}
+            return 'SCALPER', self.get_style_params('SCALPER'), {}
 
     def add_alpha_wallet(self, wallet_address, name="", style="AUTO"):
         """Enhanced to auto-detect style"""
