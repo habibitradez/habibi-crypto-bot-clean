@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -658,6 +658,16 @@ class AdaptiveAlphaTrader:
                 check_interval = 10  # 10 seconds for snipers
             elif wallet_style == 'ELITE_BOT':
                 check_interval = 5  # Check every 5 seconds for elite bots
+            elif wallet_style == 'PERFECT_BOT':
+                check_interval = 5  # Check every 5 seconds for perfect bots
+            elif wallet_style == 'PERFECT_BOT_FAST':
+                check_interval = 3  # Every 3 seconds for high-frequency perfect bot
+            elif wallet_style == 'PERFECT_BOT_SNIPER': 
+                check_interval = 3  # Every 3 seconds for sniper perfect bot
+            elif wallet_style == 'PERFECT_BOT_SWING':
+                check_interval = 10  # Every 10 seconds for swing perfect bot
+            elif wallet_style == 'MULTI_DAY_HOLDER':
+                check_interval = 30  # Less frequent for long-term holders
             elif wallet_style == 'HOLDER':
                 check_interval = 30  # 30 seconds for holders
             else:
@@ -772,37 +782,74 @@ class AdaptiveAlphaTrader:
                 logging.error(traceback.format_exc())
                 
     def check_alpha_exits(self):
-        """Monitor if alpha wallets have sold their positions"""
+        """Enhanced alpha exit detection - monitors when alpha wallets sell positions"""
         try:
             if not CONFIG.get('MONITOR_ALPHA_EXITS', 'true').lower() == 'true':
                 return
                 
+            current_time = time.time()
+            
             for token, position in list(self.positions.items()):
-                # Only check COPY_TRADE positions
-                if position.get('strategy') != 'COPY_TRADE':
-                    continue
-                    
-                source_wallet = position.get('source_wallet')
-                if not source_wallet:
+                # Check both COPY_TRADE and regular alpha positions
+                strategy = position.get('strategy', 'UNKNOWN')
+                alpha_wallet = position.get('source_wallet') or position.get('alpha_wallet')
+                
+                # Skip if no alpha wallet to monitor
+                if not alpha_wallet or alpha_wallet == 'SELF_DISCOVERED':
                     continue
                 
-                # Check if alpha still holds
                 try:
-                    alpha_balance = get_token_balance(source_wallet, token)
+                    # Get alpha wallet info for better logging
+                    alpha_info = next((w for w in self.alpha_wallets if w['address'] == alpha_wallet), None)
+                    alpha_name = alpha_info['name'] if alpha_info else f"{alpha_wallet[:8]}..."
+                    alpha_style = alpha_info.get('style', 'UNKNOWN') if alpha_info else 'UNKNOWN'
+                    
+                    # Special logging for PERFECT_BOT wallets (your 100% win rate wallets)
+                    if alpha_style == 'PERFECT_BOT':
+                        if int(current_time) % 60 == 0:  # Log every minute for perfect bots
+                            logging.info(f"🔍 Monitoring PERFECT BOT {alpha_name} position in {token[:8]}...")
+                    
+                    # Check if alpha wallet still holds the token
+                    alpha_balance = get_token_balance(alpha_wallet, token)
                     
                     if alpha_balance == 0:
-                        logging.warning(f"🚨 ALPHA EXIT DETECTED: {source_wallet[:8]} sold {token[:8]}")
-                        logging.info(f"💰 Following alpha - selling {token[:8]} immediately")
+                        logging.warning(f"🚨 ALPHA EXIT DETECTED!")
+                        logging.info(f"   Wallet: {alpha_name} ({alpha_style})")
+                        logging.info(f"   Token: {token[:8]}")
+                        logging.info(f"   Strategy: {strategy}")
+                        logging.info(f"   Our Position: {position['size']:.3f} SOL")
                         
-                        # Execute immediate sell
-                        sell_result = execute_optimized_sell(token, position['size'])
+                        # Get current price for P&L calculation
+                        current_price = get_token_price(token)
+                        if current_price and position.get('entry_price'):
+                            pnl_pct = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                            pnl_sol = position['size'] * (pnl_pct / 100)
+                            logging.info(f"   P&L before exit: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL)")
+                            
+                            # Special alert for PERFECT_BOT exits
+                            if alpha_style == 'PERFECT_BOT':
+                                if pnl_pct > 0:
+                                    logging.info(f"🏆 PERFECT BOT PROFIT EXIT: +{pnl_pct:.1f}% gain!")
+                                else:
+                                    logging.warning(f"⚠️ PERFECT BOT STOP EXIT: {pnl_pct:.1f}% loss")
+                        
+                        # Execute immediate sell with enhanced retry logic
+                        logging.info(f"💰 Following {alpha_name} - selling {token[:8]} immediately")
+                        sell_result = self.ensure_position_sold(token, position, 'alpha_exit')
                         
                         if sell_result:
-                            logging.info(f"✅ Followed alpha exit for {token[:8]}")
-                            self.record_trade_result(token, position, get_token_price(token), 'alpha_exit')
+                            logging.info(f"✅ Successfully followed {alpha_name} exit from {token[:8]}")
+                            # Position is already removed and recorded in ensure_position_sold
+                        else:
+                            logging.error(f"❌ Failed to follow {alpha_name} exit from {token[:8]}")
+                            # Still remove from tracking to avoid getting stuck
+                            if token in self.positions:
+                                del self.positions[token]
+                                logging.info(f"🗑️ Removed {token[:8]} from position tracking after failed exit")
                         
                 except Exception as e:
-                    logging.debug(f"Error checking alpha balance for {token[:8]}: {e}")
+                    logging.debug(f"Error checking alpha balance for {token[:8]} from {alpha_wallet[:8]}: {e}")
+                    continue
                     
         except Exception as e:
             logging.error(f"Error in check_alpha_exits: {e}")
@@ -1091,7 +1138,7 @@ class AdaptiveAlphaTrader:
             return False
             
     def monitor_positions(self):
-        """Monitor all positions with trailing stops and alpha exit detection"""
+        """Enhanced position monitoring with wallet-specific parameters and PERFECT_BOT handling"""
         try:
             current_time = time.time()
             
@@ -1106,6 +1153,15 @@ class AdaptiveAlphaTrader:
                     position_size = position['size']
                     entry_time = position['entry_time']
                     
+                    # Get alpha wallet info for style-specific parameters
+                    alpha_wallet = position.get('source_wallet') or position.get('alpha_wallet', 'UNKNOWN')
+                    alpha_info = next((w for w in self.alpha_wallets if w['address'] == alpha_wallet), None)
+                    alpha_name = alpha_info['name'] if alpha_info else f"{alpha_wallet[:8]}..."
+                    alpha_style = alpha_info.get('style', 'SCALPER') if alpha_info else 'SCALPER'
+                    
+                    # Get style-specific parameters
+                    style_params = self.wallet_styles.get(alpha_wallet, self.get_style_params(alpha_style))
+                    
                     # Calculate P&L
                     pnl_pct = ((current_price - entry_price) / entry_price) * 100
                     pnl_sol = position_size * (pnl_pct / 100)
@@ -1113,26 +1169,52 @@ class AdaptiveAlphaTrader:
                     # Update peak price for trailing stop
                     if current_price > position.get('peak_price', entry_price):
                         position['peak_price'] = current_price
-                        logging.info(f"📈 New peak for {token[:8]}: +{pnl_pct:.1f}%")
+                        
+                        # Special logging for PERFECT_BOT peaks
+                        if alpha_style == 'PERFECT_BOT':
+                            logging.info(f"🏆 PERFECT BOT NEW PEAK: {alpha_name}")
+                            logging.info(f"   Token: {token[:8]} | Peak: +{pnl_pct:.1f}% (+{pnl_sol:.3f} SOL)")
+                        else:
+                            logging.info(f"📈 New peak for {token[:8]}: +{pnl_pct:.1f}%")
                     
                     # Hold time
                     hold_time = (current_time - entry_time) / 60
                     
-                    # STOP LOSS - Use ensure_position_sold for reliability
-                    stop_loss_pct = -float(CONFIG.get('STOP_LOSS_PERCENT', 8))
+                    # Use wallet-specific parameters instead of global CONFIG
+                    stop_loss_pct = -float(style_params.get('stop_loss', 8))
+                    max_hold_minutes = float(style_params.get('max_hold_time', 240))
+                    take_profit_pct = float(style_params.get('take_profit', 20))
+                    
+                    # Special handling for PERFECT_BOT positions
+                    if alpha_style == 'PERFECT_BOT':
+                        # More frequent status updates for 100% win rate wallets
+                        if int(current_time) % 60 == 0:  # Every minute instead of 5 minutes
+                            logging.info(f"🏆 PERFECT BOT POSITION: {alpha_name}")
+                            logging.info(f"   Token: {token[:8]} | P&L: {pnl_pct:+.1f}% | Hold: {hold_time:.0f}m")
+                            logging.info(f"   Max Hold: {max_hold_minutes/60:.1f}hrs | Stop: {stop_loss_pct}% | Target: {take_profit_pct}%")
+                            logging.info(f"   Will hold until alpha exits or limits hit")
+                    
+                    # STOP LOSS - Use wallet-specific stop loss
                     if pnl_pct <= stop_loss_pct:
-                        logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
+                        if alpha_style == 'PERFECT_BOT':
+                            logging.warning(f"🚨 PERFECT BOT STOP LOSS: {alpha_name}")
+                            logging.warning(f"   {token[:8]}: {pnl_pct:.1f}% hit {stop_loss_pct}% stop")
+                        else:
+                            logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
                         self.ensure_position_sold(token, position, 'stop_loss')
                         continue
                     
-                    # MAX HOLD TIME - Use ensure_position_sold
-                    max_hold_minutes = float(CONFIG.get('MAX_HOLD_TIME_MINUTES', 240))
+                    # MAX HOLD TIME - Use wallet-specific max hold time
                     if hold_time > max_hold_minutes:
-                        logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
+                        if alpha_style == 'PERFECT_BOT':
+                            logging.info(f"⏰ PERFECT BOT MAX HOLD: {alpha_name}")
+                            logging.info(f"   {token[:8]}: {hold_time:.0f}m reached {max_hold_minutes/60:.1f}hr limit")
+                        else:
+                            logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
                         self.ensure_position_sold(token, position, 'max_hold_time')
                         continue
                     
-                    # TRAILING STOP LOGIC - Use ensure_position_sold
+                    # TRAILING STOP LOGIC - Use global config for now
                     if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true' and pnl_pct >= float(CONFIG.get('TRAIL_TRIGGER_PCT', 15)):
                         # Calculate trailing stop level
                         trail_distance = float(CONFIG.get('TRAIL_DISTANCE_PCT', 5))
@@ -1140,21 +1222,28 @@ class AdaptiveAlphaTrader:
                         trail_stop_pct = peak_pnl_pct - trail_distance
                         
                         if pnl_pct <= trail_stop_pct:
-                            logging.info(f"📉 TRAILING STOP HIT for {token[:8]}")
-                            logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
+                            if alpha_style == 'PERFECT_BOT':
+                                logging.info(f"📉 PERFECT BOT TRAILING STOP: {alpha_name}")
+                                logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
+                            else:
+                                logging.info(f"📉 TRAILING STOP HIT for {token[:8]}")
+                                logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
                             self.ensure_position_sold(token, position, 'trailing_stop')
                             continue
                     
-                    # TAKE PROFIT - Use ensure_position_sold
-                    take_profit_pct = float(CONFIG.get('TAKE_PROFIT_PERCENT', 20))
+                    # TAKE PROFIT - Use wallet-specific take profit
                     if pnl_pct >= take_profit_pct:
-                        logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
+                        if alpha_style == 'PERFECT_BOT':
+                            logging.info(f"🎯 PERFECT BOT TAKE PROFIT: {alpha_name}")
+                            logging.info(f"   {token[:8]}: +{pnl_pct:.1f}% hit {take_profit_pct}% target!")
+                        else:
+                            logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
                         self.ensure_position_sold(token, position, 'take_profit')
                         continue
                     
-                    # Log position status every 5 minutes
-                    if int(current_time) % 300 == 0:
-                        logging.info(f"📊 {token[:8]}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL) - {hold_time:.0f}m")
+                    # Regular position status logging
+                    if int(current_time) % 300 == 0 and alpha_style != 'PERFECT_BOT':  # Every 5 minutes for non-perfect bots
+                        logging.info(f"📊 {alpha_name[:15]} | {token[:8]}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL) - {hold_time:.0f}m")
                         
                 except Exception as e:
                     logging.error(f"Error monitoring position {token}: {e}")
@@ -1642,51 +1731,55 @@ class AdaptiveAlphaTrader:
             self.last_reclassification = time.time()
 
     def get_style_params(self, style):
-        """Get parameters based on wallet style"""
+        """Updated wallet styles based on actual trading behavior analysis"""
         styles = {
-            'SCALPER': {
-                'max_hold_time': 30,
-                'stop_loss': 8,
-                'take_profit': 20,
-                'position_size_multiplier': 1.0,
-                'min_liquidity': 5000
+            'PERFECT_BOT_FAST': {  # For Alpha13 - High frequency, 2.2hr avg hold
+                'max_hold_time': 180,   # 3 hours (give buffer beyond 2.2hr avg)
+                'stop_loss': 15,        # More room for high-frequency bot
+                'take_profit': 75,      # Let winners run but not too long
+                'position_size_multiplier': 3.0,  # Max confidence
+                'min_liquidity': 1000,  # Very low to catch all trades
+                'copy_delay': 0,        # Immediate copy
+                'check_interval': 3     # Check every 3 seconds
             },
-            'ELITE_BOT': {  # For 80%+ win rate, short holds
-                'max_hold_time': 150,  # 2.5 hours
-                'stop_loss': 10,
-                'take_profit': 50,
+            'PERFECT_BOT_SNIPER': {  # For Alpha20 - Ultra selective, 1hr avg hold  
+                'max_hold_time': 90,    # 1.5 hours (buffer beyond 1hr avg)
+                'stop_loss': 12,        # Tight for quick trades
+                'take_profit': 50,      # Quick profits
+                'position_size_multiplier': 4.0,  # Highest confidence (only 5 trades!)
+                'min_liquidity': 500,   # Ultra low for selective trades
+                'copy_delay': 0,        # Immediate copy
+                'check_interval': 3     # Check every 3 seconds
+            },
+            'PERFECT_BOT_SWING': {  # For Alpha8 - Very selective, 1-day avg hold
+                'max_hold_time': 2880,  # 2 days (buffer beyond 1-day avg)
+                'stop_loss': 25,        # Wide stops for swing trades
+                'take_profit': 200,     # Let big winners run
+                'position_size_multiplier': 2.5,  # High confidence
+                'min_liquidity': 5000,  # Higher for swing trades
+                'copy_delay': 0,        # Immediate copy
+                'check_interval': 10    # Less frequent for swing trader
+            },
+            'ELITE_BOT': {  # Keep existing for 80%+ win rate wallets
+                'max_hold_time': 240,   # 4 hours
+                'stop_loss': 12,
+                'take_profit': 60,
                 'position_size_multiplier': 2.0,
                 'min_liquidity': 3000,
                 'copy_delay': 0,
                 'check_interval': 5
             },
-            'PERFECT_BOT': {  # For 100% win rate wallets
-                'max_hold_time': 1440,  # 24 hours (for Alpha 8 & 20)
-                'stop_loss': 20,      # Give lots of room
-                'take_profit': 100,    # Let winners run
-                'position_size_multiplier': 3.0,  # Triple size for 100% certainty
-                'min_liquidity': 1000,
-                'copy_delay': 0,
-                'check_interval': 5
-            },
-            'MULTI_DAY_HOLDER': {  # For wallets that hold 2+ days
+            'MULTI_DAY_HOLDER': {
                 'max_hold_time': 4320,  # 3 days
                 'stop_loss': 30,
                 'take_profit': 200,
                 'position_size_multiplier': 1.5,
                 'min_liquidity': 10000,
                 'check_interval': 30
-            },
-            'HIGH_FREQUENCY': {  # For wallets like Alpha 19 (394 trades/day)
-                'max_hold_time': 120,  # 2 hours
-                'stop_loss': 5,
-                'take_profit': 15,
-                'position_size_multiplier': 0.5,  # Smaller size, more trades
-                'min_liquidity': 5000,
-                'check_interval': 5
             }
         }
-        return styles.get(style, styles['SCALPER'])
+        return styles.get(style, styles['ELITE_BOT'])
+
 
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
@@ -1723,7 +1816,7 @@ class AdaptiveAlphaTrader:
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
-    """Get recent buys from a wallet using Helius API"""
+    """Get recent buys from a wallet using Helius API with improved error handling"""
     
     try:
         # Get recent signatures for the wallet
@@ -1752,79 +1845,116 @@ def get_wallet_recent_buys_helius(wallet_address):
         
         # Check each transaction
         for sig_info in signatures:
-            # Skip if older than 5 minutes
-            if sig_info.get('blockTime', 0) < (time.time() - 300):
-                continue
-                
-            sig = sig_info['signature']
-            
-            # Get transaction details
-            tx_payload = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "getTransaction",
-                "params": [
-                    sig,
-                    {
-                        "encoding": "jsonParsed",
-                        "commitment": "confirmed",
-                        "maxSupportedTransactionVersion": 0
-                    }
-                ]
-            }
-            
-            tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=5)
-            
-            if tx_response.status_code == 200:
-                tx_data = tx_response.json().get('result')
-                
-                if tx_data and tx_data.get('meta', {}).get('err') is None:
-                    # Look for swap instructions (Jupiter, Raydium, etc)
-                    instructions = tx_data.get('transaction', {}).get('message', {}).get('instructions', [])
+            try:
+                # Skip if older than 5 minutes
+                block_time = sig_info.get('blockTime', 0)
+                if block_time < (time.time() - 300):
+                    continue
                     
-                    for instruction in instructions:
-                        program_id = instruction.get('programId', '')
+                sig = sig_info['signature']
+                
+                # Get transaction details
+                tx_payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTransaction",
+                    "params": [
+                        sig,
+                        {
+                            "encoding": "jsonParsed",
+                            "commitment": "confirmed",
+                            "maxSupportedTransactionVersion": 0
+                        }
+                    ]
+                }
+                
+                tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=5)
+                
+                if tx_response.status_code == 200:
+                    tx_data = tx_response.json().get('result')
+                    
+                    if tx_data and tx_data.get('meta', {}).get('err') is None:
+                        # Look for swap instructions (Jupiter, Raydium, etc)
+                        instructions = tx_data.get('transaction', {}).get('message', {}).get('instructions', [])
                         
-                        # Check if it's a swap (Jupiter, Raydium, Orca, etc)
-                        if program_id in ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  # Jupiter v6
-                                         'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  # Jupiter v4
-                                         '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium
-                                         'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc']:  # Orca
+                        for instruction in instructions:
+                            program_id = instruction.get('programId', '')
                             
-                            # Extract token info from the transaction
-                            post_balances = tx_data.get('meta', {}).get('postTokenBalances', [])
-                            pre_balances = tx_data.get('meta', {}).get('preTokenBalances', [])
-                            
-                            # Find new tokens acquired
-                            for post in post_balances:
-                                # Check if this is the wallet's token
-                                if post.get('owner') == wallet_address:
-                                    mint = post.get('mint')
-                                    
-                                    # Check if this is a new token (not in pre-balances)
-                                    is_new = True
-                                    for pre in pre_balances:
-                                        if pre.get('mint') == mint and pre.get('owner') == wallet_address:
-                                            # Check if balance increased
-                                            pre_amount = float(pre.get('uiTokenAmount', {}).get('amount', 0))
-                                            post_amount = float(post.get('uiTokenAmount', {}).get('amount', 0))
-                                            if post_amount <= pre_amount:
-                                                is_new = False
-                                            break
-                                    
-                                    # Skip SOL and USDC
-                                    if mint not in ['So11111111111111111111111111111111111111112',
-                                                   'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] and is_new:
-                                        new_buys.append({
-                                            'token': mint,
-                                            'amount': float(post.get('uiTokenAmount', {}).get('uiAmount', 0)),
-                                            'timestamp': sig_info.get('blockTime', 0),
-                                            'signature': sig
-                                        })
+                            # Check if it's a swap (Jupiter, Raydium, Orca, etc)
+                            if program_id in ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  # Jupiter v6
+                                             'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  # Jupiter v4
+                                             '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium
+                                             'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc']:  # Orca
+                                
+                                # Extract token info from the transaction
+                                post_balances = tx_data.get('meta', {}).get('postTokenBalances', [])
+                                pre_balances = tx_data.get('meta', {}).get('preTokenBalances', [])
+                                
+                                # Find new tokens acquired
+                                for post in post_balances:
+                                    try:
+                                        # Check if this is the wallet's token
+                                        if post.get('owner') == wallet_address:
+                                            mint = post.get('mint')
+                                            
+                                            # Check if this is a new token (not in pre-balances)
+                                            is_new = True
+                                            for pre in pre_balances:
+                                                if pre.get('mint') == mint and pre.get('owner') == wallet_address:
+                                                    # SAFE FLOAT CONVERSION - Fix for the error
+                                                    try:
+                                                        pre_amount_str = pre.get('uiTokenAmount', {}).get('amount', '0')
+                                                        post_amount_str = post.get('uiTokenAmount', {}).get('amount', '0')
+                                                        
+                                                        # Handle None or empty values
+                                                        if pre_amount_str is None or pre_amount_str == '':
+                                                            pre_amount = 0.0
+                                                        else:
+                                                            pre_amount = float(pre_amount_str)
+                                                            
+                                                        if post_amount_str is None or post_amount_str == '':
+                                                            post_amount = 0.0
+                                                        else:
+                                                            post_amount = float(post_amount_str)
+                                                            
+                                                        if post_amount <= pre_amount:
+                                                            is_new = False
+                                                    except (ValueError, TypeError):
+                                                        # If conversion fails, assume it's new
+                                                        pass
+                                                    break
+                                            
+                                            # Skip SOL and USDC
+                                            if mint not in ['So11111111111111111111111111111111111111112',
+                                                           'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] and is_new:
+                                                
+                                                # SAFE UI AMOUNT CONVERSION
+                                                try:
+                                                    ui_amount_str = post.get('uiTokenAmount', {}).get('uiAmount', '0')
+                                                    if ui_amount_str is None or ui_amount_str == '':
+                                                        ui_amount = 0.0
+                                                    else:
+                                                        ui_amount = float(ui_amount_str)
+                                                except (ValueError, TypeError):
+                                                    ui_amount = 0.0
+                                                
+                                                new_buys.append({
+                                                    'token': mint,
+                                                    'amount': ui_amount,
+                                                    'timestamp': block_time,
+                                                    'signature': sig
+                                                })
+                                                
+                                                logging.info(f"🎯 Detected buy: {wallet_address[:8]} bought {mint[:8]}")
+                                                break
+                                    except Exception as token_error:
+                                        logging.debug(f"Error processing token balance: {token_error}")
+                                        continue
                                         
-                                        logging.info(f"🎯 Detected buy: {wallet_address[:8]} bought {mint[:8]}")
-                                        break
-                            
+            except Exception as sig_error:
+                logging.debug(f"Error processing signature {sig_info.get('signature', 'unknown')}: {sig_error}")
+                continue
+                                
         return new_buys
         
     except Exception as e:
@@ -1872,25 +2002,24 @@ def run_adaptive_ai_system():
     logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
     
     high_wr_wallets = [
-        # 100% Win Rate Wallets - PERFECT_BOT
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-100%", "PERFECT_BOT"),
-        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-100%", "ELITE_BOT"),  # 2.2hr hold
-        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-100%", "PERFECT_BOT"),  # 1 day hold
-    
+        # PERFECT BOTS - Different styles based on actual behavior
+        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-Perfect-FastBot", "PERFECT_BOT_FAST"),    # 2.2hr, 250/day
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-Perfect-Sniper", "PERFECT_BOT_SNIPER"),   # 1hr, 5/day
+        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-Perfect-Swing", "PERFECT_BOT_SWING"),      # 1day, 2/day
+
         # 80%+ Win Rate Wallets - ELITE_BOT
-        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha1-88%", "ELITE_BOT"),  # 4.4hr hold
-        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"),  # 1.2hr hold
-        ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha2-83%", "ELITE_BOT"),  # 3.2hr hold
-        ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-80%", "MULTI_DAY_HOLDER"),  # 10.8 day hold
+        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha2-83%", "ELITE_BOT"),
+        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"),
+        ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha10-70%", "ELITE_BOT"),
     
-        # Good Win Rate, Multi-Day Holders
-        ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),  # 2.9 days
-        ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),  # 6.5 days
+        # Multi-Day Holders
+        ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-63%", "MULTI_DAY_HOLDER"),
     
-        # High Frequency Traders
-        ("JD25qVdtd65Fo1XNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "HIGH_FREQUENCY"),  # 394 trades/day
-    
-        # Add more based on their characteristics...
+        # Keep your existing wallets
+        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "Alpha3-82%", "ELITE_BOT"),
+        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "ELITE_BOT"),
+        ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),
+        ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),
     ]
     
     # Add each high WR wallet with explicit style
@@ -2560,40 +2689,6 @@ def fast_rpc_call(method, params=None):
 # Usage example:
 # result = fast_rpc_call("getBalance", [wallet_address])
 
-def check_alpha_exits(self):
-    """Monitor if alpha wallets have sold their positions"""
-    try:
-        if not CONFIG.get('MONITOR_ALPHA_EXITS', 'true').lower() == 'true':
-            return
-            
-        for token, position in list(self.positions.items()):
-            # Only check COPY_TRADE positions
-            if position.get('strategy') != 'COPY_TRADE':
-                continue
-                
-            source_wallet = position.get('source_wallet')
-            if not source_wallet:
-                continue
-            
-            # Check if alpha still holds
-            try:
-                alpha_balance = get_token_balance(source_wallet, token)
-                
-                if alpha_balance == 0:
-                    logging.warning(f"🚨 ALPHA EXIT DETECTED: {source_wallet[:8]} sold {token[:8]}")
-                    logging.info(f"💰 Following alpha - selling {token[:8]} immediately")
-                    
-                    # Execute immediate sell
-                    sell_result = self.ensure_position_sold(token, position, 'alpha_exit')
-                    
-                    if sell_result:
-                        logging.info(f"✅ Followed alpha exit for {token[:8]}")
-                    
-            except Exception as e:
-                logging.debug(f"Error checking alpha balance for {token[:8]}: {e}")
-                
-    except Exception as e:
-        logging.error(f"Error in check_alpha_exits: {e}")
 
 def verify_all_functions_exist():
     """Verify all required functions exist before trading"""
