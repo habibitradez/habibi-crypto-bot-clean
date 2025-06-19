@@ -1843,18 +1843,19 @@ def run_adaptive_ai_system():
     logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
     
     high_wr_wallets = [
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot"),
-        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1"),
-        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2"),
-        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "82% Winner 3"),
-        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4")
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot", "BOT_TRADER"),
+        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1", "BOT_TRADER"),
+        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2", "BOT_TRADER"),
+        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Elite Sniper", "BOT_TRADER"),  # Your 88% WR bot
+        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4", "BOT_TRADER"),
+        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Perfect Bot", "BOT_TRADER")  # Your 100% WR bot
     ]
-    
-    # Add each high WR wallet
-    for address, name in high_wr_wallets:
-        trader.add_alpha_wallet(address, name, style="AUTO")  # Will auto-detect style
+
+    # Add them with explicit style
+    for address, name, style in high_wr_wallets:
+        trader.add_alpha_wallet(address, name, style=style)  # Force BOT_TRADER style
         loaded_count += 1
-        logging.info(f"   Added high WR wallet: {name}")
+        logging.info(f"   Added high WR wallet: {name} as {style}")
         
     # Verify all wallets were loaded
     total_wallets = len(ALPHA_WALLETS_CONFIG) + len(high_wr_wallets)
