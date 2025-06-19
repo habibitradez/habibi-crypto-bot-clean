@@ -9911,9 +9911,7 @@ def initialize():
                 logging.info(f"Using private key: {masked_key}")
                 
                 main_wallet = WalletManager(CONFIG['WALLET_PRIVATE_KEY'])
-                private_key=CONFIG['WALLET_PRIVATE_KEY'],
-                rpc_url=CONFIG['SOLANA_RPC_URL']
-            )
+               
             
             # Check wallet balance
             balance = main_wallet.get_balance()
