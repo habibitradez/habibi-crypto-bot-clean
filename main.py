@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("D8BuboNjz2m6ioCrrKuXVBAdAYkbLSKdeRvjdd5UhfvM", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30")
+    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30)
 ]
 
 daily_stats = {
