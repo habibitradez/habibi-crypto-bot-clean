@@ -473,6 +473,14 @@ VERIFIED_TOKENS = [
     "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",   # WIF
 ]
 
+# Create a function to get a valid wallet instance
+def get_valid_wallet():
+    """Always returns a valid wallet instance"""
+    global wallet
+    if not hasattr(wallet, 'get_balance') or wallet is None:
+        wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'])
+    return wallet
+
 # ============= AI ALPHA TRADING SYSTEM CLASSES =============
 
 class TradingBrain:
@@ -1108,37 +1116,21 @@ class AdaptiveAlphaTrader:
                     # Hold time
                     hold_time = (current_time - entry_time) / 60
                     
-                    # STOP LOSS
+                    # STOP LOSS - Use ensure_position_sold for reliability
                     stop_loss_pct = -float(CONFIG.get('STOP_LOSS_PERCENT', 8))
                     if pnl_pct <= stop_loss_pct:
                         logging.info(f"🛑 STOP LOSS HIT for {token[:8]}: {pnl_pct:.1f}%")
-                        logging.info(f"💰 Selling {token[:8]} - stop_loss")
-                        
-                        sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result and sell_result != "no-tokens":
-                            self.record_trade_result(token, position, current_price, 'stop_loss')
-                        elif sell_result == "no-tokens":
-                            # Already sold, just remove from tracking
-                            logging.info(f"Token {token[:8]} already sold - removing from positions")
-                            del self.positions[token]
+                        self.ensure_position_sold(token, position, 'stop_loss')
                         continue
                     
-                    # MAX HOLD TIME
+                    # MAX HOLD TIME - Use ensure_position_sold
                     max_hold_minutes = float(CONFIG.get('MAX_HOLD_TIME_MINUTES', 240))
                     if hold_time > max_hold_minutes:
                         logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
-                        logging.info(f"💰 Selling {token[:8]} - max_hold_time")
-                        
-                        sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result and sell_result != "no-tokens":
-                            self.record_trade_result(token, position, current_price, 'timeout')
-                        elif sell_result == "no-tokens":
-                            # Already sold, just remove from tracking
-                            logging.info(f"Token {token[:8]} already sold - removing from positions")
-                            del self.positions[token]
+                        self.ensure_position_sold(token, position, 'max_hold_time')
                         continue
                     
-                    # TRAILING STOP LOGIC
+                    # TRAILING STOP LOGIC - Use ensure_position_sold
                     if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true' and pnl_pct >= float(CONFIG.get('TRAIL_TRIGGER_PCT', 15)):
                         # Calculate trailing stop level
                         trail_distance = float(CONFIG.get('TRAIL_DISTANCE_PCT', 5))
@@ -1148,26 +1140,14 @@ class AdaptiveAlphaTrader:
                         if pnl_pct <= trail_stop_pct:
                             logging.info(f"📉 TRAILING STOP HIT for {token[:8]}")
                             logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
-                            logging.info(f"💰 Selling {token[:8]} - trailing_stop")
-                            
-                            sell_result = execute_optimized_sell(token, position_size)
-                            if sell_result and sell_result != "no-tokens":
-                                self.record_trade_result(token, position, current_price, 'trailing_stop')
-                            elif sell_result == "no-tokens":
-                                del self.positions[token]
+                            self.ensure_position_sold(token, position, 'trailing_stop')
                             continue
                     
-                    # TAKE PROFIT
+                    # TAKE PROFIT - Use ensure_position_sold
                     take_profit_pct = float(CONFIG.get('TAKE_PROFIT_PERCENT', 20))
                     if pnl_pct >= take_profit_pct:
                         logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
-                        logging.info(f"💰 Selling {token[:8]} - take_profit")
-                        
-                        sell_result = execute_optimized_sell(token, position_size)
-                        if sell_result and sell_result != "no-tokens":
-                            self.record_trade_result(token, position, current_price, 'take_profit')
-                        elif sell_result == "no-tokens":
-                            del self.positions[token]
+                        self.ensure_position_sold(token, position, 'take_profit')
                         continue
                     
                     # Log position status every 5 minutes
@@ -1176,6 +1156,8 @@ class AdaptiveAlphaTrader:
                         
                 except Exception as e:
                     logging.error(f"Error monitoring position {token}: {e}")
+                    # Don't let one position error stop monitoring others
+                    continue
                     
         except Exception as e:
             logging.error(f"Error in monitor_positions: {e}")
@@ -1277,7 +1259,7 @@ class AdaptiveAlphaTrader:
                 # Try multiple methods
             
                 # Method 1: Normal sell
-                result = execute_optimized_sell(token, position['size'])
+                self.ensure_position_sold(token, position, 'emergency')
             
                 # Method 2: If normal fails, try force sell
                 if not result or result == "no-tokens":
@@ -1687,6 +1669,39 @@ class AdaptiveAlphaTrader:
         }
         return styles.get(style, styles['SCALPER'])
 
+    
+    def ensure_position_sold(self, token, position, reason="auto_recovery"):
+        """Ensures a position gets sold even if first attempt fails"""
+        max_attempts = 3
+        for attempt in range(max_attempts):
+            try:
+                result = execute_optimized_sell(token, position['size'])
+                if result and result != "no-tokens":
+                    logging.info(f"✅ Successfully sold {token[:8]} on attempt {attempt + 1}")
+                    self.record_trade_result(token, position, get_token_price(token), reason)
+                    return True
+                    
+                # If no tokens, position already sold
+                if result == "no-tokens":
+                    logging.info(f"Position {token[:8]} already sold")
+                    if token in self.positions:
+                        del self.positions[token]
+                    return True
+                    
+            except Exception as e:
+                logging.error(f"Sell attempt {attempt + 1} failed for {token[:8]}: {e}")
+                
+            # Wait before retry
+            if attempt < max_attempts - 1:
+                time.sleep(5)
+                
+        logging.error(f"❌ Failed to sell {token[:8]} after {max_attempts} attempts!")
+        # Still remove from tracking to avoid getting stuck
+        if token in self.positions:
+            del self.positions[token]
+        return False
+
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API"""
@@ -1797,11 +1812,23 @@ def get_wallet_recent_buys_helius(wallet_address):
         logging.error(f"Error getting wallet buys: {e}")
         return []
 
+def check_wallet_health():
+    """Periodic wallet health check"""
+    try:
+        wallet = get_valid_wallet()
+        balance = wallet.get_balance()
+        logging.info(f"💚 Wallet health check passed. Balance: {balance:.3f} SOL")
+        return True
+    except Exception as e:
+        logging.error(f"❌ Wallet health check failed: {e}")
+        return False
+
+
 def run_adaptive_ai_system():
     """Main function to run the complete system with your configuration"""
 
     global wallet
-        # Add this check
+    # Add this check
     if wallet is None:
         logging.error("❌ Wallet not initialized! Cannot start trading system.")
         return
@@ -1850,15 +1877,15 @@ def run_adaptive_ai_system():
     
     logging.info(f"DEBUG: First 5 wallets loaded:")
     for i in range(min(5, len(trader.alpha_wallets))):
-        wallet = trader.alpha_wallets[i]
-        style = wallet.get('style', 'UNKNOWN')
-        logging.info(f"   {i+1}. {wallet['name']} ({wallet['address'][:8]}...) - Style: {style}")
+        wallet_info = trader.alpha_wallets[i]
+        style = wallet_info.get('style', 'UNKNOWN')
+        logging.info(f"   {i+1}. {wallet_info['name']} ({wallet_info['address'][:8]}...) - Style: {style}")
     
     logging.info(f"DEBUG: Last 5 wallets loaded:")
     for i in range(max(0, len(trader.alpha_wallets)-5), len(trader.alpha_wallets)):
-        wallet = trader.alpha_wallets[i]
-        style = wallet.get('style', 'UNKNOWN')
-        logging.info(f"   {i+1}. {wallet['name']} ({wallet['address'][:8]}...) - Style: {style}")
+        wallet_info = trader.alpha_wallets[i]
+        style = wallet_info.get('style', 'UNKNOWN')
+        logging.info(f"   {i+1}. {wallet_info['name']} ({wallet_info['address'][:8]}...) - Style: {style}")
     
     # Log first few and last few wallets to confirm
     if len(trader.alpha_wallets) > 0:
@@ -1869,11 +1896,17 @@ def run_adaptive_ai_system():
     # Main trading loop
     last_stats_time = 0
     last_hunt_time = 0
-    last_alpha_exit_check = 0  # ADD THIS
+    last_alpha_exit_check = 0
+    iteration = 0  # Add iteration counter
     
     while True:
         try:
             current_time = time.time()
+            iteration += 1
+            
+            # Check wallet health every 50 iterations
+            if iteration % 50 == 0:
+                check_wallet_health()
             
             # 1. Check all alpha wallets for new buys
             trader.check_alpha_wallets()
@@ -1891,7 +1924,7 @@ def run_adaptive_ai_system():
             if trader.positions:
                 trader.monitor_positions()
             
-            # 4.5 Check for alpha exits (ADD THIS SECTION)
+            # 4.5 Check for alpha exits
             if current_time - last_alpha_exit_check > float(CONFIG.get('ALPHA_EXIT_CHECK_INTERVAL', 30)):
                 trader.check_alpha_exits()
                 last_alpha_exit_check = current_time
@@ -1914,9 +1947,10 @@ def run_adaptive_ai_system():
                 logging.info(f"   Daily: {stats['trades']} trades, {stats['wins']} wins")
                 logging.info(f"   P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
                 
-                # Show wallet balance
+                # Show wallet balance using get_valid_wallet
                 try:
-                    balance = wallet.get_balance()
+                    valid_wallet = get_valid_wallet()
+                    balance = valid_wallet.get_balance()
                     logging.info(f"   Balance: {balance:.3f} SOL")
                 except:
                     pass
@@ -1929,7 +1963,7 @@ def run_adaptive_ai_system():
                         active_wallets.add(wallet_name)
                 
                 if active_wallets:
-                    logging.info(f"   Active Alpha Wallets: {', '.join(list(active_wallets)[:5])}")  # Show first 5
+                    logging.info(f"   Active Alpha Wallets: {', '.join(list(active_wallets)[:5])}")
                 
                 # Show any insights
                 if stats['trades'] > 0:
@@ -2517,11 +2551,10 @@ def check_alpha_exits(self):
                     logging.info(f"💰 Following alpha - selling {token[:8]} immediately")
                     
                     # Execute immediate sell
-                    sell_result = execute_optimized_sell(token, position['size'])
+                    sell_result = self.ensure_position_sold(token, position, 'alpha_exit')
                     
                     if sell_result:
                         logging.info(f"✅ Followed alpha exit for {token[:8]}")
-                        self.record_trade_result(token, position, get_token_price(token), 'alpha_exit')
                     
             except Exception as e:
                 logging.debug(f"Error checking alpha balance for {token[:8]}: {e}")
@@ -3462,6 +3495,7 @@ def get_wallet_recent_trades(wallet_address: str) -> List[Dict]:
     except Exception as e:
         logging.error(f"Error getting wallet trades: {e}")
         return []
+
 
 def parse_helius_transaction(tx: Dict) -> Optional[Dict]:
     """
@@ -6875,7 +6909,7 @@ def emergency_sell_all_positions(self):
             # Try multiple methods
             
             # Method 1: Normal sell
-            result = execute_optimized_sell(token, position['size'])
+            self.ensure_position_sold(token, position, 'emergency')
             
             # Method 2: If normal fails, try force sell
             if not result or result == "no-tokens":
@@ -11907,7 +11941,8 @@ def monitor_token_peak_price(token_address):
         logging.info(f"Trend-based exit: Token gained {pct_gain_from_initial:.2f}% but dropped {pct_drop_from_peak:.2f}% from peak")
         
         # Execute sell
-        success, signature = execute_optimized_sell(token_address)
+        if token_address in self.positions:
+            self.ensure_position_sold(token_address, self.positions[token_address], 'trend_exit')
         
         if success:
             profit_amount = (current_price - initial_price) * CONFIG['BUY_AMOUNT_SOL']
@@ -12083,7 +12118,8 @@ def monitor_token_price_for_consistent_profits(token_address):
     # Sell remaining 34% at +50% gain
     elif current_gain_pct >= 50 and tokens_sold <= 0.66:
         logging.info(f"🎯 PROFIT TAKE 3: +{current_gain_pct:.1f}% - Selling final 34% (${current_profit_usd:.2f})")
-        success = execute_optimized_sell(token_address)
+        if token_address in self.positions:
+            self.ensure_position_sold(token_address, self.positions[token_address], 'trend_exit')
         if success:
             update_daily_stats(current_profit_usd * 0.34)
             if token_address in monitored_tokens:
@@ -12093,7 +12129,8 @@ def monitor_token_price_for_consistent_profits(token_address):
     # STOP LOSS: -8% (tighter than your current -12%)
     if current_gain_pct <= -8:
         logging.info(f"🛑 STOP LOSS: {current_gain_pct:.1f}% loss - SELLING ALL")
-        success = execute_optimized_sell(token_address)
+        if token_address in self.positions:
+            self.ensure_position_sold(token_address, self.positions[token_address], 'stop_loss')
         if success:
             update_daily_stats(current_profit_usd)
             if token_address in monitored_tokens:
@@ -13276,12 +13313,9 @@ def submit_via_helius(signed_transaction):
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     print("EXECUTING VERSION 2 of execute_optimized_transaction")
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
-    global wallet
     
-    # FIX: If wallet is not the right type, recreate it
-    if not hasattr(wallet, 'get_balance'):
-        print(f"WARNING: wallet was corrupted (type: {type(wallet)}), recreating...")
-        wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'])
+    # Use get_valid_wallet() instead of global wallet
+    wallet = get_valid_wallet()
     
     try:
         action = "sell" if is_sell else "buy"
