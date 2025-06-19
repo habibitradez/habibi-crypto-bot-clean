@@ -1800,9 +1800,9 @@ def get_wallet_recent_buys_helius(wallet_address):
 def run_adaptive_ai_system():
     """Main function to run the complete system with your configuration"""
 
-    global main_wallet
+    global wallet
         # Add this check
-    if main_wallet is None:
+    if wallet is None:
         logging.error("❌ Wallet not initialized! Cannot start trading system.")
         return
     
@@ -1814,7 +1814,7 @@ def run_adaptive_ai_system():
     logging.info("💰 Target: $500/day through consistent profits")
     
     # Initialize components
-    trader = AdaptiveAlphaTrader(main_wallet)
+    trader = AdaptiveAlphaTrader(wallet)
     
     # Add ALL alpha wallets with proper logging
     loaded_count = 0
@@ -9881,7 +9881,7 @@ def get_jupiter_price_alternative(token_address: str) -> Optional[float]:
 
 def initialize():
     """Initialize the bot and verify connectivity."""
-    global main_wallet
+    global wallet
     
     logging.info("Starting bot initialization...")
     
@@ -9910,11 +9910,11 @@ def initialize():
                 masked_key = CONFIG['WALLET_PRIVATE_KEY'][:5] + "..." + CONFIG['WALLET_PRIVATE_KEY'][-5:] if CONFIG['WALLET_PRIVATE_KEY'] else "None"
                 logging.info(f"Using private key: {masked_key}")
                 
-                main_wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'])
+                wallet = SolanaWallet(CONFIG['WALLET_PRIVATE_KEY'])
                
             
             # Check wallet balance
-            balance = main_wallet.get_balance()
+            balance = wallet.get_balance()
             logging.info(f"Wallet connected: {wallet.public_key}")
             logging.info(f"Wallet balance: {balance} SOL")
             
@@ -11446,7 +11446,7 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
 
 def execute_via_javascript(token_address, amount, is_sell=False):
     """Execute trade via JavaScript with proper amount handling and sell fixes"""
-    global main_wallet
+    global wallet
     
     try:
         import subprocess
@@ -12974,14 +12974,14 @@ def submit_via_helius(signed_transaction):
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
-    global main_wallet
+    global wallet
     
     try:
         action = "sell" if is_sell else "buy"
         logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
         
         # Check balance
-        balance = main_wallet.get_balance()  # Change to main_wallet
+        balance = wallet.get_balance()  # Change to wallet
         if not is_sell and balance < amount_sol + 0.01:
             logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
             return None
@@ -13322,14 +13322,14 @@ def submit_via_helius(signed_transaction):
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
-    global main_wallet
+    global wallet
     
     try:
         action = "sell" if is_sell else "buy"
         logging.info(f"Starting {action} for {token_address[:8]} with {amount_sol} SOL")
         
         # Check balance
-        balance = main_wallet.get_balance()
+        balance = wallet.get_balance()
         if not is_sell and balance < amount_sol + 0.01:
             logging.error(f"Insufficient balance: {balance:.3f} SOL, need {amount_sol + 0.01:.3f}")
             return None
@@ -13369,7 +13369,7 @@ def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
 
 def get_all_token_balances(wallet_pubkey):
     """Get all SPL token balances for the wallet"""
-    global main_wallet
+    global wallet
     
     try:
         import requests
