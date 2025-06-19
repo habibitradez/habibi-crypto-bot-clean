@@ -59,17 +59,17 @@ ALPHA_WALLETS_CONFIG = [
     ("CPScg3CeaRPQHzesEpWkUzkSPyBrHMPpXnHzgpRBm3eZ", "Alpha5"),
     ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySiGVJ5dPzu81u", "Alpha6"),
     ("8PttwcjYTgYCeKrNhFPLc5L4nenRXFkwFAAkHyoNHGgH", "Alpha7"),
-    ("BhLc8dz4rxdpF6LbR166hSsinaRWuZj4hTY6SuMF85pL", "Alpha8"),
+    ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8"),
     ("6enzcYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiitzjB", "Alpha9"),
-    ("8p1miLkSfbiXcXvCqBKAoJrWGQVhc73J5dgtzT5jSYuZ", "Alpha10"),
+    ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha10"),
     ("EcHcM77XtepREy8juTWp5APB46bMte3eRtViHksNEcrb", "Alpha11"),
-    ("niggaNaU9wFYxhcokXGxCZB67aVwHTRfJoLsyUHESWe", "Alpha12"),
+    ("AkCdMB93stcWSsGQnUzqy9ZPnDLRLPPE3wHX5aP3kF5W", "Alpha12"),
     ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13"),
     ("D9tXKiHKPUcPe7wC8f2kJJUzfsKNrFWTanrdt1fFJ1AK", "Alpha14"),
     ("FYDbATeg1qtXfzT6WZFmST6hVcknwyeXXZCAcnGeqBjS", "Alpha15"),
     ("3ZgrgEADJJtjyWYag6XfYd7zoD7LEwFhsoEpj7FFWUPo", "Alpha16"),
     ("Ct9pXcNjhAwtvBkyybQoZc3ozGjcMnyFNdQ5AE1LkK1", "Alpha17"),
-    ("8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf", "Alpha18"),
+    ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18"),
     ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19"),
     ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20"),
     ("86yzRC1iz2SWdUgmTwoEZSMHnziQJhCuLpWrxzRrdbEg", "Alpha21"),
@@ -78,10 +78,10 @@ ALPHA_WALLETS_CONFIG = [
     ("3tc4BVAdzjr1JpeZu6NAjLHyp4kK3iic7TexMBYGJ4Xk", "Alpha24"),
     ("F1chUYt4XB84bF6MzfHgU2dtoWNyAXGdCfzDBLR2EM5s", "Alpha25"),
     ("BtMBMPkoNbnLF9Xn552guQq528KKXcsNBNNBre3oaQtr", "Alpha26"),
-    ("D8BuboNjz2m6ioCrrKuXVBAdAYkbLSKdeRvjdd5UhfvM", "Alpha27"),
+    ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("FRcsMBijQyEYxBT3Uiyjqv5G6Yt8XZpgVZAbLkfEdvYo", "Alpha30")
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -1651,43 +1651,39 @@ class AdaptiveAlphaTrader:
                 'position_size_multiplier': 1.0,
                 'min_liquidity': 5000
             },
-            'SWINGER': {
-                'max_hold_time': 120,  # 2 hours
-                'stop_loss': 15,
+            'ELITE_BOT': {  # For 80%+ win rate, short holds
+                'max_hold_time': 150,  # 2.5 hours
+                'stop_loss': 10,
                 'take_profit': 50,
-                'position_size_multiplier': 1.2,
-                'min_liquidity': 20000
-            },
-            'HOLDER': {
-                'max_hold_time': 480,  # 8 hours
-                'stop_loss': 25,
-                'take_profit': 100,
-                'position_size_multiplier': 1.5,
-                'min_liquidity': 50000
-            },
-            'SNIPER': {
-                'max_hold_time': 10,  # 10 minutes quick flips
-                'stop_loss': 5,
-                'take_profit': 10,
-                'position_size_multiplier': 0.8,
-                'min_liquidity': 3000
-            },
-            'BOT_TRADER': {
-                'max_hold_time': 5,
-                'stop_loss': 3,
-                'take_profit': 8,
                 'position_size_multiplier': 2.0,
-                'min_liquidity': 10000,
-                'copy_delay': 0
+                'min_liquidity': 3000,
+                'copy_delay': 0,
+                'check_interval': 5
             },
-            'ELITE_BOT': {  # ADD THIS NEW STYLE
-                'max_hold_time': 150,  # 2.5 hours to match their behavior
-                'stop_loss': 10,       # More room for drawdowns
-                'take_profit': 50,     # Let winners run
-                'position_size_multiplier': 2.0,  # Double size for high confidence
-                'min_liquidity': 3000,  # Low enough to catch all their trades
-                'copy_delay': 0,       # Copy immediately
-                'check_interval': 5    # Check every 5 seconds
+            'PERFECT_BOT': {  # For 100% win rate wallets
+                'max_hold_time': 1440,  # 24 hours (for Alpha 8 & 20)
+                'stop_loss': 20,      # Give lots of room
+                'take_profit': 100,    # Let winners run
+                'position_size_multiplier': 3.0,  # Triple size for 100% certainty
+                'min_liquidity': 1000,
+                'copy_delay': 0,
+                'check_interval': 5
+            },
+            'MULTI_DAY_HOLDER': {  # For wallets that hold 2+ days
+                'max_hold_time': 4320,  # 3 days
+                'stop_loss': 30,
+                'take_profit': 200,
+                'position_size_multiplier': 1.5,
+                'min_liquidity': 10000,
+                'check_interval': 30
+            },
+            'HIGH_FREQUENCY': {  # For wallets like Alpha 19 (394 trades/day)
+                'max_hold_time': 120,  # 2 hours
+                'stop_loss': 5,
+                'take_profit': 15,
+                'position_size_multiplier': 0.5,  # Smaller size, more trades
+                'min_liquidity': 5000,
+                'check_interval': 5
             }
         }
         return styles.get(style, styles['SCALPER'])
@@ -1876,12 +1872,25 @@ def run_adaptive_ai_system():
     logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
     
     high_wr_wallets = [
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot", "ELITE_BOT"),
-        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1", "ELITE_BOT"),
-        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2", "ELITE_BOT"),
-        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Elite Sniper 88%", "ELITE_BOT"),
-        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4", "ELITE_BOT"),
-        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Perfect Bot 100%", "ELITE_BOT")  # Add your Alpha13
+        # 100% Win Rate Wallets - PERFECT_BOT
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-100%", "PERFECT_BOT"),
+        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-100%", "ELITE_BOT"),  # 2.2hr hold
+        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-100%", "PERFECT_BOT"),  # 1 day hold
+    
+        # 80%+ Win Rate Wallets - ELITE_BOT
+        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha1-88%", "ELITE_BOT"),  # 4.4hr hold
+        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"),  # 1.2hr hold
+        ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha2-83%", "ELITE_BOT"),  # 3.2hr hold
+        ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-80%", "MULTI_DAY_HOLDER"),  # 10.8 day hold
+    
+        # Good Win Rate, Multi-Day Holders
+        ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),  # 2.9 days
+        ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),  # 6.5 days
+    
+        # High Frequency Traders
+        ("JD25qVdtd65Fo1XNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "HIGH_FREQUENCY"),  # 394 trades/day
+    
+        # Add more based on their characteristics...
     ]
     
     # Add each high WR wallet with explicit style
