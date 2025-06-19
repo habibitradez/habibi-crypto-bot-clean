@@ -12973,6 +12973,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
+    print("EXECUTING VERSION 1 of execute_optimized_transaction")
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
     global wallet
     
@@ -13321,6 +13322,7 @@ def submit_via_helius(signed_transaction):
         return None
 
 def execute_optimized_transaction(token_address, amount_sol, is_sell=False):
+    print("EXECUTING VERSION 2 of execute_optimized_transaction")
     """Execute ALL transactions (buy/sell) using JavaScript swap.js"""
     global wallet
     
