@@ -656,6 +656,8 @@ class AdaptiveAlphaTrader:
                 check_interval = 5  # Check every 5 seconds for bots
             elif wallet_style == 'SNIPER':
                 check_interval = 10  # 10 seconds for snipers
+            elif wallet_style == 'ELITE_BOT':
+                check_interval = 5  # Check every 5 seconds for elite bots
             elif wallet_style == 'HOLDER':
                 check_interval = 30  # 30 seconds for holders
             else:
@@ -1649,12 +1651,43 @@ class AdaptiveAlphaTrader:
                 'position_size_multiplier': 1.0,
                 'min_liquidity': 5000
             },
+            'SWINGER': {
+                'max_hold_time': 120,  # 2 hours
+                'stop_loss': 15,
+                'take_profit': 50,
+                'position_size_multiplier': 1.2,
+                'min_liquidity': 20000
+            },
+            'HOLDER': {
+                'max_hold_time': 480,  # 8 hours
+                'stop_loss': 25,
+                'take_profit': 100,
+                'position_size_multiplier': 1.5,
+                'min_liquidity': 50000
+            },
+            'SNIPER': {
+                'max_hold_time': 10,  # 10 minutes quick flips
+                'stop_loss': 5,
+                'take_profit': 10,
+                'position_size_multiplier': 0.8,
+                'min_liquidity': 3000
+            },
             'BOT_TRADER': {
                 'max_hold_time': 5,
                 'stop_loss': 3,
                 'take_profit': 8,
                 'position_size_multiplier': 2.0,
-                'min_liquidity': 10000
+                'min_liquidity': 10000,
+                'copy_delay': 0
+            },
+            'ELITE_BOT': {  # ADD THIS NEW STYLE
+                'max_hold_time': 150,  # 2.5 hours to match their behavior
+                'stop_loss': 10,       # More room for drawdowns
+                'take_profit': 50,     # Let winners run
+                'position_size_multiplier': 2.0,  # Double size for high confidence
+                'min_liquidity': 3000,  # Low enough to catch all their trades
+                'copy_delay': 0,       # Copy immediately
+                'check_interval': 5    # Check every 5 seconds
             }
         }
         return styles.get(style, styles['SCALPER'])
@@ -1843,17 +1876,17 @@ def run_adaptive_ai_system():
     logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
     
     high_wr_wallets = [
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot", "BOT_TRADER"),
-        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1", "BOT_TRADER"),
-        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2", "BOT_TRADER"),
-        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Elite Sniper", "BOT_TRADER"),  # Your 88% WR bot
-        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4", "BOT_TRADER"),
-        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Perfect Bot", "BOT_TRADER")  # Your 100% WR bot
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "100% Bot", "ELITE_BOT"),
+        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "82% Winner 1", "ELITE_BOT"),
+        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "82% Winner 2", "ELITE_BOT"),
+        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Elite Sniper 88%", "ELITE_BOT"),
+        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "82% Winner 4", "ELITE_BOT"),
+        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Perfect Bot 100%", "ELITE_BOT")  # Add your Alpha13
     ]
-
-    # Add them with explicit style
+    
+    # Add each high WR wallet with explicit style
     for address, name, style in high_wr_wallets:
-        trader.add_alpha_wallet(address, name, style=style)  # Force BOT_TRADER style
+        trader.add_alpha_wallet(address, name, style=style)  # Force ELITE_BOT style
         loaded_count += 1
         logging.info(f"   Added high WR wallet: {name} as {style}")
         
