@@ -22,7 +22,6 @@ from collections import defaultdict
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from collections import deque
-from wallet_manager import WalletManager  # Add this at the top of your file
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
