@@ -1731,55 +1731,98 @@ class AdaptiveAlphaTrader:
             self.last_reclassification = time.time()
 
     def get_style_params(self, style):
-        """Updated wallet styles based on actual trading behavior analysis"""
+        """Updated for faster capital rotation and consistent profits"""
         styles = {
-            'PERFECT_BOT_FAST': {  # For Alpha13 - High frequency, 2.2hr avg hold
-                'max_hold_time': 180,   # 3 hours (give buffer beyond 2.2hr avg)
-                'stop_loss': 15,        # More room for high-frequency bot
-                'take_profit': 75,      # Let winners run but not too long
+            'SCALPER': {
+                'max_hold_time': 30,
+                'stop_loss': 8,
+                'take_profit': 20,
+                'position_size_multiplier': 1.0,
+                'min_liquidity': 5000
+            },
+            'SWINGER': {
+                'max_hold_time': 120,  # 2 hours
+                'stop_loss': 15,
+                'take_profit': 50,
+                'position_size_multiplier': 1.2,
+                'min_liquidity': 20000
+            },
+            'HOLDER': {
+                'max_hold_time': 480,  # 8 hours
+                'stop_loss': 25,
+                'take_profit': 100,
+                'position_size_multiplier': 1.5,
+                'min_liquidity': 50000
+            },
+            'SNIPER': {
+                'max_hold_time': 10,  # 10 minutes quick flips
+                'stop_loss': 5,
+                'take_profit': 10,
+                'position_size_multiplier': 0.8,
+                'min_liquidity': 3000
+            },
+            'BOT_TRADER': {
+                'max_hold_time': 5,
+                'stop_loss': 3,
+                'take_profit': 8,
+                'position_size_multiplier': 2.0,
+                'min_liquidity': 10000,
+                'copy_delay': 0
+            },
+            'PERFECT_BOT_FAST': {  # Alpha13 - High frequency, 2.2hr avg hold
+                'max_hold_time': 180,   # 3 hours
+                'stop_loss': 15,        
+                'take_profit': 35,      # REDUCED from 75% to 35% for faster rotation
                 'position_size_multiplier': 3.0,  # Max confidence
                 'min_liquidity': 1000,  # Very low to catch all trades
                 'copy_delay': 0,        # Immediate copy
                 'check_interval': 3     # Check every 3 seconds
             },
-            'PERFECT_BOT_SNIPER': {  # For Alpha20 - Ultra selective, 1hr avg hold  
-                'max_hold_time': 90,    # 1.5 hours (buffer beyond 1hr avg)
-                'stop_loss': 12,        # Tight for quick trades
-                'take_profit': 50,      # Quick profits
+            'PERFECT_BOT_SNIPER': {  # Alpha20 - Ultra selective, 1hr avg hold  
+                'max_hold_time': 90,    # 1.5 hours
+                'stop_loss': 12,        
+                'take_profit': 30,      # REDUCED from 50% to 30% for faster rotation
                 'position_size_multiplier': 4.0,  # Highest confidence (only 5 trades!)
                 'min_liquidity': 500,   # Ultra low for selective trades
                 'copy_delay': 0,        # Immediate copy
                 'check_interval': 3     # Check every 3 seconds
             },
-            'PERFECT_BOT_SWING': {  # For Alpha8 - Very selective, 1-day avg hold
-                'max_hold_time': 2880,  # 2 days (buffer beyond 1-day avg)
-                'stop_loss': 25,        # Wide stops for swing trades
-                'take_profit': 200,     # Let big winners run
+            'PERFECT_BOT_SWING': {  # Alpha8 - Very selective, 1-day avg hold
+                'max_hold_time': 1440,  # 1 day (reduced from 2 days)
+                'stop_loss': 20,        # Reduced from 25% for tighter risk
+                'take_profit': 80,      # REDUCED from 200% to 80% for faster rotation
                 'position_size_multiplier': 2.5,  # High confidence
-                'min_liquidity': 5000,  # Higher for swing trades
+                'min_liquidity': 5000,  
                 'copy_delay': 0,        # Immediate copy
                 'check_interval': 10    # Less frequent for swing trader
             },
-            'ELITE_BOT': {  # Keep existing for 80%+ win rate wallets
-                'max_hold_time': 240,   # 4 hours
-                'stop_loss': 12,
-                'take_profit': 60,
+            'ELITE_BOT': {  # For 80%+ win rate wallets
+                'max_hold_time': 120,   # 2 hours (reduced from 4 hours)
+                'stop_loss': 10,        # Tighter from 12%
+                'take_profit': 25,      # REDUCED from 60% to 25% for faster rotation
                 'position_size_multiplier': 2.0,
                 'min_liquidity': 3000,
                 'copy_delay': 0,
                 'check_interval': 5
             },
             'MULTI_DAY_HOLDER': {
-                'max_hold_time': 4320,  # 3 days
-                'stop_loss': 30,
-                'take_profit': 200,
+                'max_hold_time': 720,   # 12 hours (reduced from 3 days)
+                'stop_loss': 20,        # Tighter from 30%
+                'take_profit': 50,      # REDUCED from 200% to 50% for faster rotation
                 'position_size_multiplier': 1.5,
                 'min_liquidity': 10000,
                 'check_interval': 30
+            },
+            'HIGH_FREQUENCY': {  # For wallets like Alpha 19 (394 trades/day)
+                'max_hold_time': 60,    # 1 hour (reduced from 2 hours)
+                'stop_loss': 8,         # Tighter from 6%
+                'take_profit': 20,      # REDUCED from 18% to 20% for consistency
+                'position_size_multiplier': 0.8,  # Smaller size, more trades
+                'min_liquidity': 5000,
+                'check_interval': 5
             }
         }
         return styles.get(style, styles['ELITE_BOT'])
-
 
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
