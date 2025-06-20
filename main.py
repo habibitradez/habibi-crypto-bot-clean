@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -2033,9 +2033,9 @@ def run_adaptive_ai_system():
     
     # Add ALL alpha wallets with proper logging
     loaded_count = 0
-    for address, name in ALPHA_WALLETS_CONFIG:
-        trader.add_alpha_wallet(address, name)
-        loaded_count += 1
+   # for address, name in ALPHA_WALLETS_CONFIG:
+   #     trader.add_alpha_wallet(address, name)
+   #     loaded_count += 1
     
     # ADD HIGH WIN-RATE WALLETS HERE
     logging.info("🎯 Adding PERFECT BOTS ONLY alpha wallets...")
