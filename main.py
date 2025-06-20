@@ -770,12 +770,8 @@ class AdaptiveAlphaTrader:
                             )
                         
                         else:
-                            # No token data - only copy if it's a high WR wallet
-                            if win_rate >= 80:
-                                logging.warning(f"⚠️ No data for {buy['token'][:8]} but {alpha['name']} has {win_rate:.0f}% WR - blind copying with 0.05 SOL")
-                                self.execute_trade(buy['token'], 'COPY_TRADE', 0.05, 0.00001, source_wallet=alpha['address'])
-                            else:
-                                logging.info(f"❌ Skipping {buy['token'][:8]} - no data and wallet WR only {win_rate:.0f}%")
+                             # Perfect Bots Only - Skip trades without proper token data
+                             logging.info(f"❌ Skipping {buy['token'][:8]} from {alpha['name']} - no token data available")
                             
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
