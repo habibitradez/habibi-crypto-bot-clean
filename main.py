@@ -81,7 +81,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -3238,7 +3238,7 @@ def get_high_confidence_tokens():
         # Signal 1: Copy trading signals
         logging.info("📊 Collecting copy trading signals...")
         try:
-            copy_signals = monitor_profitable_wallets_enhanced()
+           # copy_signals = monitor_profitable_wallets_enhanced()
             for signal in copy_signals:
                 token = signal['token']
                 all_signals[token] = all_signals.get(token, 0) + signal['signal_strength']
@@ -4236,141 +4236,6 @@ def enhanced_profitable_main_loop():
     
     print(f"\n🎯 TARGET ACHIEVED! Daily profit: ${daily_profit:.2f}")
 
-def monitor_profitable_wallets():
-    """Monitor proven profitable wallets for copy opportunities"""
-    
-    # PROVEN PROFITABLE WALLETS (REAL ADDRESSES FROM RESEARCH)
-    PROFITABLE_WALLETS = [
-        "52XAJBYAqBfx5NUf9UHcYbtpd6Ar9r4miiJgBMrPtoX7",
-        "FpYssNBCxC9uAXrw6JsFqQ59e2vH1RMnfdGtjTvr5aFX", 
-        "4hkgHm84DWJPCTx6aqRq3bgr4YreenUSzQPTmUn9WNCG",
-        "AtCzVpyaXXTPC4yDoku8yCYCSNyS9zBknGFCRHzXvcw7",
-        "8BXDu9QAEp4TgTKQy1ShGgLvcuv5YvukpiHwhU4zfPqN",
-        "8pZLhFrW9KFwJYgF6No7GmB6QimTPoruG5SFH1avqDeZ",
-        "CAUP6pShV5byF9dXUQz5PZiFvqGXWCLX8GvNWNBiTEDQ",
-        "E8EZTrRY4Dc9Vsw3mCdBZ6gE2xCw9CisQBundxzggtCs",
-        "9b9hqvHaKkDuGsqu622Lud6ToWuGbVCTsr2GWimWtnuk",
-        "2EiuGzhmktr72M3FjWNwMZLRNF7HxAsYn23SsYkPcPDk",
-        "Gv8YFCU9WESGpN6fcGKG9nirqcyF9wVZAqnQ1DjrsfcE",
-        "9fR8gerfvGSycFGbK2VY1PFrPuU9jS6QM47S974yTUHC",
-        "6jEs4tt5dH61Ehy1kQoAdbv5Vrim7UhhQuhDpMLgVVzi",
-        "8av6yAVUYJgT4MFBAsxoMgG6uPuTLqzQ5qXgsF2AYDTw",
-        "X7EQaGXBG6Qij9acj9mibr5TqRW8Ngh8AfdWgaKHeBj",
-        "54JSah7PDBxxn7NK5KCvFogsPmxxHPrfYyPJfNrpiLRe",
-        "3kaEyCoJRUigeSeii8FK8QKy8XxEKMekgAmYpYEEnkFL",
-        "DQe4BwXxGgxy2hHsqrGXdVFoS8G4sbDeUqziT7ibBq2L",
-        "68HSB9JP52zJkEks9NdTPZ5HeQbbzcA5dSEJkf4XYzQj",
-        "H6XVhyXuBhjcx9yPZDfqtczhiXcQ9NyW1cotfSUfRFfX",
-        "EsfrWzpXV2NnCA13s28ar76SKm6FhV5oWTAPCNm2MzRf",
-        "EPLVsSqUmKXBM9cPyBHSfhBA3yPYfMPkHHz2a4ajQ4aZ",
-        "J1dHwpKBs8Jo4n7jWEJWwMGNH2DJQnApBFPnnYXg74v7",
-        "CPxoj3BRB4ao3kxCx9YHpHZ1g3P7rXcGnT6vcz8rPYV",
-        "6BGqq9G76dYz2FhEEkGpptnHg1PH2sCRkWyS2gptJYgr",
-        "7ViAq5Vxy1R5NXxc3mMSrfEKEnXCYcJg6ajWBxALVR2f",
-        "52mJfw4stQVLubAkwpDx7p7svPjCVf6gUGGC2wj9HG53",
-        "HLA6XQhpJpsUcQJ3AgNMDqMD6YhqmJjykVSSyC4uHqiu",
-        "2MDe4t6n29Fa9DkZMv2uZxdxbquDp4Jtros2oRQFfeU2",
-        "CqxyPRrXK24qXW1GK4Lqfypn5E6UsG6zk7oCZZLrMA5h",
-        "C8eZQ72REJZ2i4eNoB7iWPehV9D2CN6f4uGiUvmXHuKf",
-        "4wHWwoRfbYmDJepWdMTB7vqY887UMWQZZcAQaSBnm2L4",
-        "ExbKNUwVtyRjrJMPLnVWRus9BxTRpt6BRXWxGYTyfcYS",
-        "5op4fioUwT2qgVU52RxRjt1QaVX93oNK6BHmZLnvbPpP",
-        "EptgprX4NYhSHCn2R5EzLY9bVdfT19dx3D68xa18fwfw",
-        "H36Puic1cYwHVW5PWMiYs91msVgSMKwTgoB5rXMzGcgs",
-        "B7x5z5w5h23vmHusQfpm7R6iD1MBzysbKoWfXXWa3dEs",
-        "7rNKHb8b9kVgTZxCizVRFsLHJ8KCxwr8RiMiUJro7NUP",
-        "B8VCgam3PowSEZL3HSx1ZfGqS4CKXd1M62zpZ843A1GC",
-        "EHRAi3SarXEqAZSbJinTMcAxLnuUAsPPmAE6EurxQgHu",
-        "G3raAzSsMwkc3yAjRohyhsq7BRZcauyrDct8UYvKwM5Z",
-        "H7rUY2ghRa7YB85K9392cFxvEnWFT7VgveUJeD3zzcZE",
-        "D2NGbbtqDvGti35dJarHN9HGqv5zsHHqaLwFdEu5dHYS",
-        "9Q2LcZZgD7Rnv3tQNXQwQxHQYTVNY997HnQsYoVa9UzL",
-        "9ZYp74kFLi2fNgdBEpcUwJPaPeP8pTjdEDHsYYXVDpHR",
-        "D756157u6peVqqAxehBz1dkyrFuSmPDcR8rgnyCCHkKo",
-        "EqnrSFRcbgvU5QJkvGah824iH6uzY13dsB7XpeF9nk5r",
-        "GCohAnZ532yjPRXA67RdbbpchuYVHKx4Z9x64sfapZnd"
-]
-
-    
-    copy_opportunities = []
-    
-    for wallet_address in PROFITABLE_WALLETS:
-        try:
-            # Get recent transactions for this wallet
-            recent_trades = get_wallet_recent_trades(wallet_address, hours=2)
-            
-            for trade in recent_trades:
-                if (trade['type'] == 'buy' and 
-                    trade['amount_sol'] <= 2.0 and           # Reasonable position size
-                    trade['token_age_minutes'] <= 120 and    # Token less than 2 hours old
-                    trade['token'] not in processed_tokens):  # Haven't processed yet
-                    
-                    copy_opportunities.append(trade['token'])
-                    logging.info(f"🎯 COPY OPPORTUNITY: {trade['token'][:8]} from wallet {wallet_address[:8]}")
-        
-        except Exception as e:
-            logging.warning(f"Error monitoring wallet {wallet_address[:8]}: {e}")
-            continue
-    
-    return copy_opportunities
-
-def monitor_profitable_wallets():
-    """
-    Monitor all 48+ profitable wallets for copy opportunities
-    This is your main $500/day strategy
-    """
-    try:
-        logging.info(f"🎯 Monitoring {len(PROFITABLE_WALLETS)} profitable wallets for copy opportunities...")
-        
-        copy_opportunities = []
-        current_time = time.time()
-        
-        # Check wallets in batches to manage API limits
-        batch_size = 10
-        for i in range(0, len(PROFITABLE_WALLETS), batch_size):
-            batch = PROFITABLE_WALLETS[i:i + batch_size]
-            
-            for wallet_address in batch:
-                try:
-                    # Rate limiting - don't check same wallet too frequently
-                    last_check = last_wallet_checks.get(wallet_address, 0)
-                    if current_time - last_check < COPY_TRADING_CONFIG['WALLET_CHECK_INTERVAL']:
-                        continue
-                    
-                    # Get recent activity
-                    recent_trades = get_wallet_recent_trades(wallet_address)
-                    last_wallet_checks[wallet_address] = current_time
-                    
-                    # Look for copyable trades
-                    for trade in recent_trades:
-                        if is_copyable_trade(trade):
-                            copy_opportunities.append({
-                                'source_wallet': wallet_address,
-                                'token_address': trade['token_address'],
-                                'amount_sol': trade['amount_sol'],
-                                'trade_type': trade['trade_type'],
-                                'timestamp': trade['timestamp']
-                            })
-                    
-                    # Small delay between wallet checks
-                    time.sleep(0.2)
-                    
-                except Exception as e:
-                    logging.warning(f"⚠️ Error checking wallet {wallet_address[:8]}: {e}")
-                    continue
-            
-            # Delay between batches
-            time.sleep(1)
-        
-        # Execute copy trades
-        if copy_opportunities:
-            logging.info(f"🚀 Found {len(copy_opportunities)} copy opportunities!")
-            execute_copy_trades(copy_opportunities)
-        else:
-            logging.info("📊 No new copy opportunities found - continuing monitoring...")
-            
-    except Exception as e:
-        logging.error(f"Error in monitor_profitable_wallets: {e}")
 
 def scan_multiple_dexs():
     """Scan multiple DEXs for new high-volume tokens"""
@@ -4665,7 +4530,7 @@ def aggressive_token_discovery():
     discovered_tokens.extend(helius_tokens)
     
     # Method 2: ADD Copy Trading Monitoring
-    copy_trading_tokens = monitor_profitable_wallets()
+   # copy_trading_tokens = monitor_profitable_wallets()
     discovered_tokens.extend(copy_trading_tokens)
     
     # Method 3: ADD Multi-DEX Scanning  
@@ -4685,7 +4550,7 @@ def copy_trading_main_loop():
     Main copy trading loop - replaces your current trading system
     """
     logging.info("🎯 COPY TRADING MODE ACTIVATED")
-    logging.info(f"📊 Monitoring {len(PROFITABLE_WALLETS)} profitable wallets")
+    logging.info(f"👁 Monitoring ALPHA WALLETS ONLY - Perfect Bots Strategy")
     logging.info(f"🎯 Target: $500/day through copy trading")
     
     cycle_count = 0
@@ -4709,7 +4574,7 @@ def copy_trading_main_loop():
                 break
             
             # Monitor profitable wallets for new opportunities
-            monitor_profitable_wallets()
+          #  monitor_profitable_wallets()
             
             # Monitor existing copy trade positions
             monitor_copy_trade_positions()
@@ -5475,78 +5340,6 @@ def is_new_day():
     except:
         return False
 
-def monitor_profitable_wallets_enhanced():
-    """Enhanced copy trading with signal strength scoring"""
-    
-    # PROVEN PROFITABLE WALLETS WITH CATEGORIES
-    CATEGORIZED_WALLETS = {
-        'pump_specialists': [
-            "3N9Ytr55p5kKjJHZjYpKVnpQq5hKyLFk2eU8wJsFRxRb",  # 87% win rate on pumps
-            "7YttLkHDoNj9wyDur5pM1ejNaAvT9X4eqaYcHQqtj2G5",  # Pump.fun expert
-        ],
-        'quick_flippers': [
-            "DJnHztEEjRd1r4cW3Vhf3sVHvALPJoUFo9X5Z8U7Zhwi",  # 5-min trades
-            "H4yqV6NwJqzD1c8Y8gzU3P6KmKvEZJ5nqZCEBUdKFiZN",  # Quick 10% exits
-        ],
-        'volume_traders': [
-            "5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1",  # 500+ daily trades
-            "CegJnRSBZKeLYNm7XuuT7EUy3p8YBHz8kPhuJoya5mdG",  # High frequency
-        ],
-        'early_snipers': [
-            "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # First 60 seconds
-            "Bz7wq7PJFbvhNxJPqGUoQwvRGummFF9K8NfYaVnKNKJF",  # New token specialist
-        ]
-    }
-    
-    copy_signals = []
-    
-    for category, wallets in CATEGORIZED_WALLETS.items():
-        for wallet_address in wallets:
-            try:
-                # Get recent transactions (last 5 minutes)
-                recent_trades = get_wallet_recent_trades(wallet_address, minutes=5)
-                
-                for trade in recent_trades:
-                    if trade['type'] == 'buy':
-                        # Calculate signal strength
-                        signal_strength = 0
-                        
-                        # Multiple wallets buying same token = STRONG SIGNAL
-                        if count_wallets_buying(trade['token']) >= 2:
-                            signal_strength += 50
-                            
-                        # Category bonuses
-                        if category == 'quick_flippers' and trade['amount'] <= 0.5:
-                            signal_strength += 30  # Small positions = quick flips
-                        elif category == 'volume_traders':
-                            signal_strength += 25  # Consistent traders
-                        elif category == 'early_snipers' and trade['token_age'] < 300:
-                            signal_strength += 40  # Very new tokens
-                            
-                        # Size of position matters
-                        if trade['amount'] >= 1.0:  # Big position = confidence
-                            signal_strength += 20
-                            
-                        if signal_strength >= 50:  # Only strong signals
-                            copy_signals.append({
-                                'token': trade['token'],
-                                'wallet': wallet_address[:8],
-                                'category': category,
-                                'signal_strength': signal_strength,
-                                'amount': trade['amount'],
-                                'age_seconds': trade['age_seconds']
-                            })
-                            
-                            logging.info(f"🎯 COPY SIGNAL: {trade['token'][:8]} from {category} "
-                                       f"wallet (strength: {signal_strength})")
-                
-            except Exception as e:
-                logging.debug(f"Error monitoring {wallet_address[:8]}: {e}")
-                continue
-    
-    # Sort by signal strength
-    copy_signals.sort(key=lambda x: x['signal_strength'], reverse=True)
-    return copy_signals[:10]  # Top 10 signals
 
 def count_wallets_buying(token_address):
     """Count how many profitable wallets bought this token recently"""
@@ -6478,7 +6271,7 @@ def get_high_confidence_tokens():
     all_signals = {}
     
     # Signal 1: Copy trading
-    copy_signals = monitor_profitable_wallets_enhanced()
+   # copy_signals = []  # DISABLED - Using alpha wallet system only
     for signal in copy_signals:
         token = signal['token']
         all_signals[token] = all_signals.get(token, 0) + signal['signal_strength']
