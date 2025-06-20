@@ -2042,27 +2042,23 @@ def run_adaptive_ai_system():
         loaded_count += 1
     
     # ADD HIGH WIN-RATE WALLETS HERE
-    logging.info("🎯 Adding HIGH WIN-RATE alpha wallets...")
+    logging.info("🎯 Adding PERFECT BOTS ONLY alpha wallets...")
     
     high_wr_wallets = [
-        # PERFECT BOTS - Different styles based on actual behavior
-        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-Perfect-FastBot", "PERFECT_BOT_FAST"),    # 2.2hr, 250/day
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-Perfect-Sniper", "PERFECT_BOT_SNIPER"),   # 1hr, 5/day
-        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-Perfect-Swing", "PERFECT_BOT_SWING"),      # 1day, 2/day
-
-        # 80%+ Win Rate Wallets - ELITE_BOT
-        ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha2-83%", "ELITE_BOT"),
-        ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"),
-        ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha10-70%", "ELITE_BOT"),
+        # ONLY 100% WIN RATE WALLETS - PROVEN MONEY MAKERS
+        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-Perfect-FastBot", "PERFECT_BOT_FAST"),    # 338 trades, 100% WR, $34k profit
+        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-Perfect-Sniper", "PERFECT_BOT_SNIPER"),   # 5 trades, 100% WR, $9k profit  
+        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-Perfect-Swing", "PERFECT_BOT_SWING"),      # 6 trades, 100% WR, $11k profit
     
-        # Multi-Day Holders
-        ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-63%", "MULTI_DAY_HOLDER"),
-    
-        # Keep your existing wallets
-        ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "Alpha3-82%", "ELITE_BOT"),
-        ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "ELITE_BOT"),
-        ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),
-        ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),
+        # TEMPORARILY DISABLED - Will re-enable once perfect bots prove profitable
+        # ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha2-83%", "ELITE_BOT"),
+        # ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"), 
+        # ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha10-70%", "ELITE_BOT"),
+        # ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-63%", "MULTI_DAY_HOLDER"),
+        # ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "Alpha3-82%", "ELITE_BOT"),
+        # ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "ELITE_BOT"),
+        # ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),
+        # ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),
     ]
     
     # Add each high WR wallet with explicit style
