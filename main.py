@@ -1875,6 +1875,7 @@ def get_wallet_recent_buys_helius(wallet_address):
         }
         
         response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=30)
+        logging.info(f"🔍 Helius response for {wallet_address[:8]}: status={response.status_code}")
         
         if response.status_code != 200:
             return []
