@@ -896,7 +896,7 @@ async function executeSwap() {
           
           // Execute with timeout
           const timeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error('Transaction submission timeout')), 25000); // REDUCED from 30000
+            setTimeout(() => reject(new Error('Transaction submission timeout')), 45000); // REDUCED from 30000
           });
           
           txSignature = await Promise.race([submitTransaction(), timeoutPromise]);
