@@ -732,7 +732,7 @@ class AdaptiveAlphaTrader:
                             # Skip if liquidity too low for this wallet style
                             if liquidity < min_liquidity:
                                 logging.warning(f"⚠️ Skipping {buy['token'][:8]} - liquidity ${liquidity} below {wallet_style} minimum ${min_liquidity}")
-                                 continue
+                                continue
                     
                             # Base position sizing
                             if liquidity > 50000:  # Excellent liquidity
