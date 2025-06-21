@@ -1,3 +1,7 @@
+from datetime import datetime, timedelta
+import joblib
+import xgboost as xgb
+import pandas as pd
 import websocket
 import threading
 import numpy as np
@@ -20,7 +24,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from collections import defaultdict
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import classification_report, roc_auc_score
 from collections import deque
 
 # Solana imports using solders instead of solana
@@ -595,12 +600,15 @@ class AdaptiveAlphaTrader:
     def __init__(self, wallet_instance):
         self.wallet = wallet_instance
         self.alpha_wallets = []
+        self.ml_brain = None
+        self.real_high_performers = []
         self.monitoring = {}  # Tokens we're watching
         self.positions = {}   # Active positions
         self.brain = TradingBrain()  # Learning component
         self.last_check = {}  # Track last check time for each wallet
         self.independent_hunting = True  # Enable autonomous hunting
         self.wallet_styles = {}
+        self.initialize_enhanced_systems()
         self.wallet_performance = defaultdict(lambda: {
             'trades_signaled': 0,
             'trades_copied': 0,
@@ -1923,6 +1931,157 @@ class AdaptiveAlphaTrader:
         if token in self.positions:
             del self.positions[token]
         return False
+
+    def initialize_enhanced_systems(self):
+        """Initialize ML and real wallet discovery"""
+        try:
+            logging.info("🚀 Initializing Enhanced Trading Systems...")
+            
+            # Step 1: Find and load real high-performing wallets
+            self.update_alpha_wallets_with_real_data()
+            
+            # Step 2: Initialize ML system
+            self.initialize_ml_system()
+            
+            logging.info("✅ Enhanced systems initialized successfully")
+            
+        except Exception as e:
+            logging.error(f"Error initializing enhanced systems: {e}")
+    
+    def find_high_performance_wallets(self):
+        """Find wallets with REAL 70%+ win rates based on actual performance"""
+    
+        high_performance_wallets = []
+    
+        # Query your database for wallets with proven track records
+        query = """
+        SELECT 
+            wallet_address,
+            wallet_name,
+            total_trades,
+            wins,
+            losses,
+            ROUND(wins * 100.0 / total_trades, 2) as win_rate,
+            total_profit_sol,
+            avg_profit_per_trade,
+            max_consecutive_wins,
+            last_trade_time
+        FROM alpha_wallet_performance
+        WHERE total_trades >= 20  -- Minimum trades for statistical significance
+            AND wins * 100.0 / total_trades >= 70  -- 70%+ win rate
+            AND last_trade_time > datetime('now', '-7 days')  -- Active in last week
+        ORDER BY win_rate DESC, total_profit_sol DESC
+        LIMIT 10
+        """
+    
+        # Execute query and get results
+        results = execute_query(query)
+    
+        for row in results:
+            wallet_config = {
+                'address': row['wallet_address'],
+                'name': row['wallet_name'] or f"HighPerf-{row['wallet_address'][:8]}",
+                'style': determine_wallet_style(row),
+                'win_rate': row['win_rate'],
+                'total_trades': row['total_trades'],
+                'total_profit': row['total_profit_sol'],
+                'check_interval': determine_check_interval(row),
+                'active': True
+            }
+            high_performance_wallets.append(wallet_config)
+        
+        return high_performance_wallets
+
+    def analyze_wallet_patterns(self, wallet_address):
+        """Deep dive into wallet's trading patterns"""
+    
+        pattern_query = """
+        SELECT 
+            DATE(created_at) as trade_date,
+            COUNT(*) as daily_trades,
+            AVG(hold_time_minutes) as avg_hold_time,
+            SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as daily_win_rate,
+            SUM(profit_sol) as daily_profit
+        FROM copy_trades
+        WHERE wallet_address = ?
+            AND status = 'closed'
+        GROUP BY DATE(created_at)
+        ORDER BY trade_date DESC
+        LIMIT 30
+        """
+    
+        results = self.db.execute(pattern_query, (wallet_address,)).fetchall()
+    
+        # Calculate consistency metrics
+        win_rates = [row['daily_win_rate'] for row in results if row['daily_trades'] > 0]
+        avg_consistency = np.std(win_rates) if win_rates else 100  # Lower is better
+    
+        # Determine trading style
+        avg_hold_times = [row['avg_hold_time'] for row in results if row['avg_hold_time']]
+        overall_avg_hold = np.mean(avg_hold_times) if avg_hold_times else 60
+    
+        if overall_avg_hold < 30:
+            style = "ULTRA_FAST"
+            check_interval = 2
+        elif overall_avg_hold < 60:
+            style = "FAST_SCALPER"
+            check_interval = 3
+        elif overall_avg_hold < 180:
+            style = "MEDIUM_TRADER"
+            check_interval = 5
+        else:
+            style = "SWING_TRADER"
+            check_interval = 10
+    
+        return {
+            'style': style,
+            'check_interval': check_interval,
+            'consistency_score': 100 - avg_consistency,  # Higher is better
+            'avg_hold_time': overall_avg_hold
+        }
+
+    def create_wallet_config_from_analysis(self):
+        """Create optimal configuration for discovered wallets"""
+    
+        logging.info("🔧 Creating optimal wallet configurations...")
+    
+        # Find high performers
+        high_performers = self.find_real_high_performance_wallets()
+    
+        wallet_configs = []
+    
+        for wallet in high_performers:
+            # Analyze patterns
+            patterns = self.analyze_wallet_patterns(wallet['address'])
+        
+            # Create config
+            config = {
+                'address': wallet['address'],
+                'name': f"Real-{patterns['style']}-{wallet['address'][:6]}",
+                'style': patterns['style'],
+                'check_interval': patterns['check_interval'],
+                'active': True,
+            
+                # Position sizing based on performance
+                'position_size': self.calculate_optimal_position_size(wallet),
+            
+                # Take profit levels based on wallet's history
+                'take_profit_1': 25 if patterns['style'] == 'ULTRA_FAST' else 35,
+                'take_profit_2': 20 if patterns['style'] == 'ULTRA_FAST' else 30,
+                'take_profit_3': 60 if patterns['style'] == 'ULTRA_FAST' else 80,
+            
+                # Stats for reference
+                'historical_win_rate': wallet['win_rate'],
+                'total_trades': wallet['total_trades'],
+                'total_profit': wallet['total_profit'],
+                'consistency_score': patterns['consistency_score']
+            }
+        
+            wallet_configs.append(config)
+        
+            logging.info(f"✅ Configured: {config['name']} | {wallet['win_rate']}% WR | {patterns['style']}")
+    
+        return wallet_configs
 
 
 # Helper functions for wallet monitoring
