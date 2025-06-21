@@ -3117,6 +3117,35 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error in daily reset: {e}")
 
+    def initialize_ml_system(self):
+        """Initialize ML system on bot startup"""
+    
+        logging.info("🤖 Initializing ML Trading Brain...")
+    
+        # Create ML brain instance
+        self.ml_brain = MLTradingBrain(self)
+    
+        # Check if we have enough data
+        try:
+            cursor = self.db.cursor()
+            cursor.execute("SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'")
+            result = cursor.fetchone()
+        
+            trade_count = result['count'] if isinstance(result, dict) else result[0]
+        
+            logging.info(f"📊 Found {trade_count} completed trades for ML training")
+        
+            if trade_count >= 100:
+                # Try loading existing models
+                if not self.ml_brain.load_models():
+                    # Train new models
+                    self.ml_brain.train_models()
+            else:
+                logging.info(f"⚠️ Need {100 - trade_count} more trades before ML can be trained")
+            
+        except Exception as e:
+            logging.error(f"Error initializing ML system: {e}")
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
