@@ -1948,53 +1948,84 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error initializing enhanced systems: {e}")
     
-    def find_high_performance_wallets(self):
-        """Find wallets with REAL 70%+ win rates based on actual performance"""
-    
-        high_performance_wallets = []
-    
-        # Query your database for wallets with proven track records
-        query = """
+    def find_real_high_performance_wallets(self):
+        """Query your actual trading database to find REAL high performers"""
+        
+        logging.info("🔍 Searching for REAL high performance wallets (not Gemini's lies)...")
+        
+        # First, let's analyze ALL wallets you've ever copied
+        analyze_query = """
         SELECT 
             wallet_address,
-            wallet_name,
-            total_trades,
-            wins,
-            losses,
-            ROUND(wins * 100.0 / total_trades, 2) as win_rate,
-            total_profit_sol,
-            avg_profit_per_trade,
-            max_consecutive_wins,
-            last_trade_time
-        FROM alpha_wallet_performance
-        WHERE total_trades >= 20  -- Minimum trades for statistical significance
-            AND wins * 100.0 / total_trades >= 70  -- 70%+ win rate
-            AND last_trade_time > datetime('now', '-7 days')  -- Active in last week
+            COUNT(*) as total_trades,
+            SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN profit_sol <= 0 THEN 1 ELSE 0 END) as losses,
+            ROUND(SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*), 2) as win_rate,
+            SUM(profit_sol) as total_profit_sol,
+            AVG(profit_sol) as avg_profit_per_trade,
+            MAX(profit_sol) as best_trade,
+            MIN(profit_sol) as worst_trade,
+            MAX(created_at) as last_seen
+        FROM copy_trades
+        WHERE status = 'closed'
+        GROUP BY wallet_address
+        HAVING COUNT(*) >= 10  -- Minimum trades for reliability
         ORDER BY win_rate DESC, total_profit_sol DESC
-        LIMIT 10
         """
-    
-        # Execute query and get results
-        results = execute_query(query)
-    
-        for row in results:
-            wallet_config = {
-                'address': row['wallet_address'],
-                'name': row['wallet_name'] or f"HighPerf-{row['wallet_address'][:8]}",
-                'style': determine_wallet_style(row),
-                'win_rate': row['win_rate'],
-                'total_trades': row['total_trades'],
-                'total_profit': row['total_profit_sol'],
-                'check_interval': determine_check_interval(row),
-                'active': True
-            }
-            high_performance_wallets.append(wallet_config)
         
-        return high_performance_wallets
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(analyze_query)
+            results = cursor.fetchall()
+            
+            high_performers = []
+            
+            logging.info("\n🏆 TOP PERFORMING WALLETS FOUND:")
+            logging.info("-" * 80)
+            
+            for row in results:
+                # Convert row to dict based on your database type
+                if isinstance(row, dict):
+                    wallet_data = row
+                else:
+                    # For tuple results, map to dict
+                    wallet_data = {
+                        'wallet_address': row[0],
+                        'total_trades': row[1],
+                        'wins': row[2],
+                        'losses': row[3],
+                        'win_rate': row[4],
+                        'total_profit_sol': row[5],
+                        'avg_profit_per_trade': row[6],
+                        'best_trade': row[7],
+                        'worst_trade': row[8],
+                        'last_seen': row[9]
+                    }
+                
+                wallet = wallet_data['wallet_address']
+                win_rate = wallet_data['win_rate']
+                total_trades = wallet_data['total_trades']
+                total_profit = wallet_data['total_profit_sol']
+                
+                # Only consider 70%+ win rate wallets
+                if win_rate >= 70:
+                    logging.info(f"✅ {wallet[:8]}... | WR: {win_rate}% | Trades: {total_trades} | Profit: {total_profit:.4f} SOL")
+                    high_performers.append(wallet_data)
+                elif win_rate >= 60 and len(high_performers) < 5:
+                    # If we don't have enough 70%+ wallets, include 60%+
+                    logging.info(f"📊 {wallet[:8]}... | WR: {win_rate}% | Trades: {total_trades} | Profit: {total_profit:.4f} SOL")
+                    high_performers.append(wallet_data)
+            
+            self.real_high_performers = high_performers[:10]  # Store top 10
+            return self.real_high_performers
+            
+        except Exception as e:
+            logging.error(f"Error finding high performance wallets: {e}")
+            return []
 
     def analyze_wallet_patterns(self, wallet_address):
         """Deep dive into wallet's trading patterns"""
-    
+        
         pattern_query = """
         SELECT 
             DATE(created_at) as trade_date,
@@ -2009,80 +2040,164 @@ class AdaptiveAlphaTrader:
         ORDER BY trade_date DESC
         LIMIT 30
         """
-    
-        results = self.db.execute(pattern_query, (wallet_address,)).fetchall()
-    
-        # Calculate consistency metrics
-        win_rates = [row['daily_win_rate'] for row in results if row['daily_trades'] > 0]
-        avg_consistency = np.std(win_rates) if win_rates else 100  # Lower is better
-    
-        # Determine trading style
-        avg_hold_times = [row['avg_hold_time'] for row in results if row['avg_hold_time']]
-        overall_avg_hold = np.mean(avg_hold_times) if avg_hold_times else 60
-    
-        if overall_avg_hold < 30:
-            style = "ULTRA_FAST"
-            check_interval = 2
-        elif overall_avg_hold < 60:
-            style = "FAST_SCALPER"
-            check_interval = 3
-        elif overall_avg_hold < 180:
-            style = "MEDIUM_TRADER"
-            check_interval = 5
-        else:
-            style = "SWING_TRADER"
-            check_interval = 10
-    
-        return {
-            'style': style,
-            'check_interval': check_interval,
-            'consistency_score': 100 - avg_consistency,  # Higher is better
-            'avg_hold_time': overall_avg_hold
-        }
+        
+        try:
+            cursor = self.db.cursor()
+            cursor.execute(pattern_query, (wallet_address,))
+            results = cursor.fetchall()
+            
+            if not results:
+                return self.get_default_wallet_pattern()
+            
+            # Process results
+            win_rates = []
+            hold_times = []
+            
+            for row in results:
+                if isinstance(row, dict):
+                    win_rates.append(row['daily_win_rate'])
+                    hold_times.append(row['avg_hold_time'])
+                else:
+                    win_rates.append(row[3])  # daily_win_rate
+                    hold_times.append(row[2])  # avg_hold_time
+            
+            # Calculate metrics
+            avg_hold_time = np.mean([h for h in hold_times if h is not None]) if hold_times else 60
+            consistency = 100 - np.std(win_rates) if win_rates else 50
+            
+            # Determine style
+            if avg_hold_time < 30:
+                style = "ULTRA_FAST"
+                check_interval = 2
+            elif avg_hold_time < 60:
+                style = "FAST_SCALPER"
+                check_interval = 3
+            elif avg_hold_time < 180:
+                style = "MEDIUM_TRADER"
+                check_interval = 5
+            else:
+                style = "SWING_TRADER"
+                check_interval = 10
+            
+            return {
+                'style': style,
+                'check_interval': check_interval,
+                'consistency_score': consistency,
+                'avg_hold_time': avg_hold_time
+            }
+            
+        except Exception as e:
+            logging.error(f"Error analyzing wallet patterns: {e}")
+            return self.get_default_wallet_pattern()
 
+    def get_default_wallet_pattern(self):
+        """Default pattern when no data available"""
+        return {
+            'style': 'MEDIUM_TRADER',
+            'check_interval': 5,
+            'consistency_score': 50,
+            'avg_hold_time': 60
+        }
+    
     def create_wallet_config_from_analysis(self):
         """Create optimal configuration for discovered wallets"""
-    
-        logging.info("🔧 Creating optimal wallet configurations...")
-    
-        # Find high performers
-        high_performers = self.find_real_high_performance_wallets()
-    
-        wallet_configs = []
-    
-        for wallet in high_performers:
-            # Analyze patterns
-            patterns = self.analyze_wallet_patterns(wallet['address'])
         
+        logging.info("🔧 Creating optimal wallet configurations...")
+        
+        # Find high performers if not already done
+        if not self.real_high_performers:
+            self.find_real_high_performance_wallets()
+        
+        wallet_configs = []
+        
+        for wallet_data in self.real_high_performers:
+            # Analyze patterns
+            patterns = self.analyze_wallet_patterns(wallet_data['wallet_address'])
+            
+            # Calculate position size
+            position_size = self.calculate_optimal_position_size(wallet_data)
+            
             # Create config
             config = {
-                'address': wallet['address'],
-                'name': f"Real-{patterns['style']}-{wallet['address'][:6]}",
+                'address': wallet_data['wallet_address'],
+                'name': f"Real-{patterns['style']}-{wallet_data['wallet_address'][:6]}",
                 'style': patterns['style'],
                 'check_interval': patterns['check_interval'],
                 'active': True,
-            
-                # Position sizing based on performance
-                'position_size': self.calculate_optimal_position_size(wallet),
-            
-                # Take profit levels based on wallet's history
+                'position_size': position_size,
+                
+                # Take profit levels based on style
                 'take_profit_1': 25 if patterns['style'] == 'ULTRA_FAST' else 35,
                 'take_profit_2': 20 if patterns['style'] == 'ULTRA_FAST' else 30,
                 'take_profit_3': 60 if patterns['style'] == 'ULTRA_FAST' else 80,
-            
-                # Stats for reference
-                'historical_win_rate': wallet['win_rate'],
-                'total_trades': wallet['total_trades'],
-                'total_profit': wallet['total_profit'],
+                
+                # Stats
+                'win_rate': wallet_data['win_rate'],
+                'total_trades': wallet_data['total_trades'],
+                'total_profit': wallet_data['total_profit_sol'],
                 'consistency_score': patterns['consistency_score']
             }
-        
+            
             wallet_configs.append(config)
+            
+            logging.info(f"✅ Configured: {config['name']} | {wallet_data['win_rate']}% WR | {patterns['style']}")
         
-            logging.info(f"✅ Configured: {config['name']} | {wallet['win_rate']}% WR | {patterns['style']}")
-    
         return wallet_configs
 
+    def calculate_optimal_position_size(self, wallet_stats):
+        """Calculate position size based on wallet performance"""
+        
+        win_rate = wallet_stats['win_rate']
+        total_trades = wallet_stats['total_trades']
+        
+        # Base position size
+        if win_rate >= 80 and total_trades >= 50:
+            base_size = 0.5  # High confidence
+        elif win_rate >= 70 and total_trades >= 30:
+            base_size = 0.3  # Good confidence
+        elif win_rate >= 65:
+            base_size = 0.2  # Moderate confidence
+        else:
+            base_size = 0.1  # Low confidence
+        
+        return base_size
+
+    def update_alpha_wallets_with_real_data(self):
+        """Replace fake perfect wallets with real performers"""
+        
+        logging.info("🔄 Updating alpha wallets with REAL high performers...")
+        
+        # Get real wallet configs
+        real_configs = self.create_wallet_config_from_analysis()
+        
+        if real_configs:
+            # Clear existing wallets
+            self.alpha_wallets = []
+            
+            # Add real wallets
+            for config in real_configs:
+                self.alpha_wallets.append(config)
+            
+            logging.info(f"✅ Loaded {len(real_configs)} REAL high performance wallets")
+            
+            # Log summary
+            total_win_rate = sum(w['win_rate'] for w in real_configs) / len(real_configs)
+            logging.info(f"📊 Average win rate of new wallets: {total_win_rate:.1f}%")
+            
+        else:
+            logging.warning("⚠️ No high performance wallets found, keeping current configuration")
+        
+        return real_configs
+
+    def test_wallet_discovery(self):
+        """Test finding real high performers"""
+        wallets = self.find_real_high_performance_wallets()
+        if wallets:
+            print(f"Found {len(wallets)} high performers!")
+            for w in wallets[:3]:
+                print(f"- {w['wallet_address'][:8]}: {w['win_rate']}% WR, {w['total_trades']} trades")
+        else:
+            print("No high performers found - check your database!")
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
