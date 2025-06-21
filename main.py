@@ -1874,7 +1874,7 @@ def get_wallet_recent_buys_helius(wallet_address):
             ]
         }
         
-        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=5)
+        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=30)
         
         if response.status_code != 200:
             return []
@@ -1907,7 +1907,7 @@ def get_wallet_recent_buys_helius(wallet_address):
                     ]
                 }
                 
-                tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=5)
+                tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=30)
                 
                 if tx_response.status_code == 200:
                     tx_data = tx_response.json().get('result')
