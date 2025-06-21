@@ -711,7 +711,7 @@ class AdaptiveAlphaTrader:
                         logging.info(f"🔍 DEBUG: Token {buy['token'][:8]} not in positions/monitoring - proceeding")
                 
                         # Get token data with error handling
-                        token_data = self.get_token_snapshot(buy['token'])
+                        token_data = self.get_token_snapshot(buy['token'], wallet_style)
                 
                         # Log what we found
                         if token_data:
@@ -1033,23 +1033,65 @@ class AdaptiveAlphaTrader:
         logging.info(f"   💧 Liquidity: ${token_data['liquidity']:,.0f}")
         logging.info(f"   👥 Holders: {token_data['holders']}")
         
-    def get_token_snapshot(self, token_address):
-        """Get current token metrics using your existing functions"""
+        
+    def get_token_snapshot(self, token_address, alpha_wallet_style=None):
+        """Get current token metrics with Perfect Bot fallback support"""
         try:
             # Use your existing functions
             price = get_token_price(token_address)
-            if not price or price == 0:
-                return None
+            liquidity = get_token_liquidity(token_address) or 0
+            holders = get_holder_count(token_address) or 0
+            volume = get_24h_volume(token_address) or 0
+            age = get_token_age_minutes(token_address) or 0
+            
+            # If we got basic data, return it
+            if price and price > 0:
+                return {
+                    'price': price,
+                    'liquidity': liquidity,
+                    'holders': holders,
+                    'volume': volume,
+                    'age': age
+                }
+            
+            # PERFECT BOT FALLBACK: If no price data but this is from a perfect bot
+            if alpha_wallet_style and alpha_wallet_style.startswith('PERFECT_BOT'):
+                logging.warning(f"🤖 PERFECT BOT FALLBACK: No price data for {token_address[:8]}, creating minimal data")
                 
-            return {
-                'price': price,
-                'liquidity': get_token_liquidity(token_address) or 0,
-                'holders': get_holder_count(token_address) or 0,
-                'volume': get_24h_volume(token_address) or 0,
-                'age': get_token_age_minutes(token_address) or 0
-            }
+                # Create minimal data structure for perfect bot trades
+                fallback_data = {
+                    'price': 0.000001,  # Minimal price for calculations
+                    'liquidity': 5000 if alpha_wallet_style == 'PERFECT_BOT_SWING' else 2000,  # Assume reasonable liquidity
+                    'holders': 100,  # Assume some holders
+                    'volume': 1000,  # Assume some volume
+                    'age': 60,  # Assume 1 hour old
+                    'fallback': True,  # Mark as fallback data
+                    'perfect_bot_override': True
+                }
+                
+                logging.info(f"🤖 Using fallback data for {token_address[:8]} from {alpha_wallet_style}")
+                return fallback_data
+            
+            # No data available and not a perfect bot
+            logging.debug(f"No token data available for {token_address[:8]}")
+            return None
+            
         except Exception as e:
-            logging.error(f"Error getting token snapshot: {e}")
+            logging.error(f"Error getting token snapshot for {token_address[:8]}: {e}")
+            
+            # EMERGENCY FALLBACK for perfect bots even on error
+            if alpha_wallet_style and alpha_wallet_style.startswith('PERFECT_BOT'):
+                logging.warning(f"🚨 EMERGENCY FALLBACK: Error getting data for {token_address[:8]} from {alpha_wallet_style}")
+                return {
+                    'price': 0.000001,
+                    'liquidity': 1000,
+                    'holders': 50,
+                    'volume': 500,
+                    'age': 30,
+                    'fallback': True,
+                    'emergency_fallback': True
+                }
+            
             return None
             
     def analyze_and_execute(self):
