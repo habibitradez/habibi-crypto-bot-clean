@@ -2101,6 +2101,8 @@ def run_adaptive_ai_system():
         try:
             current_time = time.time()
             iteration += 1
+
+            trader.check_alpha_wallets()
             
             # Check wallet health every 50 iterations
             if iteration % 50 == 0:
@@ -4541,6 +4543,11 @@ def aggressive_token_discovery():
     # Method 4: ADD Social Signal Tokens
     trending_tokens = get_trending_social_tokens()
     discovered_tokens.extend(trending_tokens)
+
+    # Method 5: ADD Alpha Wallet Monitoring  
+    alpha_signals = self.check_alpha_wallets()  # <-- ADD THIS LINE
+    if alpha_signals:
+    discovered_tokens.extend(alpha_signals)
     
     # Remove duplicates and return top candidates
     unique_tokens = list(set(discovered_tokens))
