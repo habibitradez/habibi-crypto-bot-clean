@@ -2725,6 +2725,108 @@ class AdaptiveAlphaTrader:
         else:
             print("No high performers found - check your database!")
 
+    def execute_trade_with_db_tracking(self, token_address, strategy, position_size, entry_price, source_wallet=None):
+        """Enhanced execute_trade that tracks in database"""
+    
+        # Get wallet info
+        wallet_info = next((w for w in self.alpha_wallets if w['address'] == source_wallet), None)
+        wallet_name = wallet_info['name'] if wallet_info else "Unknown"
+    
+        # Execute the actual trade (your existing code)
+        success = self.execute_trade(token_address, strategy, position_size, entry_price, source_wallet)
+    
+        if success:
+            # Record in database
+            trade_id = self.db_manager.record_trade_open(
+                source_wallet or "SELF_DISCOVERED",
+                wallet_name,
+                token_address,
+                entry_price,
+                position_size,
+                strategy
+            )
+        
+            # Store trade ID for later
+            self.trade_ids[token_address] = trade_id
+        
+        return success
+
+    def record_trade_close_with_db(self, token_address, exit_price, exit_reason):
+        """Record trade close in database"""
+    
+        if token_address in self.trade_ids:
+            trade_id = self.trade_ids[token_address]
+            profit_sol, profit_pct = self.db_manager.record_trade_close(trade_id, exit_price, exit_reason)
+        
+            logging.info(f"💰 Trade closed: {profit_pct:+.1f}% ({profit_sol:+.3f} SOL)")
+        
+            # Remove from tracking
+            del self.trade_ids[token_address]
+        
+            return profit_sol, profit_pct
+    
+        return 0, 0
+
+    def analyze_real_wallet_performance(self):
+        """See REAL performance of your 30 wallets"""
+    
+        logging.info("🔍 === REAL WALLET PERFORMANCE (Not Gemini's Lies) ===")
+    
+        top_wallets = self.db_manager.get_top_wallets(min_trades=5)
+    
+        if not top_wallets:
+            logging.info("⚠️ No wallets with 5+ trades yet. Keep trading to build data!")
+            return
+    
+        logging.info("\n🏆 TOP PERFORMING WALLETS (Based on YOUR trades):")
+        for i, wallet in enumerate(top_wallets):
+            # Find wallet name from your config
+            wallet_name = "Unknown"
+            for addr, name in ALPHA_WALLETS_CONFIG:
+                if addr == wallet['wallet_address']:
+                    wallet_name = name
+                    break
+        
+            win_rate = wallet['win_rate']
+            logging.info(f"{i+1}. {wallet_name}: {win_rate:.1f}% WR, {wallet['total_profit_sol']:.3f} SOL profit, {wallet['total_trades']} trades")
+        
+            # Compare to Gemini's claims
+            if wallet['wallet_address'] in ["4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", 
+                                           "5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt",
+                                           "j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91"]:
+                logging.info(f"   ⚠️ Gemini claimed 100% WR, ACTUAL: {win_rate:.1f}%")
+
+    def initialize_with_real_data(self):
+        """Call this instead of using Gemini's fake data"""
+    
+        logging.info("🔍 Analyzing REAL performance of all 30 wallets...")
+    
+        # First, add ALL 30 wallets from your config
+        for address, name in ALPHA_WALLETS_CONFIG:
+            self.add_alpha_wallet(address, name, style="AUTO")  # Auto-detect style
+    
+        # After some trades, check real performance
+        if hasattr(self, 'db_manager'):
+            real_top_wallets = self.db_manager.get_top_wallets(min_trades=10)
+        
+            if real_top_wallets:
+                logging.info("\n✅ Found REAL high performers from YOUR data:")
+            
+                # Disable poor performers
+                for wallet in self.alpha_wallets:
+                    wallet_stats = self.db_manager.get_wallet_stats(wallet['address'])
+                
+                    if wallet_stats and wallet_stats['total_trades'] >= 10:
+                        win_rate = (wallet_stats['wins'] / wallet_stats['total_trades']) * 100
+                    
+                        if win_rate < 40:
+                            wallet['active'] = False
+                            logging.warning(f"❌ Disabling {wallet['name']}: Only {win_rate:.1f}% win rate")
+                        elif win_rate > 70:
+                            logging.info(f"🌟 High performer: {wallet['name']} with {win_rate:.1f}% win rate!")
+            else:
+                logging.info("📊 Need more trades to determine best wallets. Currently following all 30.")
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
