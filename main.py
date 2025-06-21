@@ -3147,6 +3147,38 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error initializing ML system: {e}")
 
+    def check_existing_positions_on_startup(self):
+        """Check wallet for any tokens we're holding"""
+        logging.info("🔍 Checking for existing token positions...")
+    
+        try:
+            # Get all tokens in wallet
+            all_tokens = self.get_all_wallet_tokens()
+        
+            for token_address, balance in all_tokens.items():
+                if balance > 0 and token_address != "So11111111111111111111111111111111111111112":  # Not SOL
+                    logging.warning(f"📦 Found existing position: {token_address[:8]} - {balance:.4f} tokens")
+                
+                    # Try to get price
+                    current_price = get_token_price(token_address)
+                    if current_price:
+                        # Add to positions for monitoring
+                        self.positions[token_address] = {
+                            'strategy': 'RECOVERED',
+                            'entry_price': current_price * 0.95,  # Estimate entry
+                            'size': balance,
+                            'entry_time': time.time(),
+                            'peak_price': current_price,
+                            'source_wallet': 'UNKNOWN'
+                        }
+                        logging.info(f"✅ Added {token_address[:8]} to position monitoring")
+                    else:
+                        logging.warning(f"⚠️ Could not get price for {token_address[:8]} - manual check needed")
+                    
+        except Exception as e:
+            logging.error(f"Error checking existing positions: {e}")
+            
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
@@ -3284,6 +3316,9 @@ def run_adaptive_ai_system():
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
+    
+    # CHECK FOR EXISTING POSITIONS FROM BEFORE RESTART
+    trader.check_existing_positions_on_startup()  # ✅ ADD THIS LINE
     
     # REPLACE the manual wallet adding with automatic discovery
     logging.info("🔍 Loading ALL wallets for performance analysis...")
