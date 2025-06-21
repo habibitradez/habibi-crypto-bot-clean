@@ -14573,15 +14573,16 @@ def get_all_token_balances(wallet_pubkey):
         return {}
 
 def main():
-    """Main entry point - AI Adaptive Trading System"""
+    """Main entry point - AI Adaptive Trading System with Database Tracking"""
     
     # Clear banner
     logging.info("=" * 60)
-    logging.info("🤖 AI ADAPTIVE TRADING SYSTEM v2.0")
+    logging.info("🤖 AI ADAPTIVE TRADING SYSTEM v2.1")
     logging.info("=" * 60)
-    logging.info("💎 Alpha Following: 31 profitable wallets")
+    logging.info("💎 Alpha Following: 30 wallets (auto-optimized)")
     logging.info("🔍 Independent Hunting: 5 pattern strategies")
     logging.info("🧠 Machine Learning: Improves with every trade")
+    logging.info("📊 Database Tracking: Discovers REAL top performers")
     logging.info("🎯 Target: $500/day through consistent profits")
     logging.info("=" * 60)
     
@@ -14604,6 +14605,38 @@ def main():
         logging.info(f"   Alpha Following: {'✅ Enabled' if CONFIG['ENABLE_ALPHA_FOLLOWING'] else '❌ Disabled'}")
         logging.info(f"   Independent Hunting: {'✅ Enabled' if CONFIG['ENABLE_INDEPENDENT_HUNTING'] else '❌ Disabled'}")
         logging.info(f"   ML Training After: {CONFIG['MIN_TRADES_FOR_ML_TRAINING']} trades")
+        
+        # Check database for historical data
+        try:
+            db = DatabaseManager()
+            total_trades = db.conn.execute('SELECT COUNT(*) FROM copy_trades WHERE status = "closed"').fetchone()[0]
+            
+            if total_trades > 0:
+                logging.info(f"   📊 Historical Data: {total_trades} trades recorded")
+                
+                # Show top performers if we have data
+                top_wallets = db.get_top_wallets(min_trades=10, limit=3)
+                if top_wallets:
+                    logging.info("\n🏆 TOP PERFORMERS (from previous sessions):")
+                    for wallet in top_wallets:
+                        win_rate = (wallet['wins'] / wallet['total_trades']) * 100
+                        wallet_name = next((name for addr, name in ALPHA_WALLETS_CONFIG if addr == wallet['wallet_address']), wallet['wallet_address'][:8])
+                        logging.info(f"   {wallet_name}: {win_rate:.1f}% WR, {wallet['total_profit_sol']:.3f} SOL profit")
+                
+                if total_trades >= CONFIG['MIN_TRADES_FOR_ML_TRAINING']:
+                    logging.info(f"   🤖 ML Status: READY ({total_trades} trades available)")
+                else:
+                    logging.info(f"   🤖 ML Status: {total_trades}/{CONFIG['MIN_TRADES_FOR_ML_TRAINING']} trades needed")
+            else:
+                logging.info("   📊 Historical Data: None (fresh start)")
+                logging.info("   🤖 ML Status: Will train after 100 trades")
+            
+            db.close()
+            
+        except Exception as e:
+            logging.debug(f"Could not check database: {e}")
+            logging.info("   📊 Database will be created on first trade")
+            
     else:
         logging.info(f"📈 Running strategy: {strategy}")
     
@@ -14724,6 +14757,32 @@ def main():
                             win_rate = (stats['wins'] / total) * 100
                             avg_pnl = stats['total_pnl'] / total
                             logging.info(f"   {pattern}: {total} trades, {win_rate:.0f}% win rate, {avg_pnl:+.3f} SOL avg")
+                
+                # Show database lifetime stats
+                if 'trader' in globals() and hasattr(trader, 'db_manager'):
+                    try:
+                        lifetime_trades = trader.db_manager.conn.execute(
+                            'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
+                        ).fetchone()[0]
+                        
+                        lifetime_profit = trader.db_manager.conn.execute(
+                            'SELECT SUM(profit_sol) FROM copy_trades WHERE status = "closed"'
+                        ).fetchone()[0] or 0
+                        
+                        logging.info("\n📊 LIFETIME STATISTICS (All Sessions):")
+                        logging.info(f"   Total Trades: {lifetime_trades}")
+                        logging.info(f"   Total Profit: {lifetime_profit:.3f} SOL (${lifetime_profit*240:.0f})")
+                        
+                        # Show wallet rankings
+                        logging.info("\n🏆 FINAL WALLET RANKINGS:")
+                        top_wallets = trader.db_manager.get_top_wallets(min_trades=5, limit=5)
+                        for i, wallet in enumerate(top_wallets):
+                            win_rate = (wallet['wins'] / wallet['total_trades']) * 100
+                            wallet_name = next((name for addr, name in ALPHA_WALLETS_CONFIG if addr == wallet['wallet_address']), wallet['wallet_address'][:8])
+                            logging.info(f"   {i+1}. {wallet_name}: {win_rate:.1f}% WR, {wallet['total_profit_sol']:.3f} SOL")
+                            
+                    except Exception as e:
+                        logging.debug(f"Could not show lifetime stats: {e}")
                             
         except Exception as e:
             logging.debug(f"Could not display final stats: {e}")
@@ -14749,6 +14808,11 @@ def main():
                 RPC_SESSION.close()
             if 'HELIUS_SESSION' in globals():
                 HELIUS_SESSION.close()
+            
+            # Close database if open
+            if 'trader' in globals() and hasattr(trader, 'db_manager'):
+                trader.db_manager.close()
+                
         except:
             pass
             
