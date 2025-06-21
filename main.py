@@ -1698,9 +1698,9 @@ class AdaptiveAlphaTrader:
                     self.execute_trade(token_address, strategy, adjusted_size, current['price'])
                     
     def execute_trade(self, token_address, strategy, position_size, entry_price, source_wallet=None):
-        """Execute the trade using your working function with source wallet tracking"""
+        """Execute the trade using your working function with source wallet tracking and database recording"""
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
-        
+    
         # Set targets based on strategy
         if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
             targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
@@ -1708,13 +1708,13 @@ class AdaptiveAlphaTrader:
             targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
         else:  # SCALP
             targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
-        
+    
         # USE YOUR WORKING FUNCTION!
         signature = execute_optimized_transaction(token_address, position_size)
-        
+    
         if signature and signature != "simulation-signature":
             logging.info(f"✅ TRADE EXECUTED! Signature: {signature[:16]}...")
-            
+        
             self.positions[token_address] = {
                 'strategy': strategy,
                 'entry_price': entry_price,
@@ -1725,14 +1725,42 @@ class AdaptiveAlphaTrader:
                 'signature': signature,
                 'source_wallet': source_wallet  # Track which alpha we're following
             }
-            
+        
             # Update brain stats
             self.brain.daily_stats['trades'] += 1
-            
+        
             # Remove from monitoring
             if token_address in self.monitoring:
                 del self.monitoring[token_address]
-            
+        
+            # ADD DATABASE TRACKING HERE
+            if hasattr(self, 'db_manager') and self.db_manager:
+                try:
+                    # Get wallet name for database
+                    wallet_name = "SELF_DISCOVERED"
+                    if source_wallet and source_wallet != "SELF_DISCOVERED":
+                        wallet_info = next((w for w in self.alpha_wallets if w['address'] == source_wallet), None)
+                        wallet_name = wallet_info['name'] if wallet_info else f"Unknown-{source_wallet[:8]}"
+                
+                    # Record trade opening in database
+                    trade_id = self.db_manager.record_trade_open(
+                        source_wallet or "SELF_DISCOVERED",
+                        wallet_name,
+                        token_address,
+                        entry_price,
+                        position_size,
+                        strategy
+                    )
+                
+                    # Store trade ID for closing later
+                    self.trade_ids[token_address] = trade_id
+                
+                    logging.info(f"📊 Trade recorded in database (ID: {trade_id})")
+                
+                except Exception as e:
+                    logging.error(f"Failed to record trade in database: {e}")
+                    # Don't fail the trade if database recording fails
+        
             logging.info(f"✅ {strategy} position opened: {position_size} SOL")
             return True
         else:
@@ -1856,21 +1884,21 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error in monitor_positions: {e}")
             
     def record_trade_result(self, token, position, exit_price, exit_reason):
-        """Record the result of a closed trade"""
+        """Record the result of a closed trade with database tracking"""
         try:
             entry_price = position['entry_price']
             position_size = position['size']
-            
+        
             # Calculate P&L
             pnl_pct = ((exit_price - entry_price) / entry_price) * 100
             pnl_sol = position_size * (pnl_pct / 100)
-            
+        
             # Update daily stats
             self.brain.daily_stats['trades'] += 1
             if pnl_sol > 0:
                 self.brain.daily_stats['wins'] += 1
             self.brain.daily_stats['pnl_sol'] += pnl_sol
-            
+        
             # Record to brain
             hold_time = (time.time() - position['entry_time']) / 60
             self.brain.record_trade({
@@ -1883,14 +1911,49 @@ class AdaptiveAlphaTrader:
                 'exit_reason': exit_reason,
                 'hold_time': hold_time
             })
+        
+            # UPDATE WALLET PERFORMANCE TRACKING
+            source_wallet = position.get('source_wallet')
+            if source_wallet and source_wallet != 'SELF_DISCOVERED':
+                # Update in-memory performance tracking
+                perf = self.wallet_performance[source_wallet]
+                perf['trades_copied'] += 1
+                if pnl_sol > 0:
+                    perf['wins'] += 1
+                else:
+                    perf['losses'] += 1
+                perf['total_pnl'] += pnl_sol
             
+                if pnl_sol > perf['best_trade']:
+                    perf['best_trade'] = pnl_sol
+                if pnl_sol < perf['worst_trade']:
+                    perf['worst_trade'] = pnl_sol
+        
+            # RECORD IN DATABASE
+            if hasattr(self, 'db_manager') and self.db_manager and token in self.trade_ids:
+                try:
+                    trade_id = self.trade_ids[token]
+                    db_profit_sol, db_profit_pct = self.db_manager.record_trade_close(
+                        trade_id, 
+                        exit_price, 
+                        exit_reason
+                    )
+                
+                    # Remove trade ID
+                    del self.trade_ids[token]
+                
+                    logging.info(f"📊 Trade result recorded in database")
+                
+                except Exception as e:
+                    logging.error(f"Failed to record trade close in database: {e}")
+        
             # Log the result
-            logging.info(f"💰 Closed {position['strategy']}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL)")
-            
+            logging.info(f"💰 Closed {position['strategy']}: {pnl_pct:+.1f}% ({pnl_sol:+.3f} SOL) - {exit_reason}")
+        
             # Remove from positions
             if token in self.positions:
                 del self.positions[token]
-                
+            
         except Exception as e:
             logging.error(f"Error recording trade result: {e}")
             # Still remove from positions on error
@@ -2428,31 +2491,64 @@ class AdaptiveAlphaTrader:
 
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
-        """Ensures a position gets sold even if first attempt fails"""
+        """Ensures a position gets sold even if first attempt fails - with database tracking"""
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
                 result = execute_optimized_sell(token, position['size'])
                 if result and result != "no-tokens":
                     logging.info(f"✅ Successfully sold {token[:8]} on attempt {attempt + 1}")
-                    self.record_trade_result(token, position, get_token_price(token), reason)
+                
+                    # Get current price for recording
+                    current_price = get_token_price(token)
+                    if current_price:
+                        self.record_trade_result(token, position, current_price, reason)
+                    else:
+                        # Estimate exit price if we can't get current price
+                        estimated_exit = position['entry_price'] * 0.95  # Assume 5% loss if no price
+                        self.record_trade_result(token, position, estimated_exit, reason)
+                
                     return True
-                    
+                
                 # If no tokens, position already sold
                 if result == "no-tokens":
                     logging.info(f"Position {token[:8]} already sold")
+                
+                    # Still try to record in database if we have a trade ID
+                    if hasattr(self, 'db_manager') and token in self.trade_ids:
+                        try:
+                            current_price = get_token_price(token) or position['entry_price']
+                            trade_id = self.trade_ids[token]
+                            self.db_manager.record_trade_close(trade_id, current_price, f"{reason}_no_tokens")
+                            del self.trade_ids[token]
+                        except:
+                            pass
+                
+                    # Remove from positions
                     if token in self.positions:
                         del self.positions[token]
                     return True
-                    
+                
             except Exception as e:
                 logging.error(f"Sell attempt {attempt + 1} failed for {token[:8]}: {e}")
-                
+            
             # Wait before retry
             if attempt < max_attempts - 1:
                 time.sleep(5)
-                
+            
         logging.error(f"❌ Failed to sell {token[:8]} after {max_attempts} attempts!")
+    
+        # Record failed sale in database
+        if hasattr(self, 'db_manager') and token in self.trade_ids:
+            try:
+                # Record as failed with estimated loss
+                estimated_exit = position['entry_price'] * 0.9  # Assume 10% loss on failed sale
+                trade_id = self.trade_ids[token]
+                self.db_manager.record_trade_close(trade_id, estimated_exit, f"{reason}_failed_sale")
+                del self.trade_ids[token]
+            except:
+                pass
+    
         # Still remove from tracking to avoid getting stuck
         if token in self.positions:
             del self.positions[token]
@@ -2945,7 +3041,7 @@ def check_wallet_health():
 
 
 def run_adaptive_ai_system():
-    """Main function to run the complete system with your configuration"""
+    """Main function to run the complete system with database tracking"""
 
     global wallet
     # Add this check
@@ -2959,81 +3055,63 @@ def run_adaptive_ai_system():
     logging.info("🔍 + Independent token hunting active")
     logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
     logging.info("💰 Target: $500/day through consistent profits")
+    logging.info("📊 Database tracking: ENABLED - Will discover REAL top performers")
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
     
-    # Add ALL alpha wallets with proper logging
-    loaded_count = 0
-   # for address, name in ALPHA_WALLETS_CONFIG:
-   #     trader.add_alpha_wallet(address, name)
-   #     loaded_count += 1
+    # REPLACE the manual wallet adding with automatic discovery
+    logging.info("🔍 Loading ALL wallets for performance analysis...")
+    trader.initialize_with_real_data()  # This loads ALL 30 wallets and analyzes them
     
-    # ADD HIGH WIN-RATE WALLETS HERE
-    logging.info("🎯 Adding PERFECT BOTS ONLY alpha wallets...")
-    
-    high_wr_wallets = [
-        # ONLY 100% WIN RATE WALLETS - PROVEN MONEY MAKERS
-        ("4YRUHKcZgpQhrjZD5u81LxBBpadKgMAS1i2mSG8FtjR1", "Alpha13-Perfect-FastBot", "PERFECT_BOT_FAST"),    # 338 trades, 100% WR, $34k profit
-        ("5hpLSQ93V53tG6dKFXCdaqz6nCdohs3F6tAo8pCr2kLt", "Alpha20-Perfect-Sniper", "PERFECT_BOT_SNIPER"),   # 5 trades, 100% WR, $9k profit  
-        ("j3Q8C8djzyEjAQou9Nnn6pq7jsnTCiQzRHdkGeypn91", "Alpha8-Perfect-Swing", "PERFECT_BOT_SWING"),      # 6 trades, 100% WR, $11k profit
-    
-        # TEMPORARILY DISABLED - Will re-enable once perfect bots prove profitable
-        # ("DfMxre4cKmvogbLrPigxmibVTTQDuzjdXojWzjCXXhzj", "Alpha2-83%", "ELITE_BOT"),
-        # ("CKBCxNxdsfZwTwKYHQmBs7J8zpPjCjMJAxcxoBUwExw6", "Alpha4-88%", "ELITE_BOT"), 
-        # ("D2ZrLTbQdqHq8B7UVJm2FMjxeBy2auNjEgSguPL4isjC", "Alpha10-70%", "ELITE_BOT"),
-        # ("8Nty9vLxN3ZtT4DQjJ5uFrKtvan28rySfGVJ5dPzu81u", "Alpha6-63%", "MULTI_DAY_HOLDER"),
-        # ("FRtBJDK1pUiAVj36UQesKj9CtRjkJwtfFdJq7GnCEUCH", "Alpha3-82%", "ELITE_BOT"),
-        # ("JD25qVdtd65FoiXNmR89JjmoJdYk9sjYQeSTZAALFiMy", "Alpha19-60%", "ELITE_BOT"),
-        # ("GUrYptu95SqLxhzYS79A6nHwGhGbfd5ooe8EjDrrMjKC", "Alpha18-64%", "MULTI_DAY_HOLDER"),
-        # ("6enzCYVPGgeUYrmULQhftL8ZgTvmCE77RyXmnsiiitzjB", "Alpha9-67%", "MULTI_DAY_HOLDER"),
-    ]
-    
-    # Add each high WR wallet with explicit style
-    for address, name, style in high_wr_wallets:
-        trader.add_alpha_wallet(address, name, style=style)  # Force ELITE_BOT style
-        loaded_count += 1
-        logging.info(f"   Added high WR wallet: {name} as {style}")
-        
-    # Verify all wallets were loaded
-    total_wallets = len(ALPHA_WALLETS_CONFIG) + len(high_wr_wallets)
-    logging.info(f"✅ Successfully loaded {loaded_count} of {total_wallets} wallets")
+    # Show what was loaded
+    logging.info(f"✅ Successfully loaded {len(trader.alpha_wallets)} wallets")
     logging.info(f"📡 Monitoring {len(trader.alpha_wallets)} alpha wallets")
     
-    # Show wallet breakdown
-    logging.info(f"   Regular wallets: {len(ALPHA_WALLETS_CONFIG)}")
-    logging.info(f"   High WR wallets: {len(high_wr_wallets)}")
+    # Show performance data if available
+    if hasattr(trader, 'db_manager'):
+        try:
+            top_wallets = trader.db_manager.get_top_wallets(min_trades=5, limit=10)
+            if top_wallets:
+                logging.info("\n🏆 TOP PERFORMERS (from previous trades):")
+                for i, wallet in enumerate(top_wallets[:5]):
+                    win_rate = (wallet['wins'] / wallet['total_trades']) * 100 if wallet['total_trades'] > 0 else 0
+                    wallet_name = next((name for addr, name in ALPHA_WALLETS_CONFIG if addr == wallet['wallet_address']), wallet['wallet_address'][:8])
+                    logging.info(f"   {i+1}. {wallet_name}: {win_rate:.1f}% WR, {wallet['total_profit_sol']:.3f} SOL, {wallet['total_trades']} trades")
+            else:
+                logging.info("📊 No historical data yet - will learn which wallets are best as we trade!")
+        except Exception as e:
+            logging.debug(f"Could not load historical data: {e}")
     
-    logging.info(f"DEBUG: First 5 wallets loaded:")
+    # Show wallet styles breakdown
+    style_counts = {}
+    for wallet in trader.alpha_wallets:
+        style = wallet.get('style', 'UNKNOWN')
+        style_counts[style] = style_counts.get(style, 0) + 1
+    
+    logging.info("\n📈 Wallet Style Distribution:")
+    for style, count in sorted(style_counts.items(), key=lambda x: x[1], reverse=True):
+        logging.info(f"   {style}: {count} wallets")
+    
+    # Show first few wallets for verification
+    logging.info("\n🔍 Sample wallets loaded:")
     for i in range(min(5, len(trader.alpha_wallets))):
         wallet_info = trader.alpha_wallets[i]
         style = wallet_info.get('style', 'UNKNOWN')
-        logging.info(f"   {i+1}. {wallet_info['name']} ({wallet_info['address'][:8]}...) - Style: {style}")
-    
-    logging.info(f"DEBUG: Last 5 wallets loaded:")
-    for i in range(max(0, len(trader.alpha_wallets)-5), len(trader.alpha_wallets)):
-        wallet_info = trader.alpha_wallets[i]
-        style = wallet_info.get('style', 'UNKNOWN')
-        logging.info(f"   {i+1}. {wallet_info['name']} ({wallet_info['address'][:8]}...) - Style: {style}")
-    
-    # Log first few and last few wallets to confirm
-    if len(trader.alpha_wallets) > 0:
-        logging.info(f"   First wallet: {trader.alpha_wallets[0]['name']} ({trader.alpha_wallets[0]['address'][:8]}...)")
-        if len(trader.alpha_wallets) > 1:
-            logging.info(f"   Last wallet: {trader.alpha_wallets[-1]['name']} ({trader.alpha_wallets[-1]['address'][:8]}...)")
+        active = "✅" if wallet_info.get('active', True) else "❌"
+        logging.info(f"   {active} {wallet_info['name']} - Style: {style}")
     
     # Main trading loop
     last_stats_time = 0
     last_hunt_time = 0
     last_alpha_exit_check = 0
-    iteration = 0  # Add iteration counter
+    last_performance_check = 0
+    iteration = 0
     
     while True:
         try:
             current_time = time.time()
             iteration += 1
-
-            trader.check_alpha_wallets()
             
             # Check wallet health every 50 iterations
             if iteration % 50 == 0:
@@ -3060,13 +3138,38 @@ def run_adaptive_ai_system():
                 trader.check_alpha_exits()
                 last_alpha_exit_check = current_time
             
-            # 5. Show stats every 5 minutes
+            # 5. Analyze wallet performance every hour
+            if current_time - last_performance_check > 3600:  # Every hour
+                last_performance_check = current_time
+                trader.analyze_real_wallet_performance()
+                
+                # Disable poor performers
+                for wallet in trader.alpha_wallets:
+                    if hasattr(trader, 'db_manager'):
+                        wallet_stats = trader.db_manager.get_wallet_stats(wallet['address'])
+                        if wallet_stats and wallet_stats['total_trades'] >= 20:
+                            win_rate = (wallet_stats['wins'] / wallet_stats['total_trades']) * 100
+                            if win_rate < 40:
+                                if wallet.get('active', True):
+                                    wallet['active'] = False
+                                    logging.warning(f"❌ Disabling poor performer: {wallet['name']} ({win_rate:.1f}% WR)")
+                            elif win_rate > 70 and wallet_stats['total_profit_sol'] > 0.5:
+                                if not wallet.get('active', True):
+                                    wallet['active'] = True
+                                    logging.info(f"✅ Re-enabling high performer: {wallet['name']} ({win_rate:.1f}% WR)")
+            
+            # 6. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
                 last_stats_time = current_time
                 
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
-                logging.info(f"   Alpha Wallets: {len(trader.alpha_wallets)} active")
+                
+                # Count active vs disabled wallets
+                active_wallets = sum(1 for w in trader.alpha_wallets if w.get('active', True))
+                disabled_wallets = len(trader.alpha_wallets) - active_wallets
+                
+                logging.info(f"   Alpha Wallets: {active_wallets} active, {disabled_wallets} disabled")
                 logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
                 
                 # Count sources
@@ -3078,7 +3181,7 @@ def run_adaptive_ai_system():
                 logging.info(f"   Daily: {stats['trades']} trades, {stats['wins']} wins")
                 logging.info(f"   P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
                 
-                # Show wallet balance using get_valid_wallet
+                # Show wallet balance
                 try:
                     valid_wallet = get_valid_wallet()
                     balance = valid_wallet.get_balance()
@@ -3086,24 +3189,26 @@ def run_adaptive_ai_system():
                 except:
                     pass
                 
-                # Show which wallets have been active
-                active_wallets = set()
-                for token_data in trader.monitoring.values():
-                    if token_data['alpha_wallet'] != 'SELF_DISCOVERED':
-                        wallet_name = next((w['name'] for w in trader.alpha_wallets if w['address'] == token_data['alpha_wallet']), "Unknown")
-                        active_wallets.add(wallet_name)
-                
-                if active_wallets:
-                    logging.info(f"   Active Alpha Wallets: {', '.join(list(active_wallets)[:5])}")
+                # Show which wallets have been most active
+                if hasattr(trader, 'db_manager'):
+                    recent_active = trader.db_manager.conn.execute('''
+                        SELECT wallet_name, COUNT(*) as recent_trades 
+                        FROM copy_trades 
+                        WHERE created_at > datetime('now', '-1 hour')
+                        GROUP BY wallet_name 
+                        ORDER BY recent_trades DESC 
+                        LIMIT 3
+                    ''').fetchall()
+                    
+                    if recent_active:
+                        logging.info("   Most active (last hour):")
+                        for wallet in recent_active:
+                            logging.info(f"      {wallet['wallet_name']}: {wallet['recent_trades']} signals")
                 
                 # Show any insights
                 if stats['trades'] > 0:
                     trader.brain.show_insights()
-                    
-                # Check if trailing stops are enabled
-                if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true':
-                    logging.info("   📈 Trailing stops: ACTIVE")
-                    
+                
                 # Show top performing positions
                 if trader.positions:
                     top_performers = []
@@ -3115,16 +3220,39 @@ def run_adaptive_ai_system():
                     
                     top_performers.sort(key=lambda x: x[1], reverse=True)
                     if top_performers:
-                        logging.info(f"   Top positions: {top_performers[0][0]} ({top_performers[0][1]:+.1f}%)")
+                        logging.info(f"   Top position: {top_performers[0][0]} ({top_performers[0][1]:+.1f}%)")
+                
+                # Show database stats
+                if hasattr(trader, 'db_manager'):
+                    total_trades = trader.db_manager.conn.execute(
+                        'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
+                    ).fetchone()[0]
+                    logging.info(f"   📊 Total trades recorded: {total_trades}")
+                    
+                    if total_trades >= 100:
+                        logging.info("   🤖 ML training data: READY (100+ trades)")
+                    else:
+                        logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
                 
             time.sleep(5)  # Check every 5 seconds
             
         except KeyboardInterrupt:
             logging.info("\n🛑 System stopped by user")
             logging.info(f"📊 Final Stats: Monitored {len(trader.alpha_wallets)} wallets")
+            
+            # Show final performance summary
+            if hasattr(trader, 'db_manager'):
+                logging.info("\n🏆 FINAL WALLET PERFORMANCE:")
+                trader.analyze_real_wallet_performance()
+            
             trader.brain.show_insights()
             # Save trading history
             trader.brain.save_history()
+            
+            # Close database
+            if hasattr(trader, 'db_manager'):
+                trader.db_manager.close()
+            
             break
             
         except Exception as e:
