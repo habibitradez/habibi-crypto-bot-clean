@@ -4547,7 +4547,7 @@ def aggressive_token_discovery():
     # Method 5: ADD Alpha Wallet Monitoring  
     alpha_signals = self.check_alpha_wallets()  # <-- ADD THIS LINE
     if alpha_signals:
-    discovered_tokens.extend(alpha_signals)
+        discovered_tokens.extend(alpha_signals)
     
     # Remove duplicates and return top candidates
     unique_tokens = list(set(discovered_tokens))
