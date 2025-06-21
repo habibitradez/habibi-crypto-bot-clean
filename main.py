@@ -641,17 +641,18 @@ class AdaptiveAlphaTrader:
         logging.info(f"✅ Following {style} wallet: {name} ({wallet_address[:8]}...)")
         
     def check_alpha_wallets(self):
-        """Enhanced check with wallet style awareness"""
+        """Enhanced check with wallet style awareness and DEBUG LOGGING"""
         current_time = time.time()
-    
+
         for alpha in self.alpha_wallets:
             # Skip if not active
             if not alpha.get('active', True):
+                logging.warning(f"🔍 DEBUG: Skipping {alpha['name']} - not active")
                 continue
-            
+        
             # Dynamic check intervals based on wallet style
             wallet_style = alpha.get('style', 'SCALPER')
-        
+    
             if wallet_style == 'BOT_TRADER':
                 check_interval = 5  # Check every 5 seconds for bots
             elif wallet_style == 'SNIPER':
@@ -672,46 +673,67 @@ class AdaptiveAlphaTrader:
                 check_interval = 30  # 30 seconds for holders
             else:
                 check_interval = 20  # Default 20 seconds
-            
-            if current_time - self.last_check[alpha['address']] < check_interval:
-                continue
         
+            # DEBUG: Log check timing
+            time_since_last = current_time - self.last_check[alpha['address']]
+            if time_since_last < check_interval:
+                logging.info(f"🔍 DEBUG: Skipping {alpha['name']} - checked {time_since_last:.1f}s ago (interval: {check_interval}s)")
+                continue
+    
             self.last_check[alpha['address']] = current_time
         
+            # DEBUG: Log what we're checking
+            logging.info(f"🔍 DEBUG: Checking {alpha['name']} ({wallet_style}) - {alpha['address'][:8]}...")
+    
             try:
                 new_buys = get_wallet_recent_buys_helius(alpha['address'])
             
+                # DEBUG: Log results
+                logging.info(f"🔍 DEBUG: {alpha['name']} returned {len(new_buys) if new_buys else 0} recent buys")
+            
                 if new_buys:
-                     # Alert differently based on wallet style
+                    # DEBUG: Log buy details
+                    for buy in new_buys:
+                        logging.info(f"🔍 DEBUG: Found buy - Token: {buy.get('token', 'Unknown')[:8]}, Timestamp: {buy.get('timestamp', 'Unknown')}")
+                
+                    # Alert differently based on wallet style
                     if wallet_style == 'BOT_TRADER':
                         logging.warning(f"🤖 BOT SIGNAL: {alpha['name']} made {len(new_buys)} buys!")
                     else:
                         logging.info(f"🚨 {alpha['name']} ({wallet_style}) made {len(new_buys)} buys!")
-                
+            
                 for buy in new_buys:
+                    # DEBUG: Log processing
+                    logging.info(f"🔍 DEBUG: Processing buy {buy['token'][:8]} from {alpha['name']}")
+                
                     # INSTANT COPY if not already in position
                     if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
-                    
+                        logging.info(f"🔍 DEBUG: Token {buy['token'][:8]} not in positions/monitoring - proceeding")
+                
                         # Get token data with error handling
                         token_data = self.get_token_snapshot(buy['token'])
-                    
+                
                         # Log what we found
                         if token_data:
                             logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
-                    
+                        else:
+                            logging.warning(f"🔍 DEBUG: No token data for {buy['token'][:8]} - this will cause skip")
+                
                         # Get wallet style parameters
                         style_params = self.wallet_styles.get(alpha['address'], self.get_style_params('SCALPER'))
                         min_liquidity = style_params.get('min_liquidity', 1000)
                     
+                        logging.info(f"🔍 DEBUG: {alpha['name']} style params - min_liquidity: ${min_liquidity}")
+                
                         # More aggressive approach for alpha copying
                         if token_data and token_data.get('price', 0) > 0:
                             liquidity = token_data.get('liquidity', 0)
-                        
+                    
                             # Skip if liquidity too low for this wallet style
                             if liquidity < min_liquidity:
                                 logging.warning(f"⚠️ Skipping {buy['token'][:8]} - liquidity ${liquidity} below {wallet_style} minimum ${min_liquidity}")
-                                continue
-                        
+                                 continue
+                    
                             # Base position sizing
                             if liquidity > 50000:  # Excellent liquidity
                                 base_position = 0.3
@@ -728,11 +750,11 @@ class AdaptiveAlphaTrader:
                             else:
                                 base_position = 0.05
                                 liq_tier = "RISKY"
-                        
+                    
                             # Adjust position size based on wallet performance
                             wallet_perf = self.wallet_performance.get(alpha['address'], {})
                             win_rate = (wallet_perf.get('wins', 0) / wallet_perf.get('trades_copied', 1)) * 100 if wallet_perf.get('trades_copied', 0) > 0 else 50
-                        
+                    
                             # Position multipliers based on wallet win rate
                             if win_rate >= 90:  # Bot-like performance
                                 multiplier = 2.0
@@ -746,33 +768,41 @@ class AdaptiveAlphaTrader:
                             else:
                                 multiplier = 1.0
                                 confidence = "📊 NORMAL"
-                        
+                    
                             # Apply wallet style multiplier
                             style_multiplier = style_params.get('position_size_multiplier', 1.0)
-                        
+                    
                             # Final position size
                             position_size = base_position * multiplier * style_multiplier
                             position_size = min(position_size, 0.5)  # Cap at 0.5 SOL max
-                        
+                    
                             logging.info(f"{confidence} {liq_tier} LIQ COPY: Following {alpha['name']} ({win_rate:.0f}% WR) into {buy['token'][:8]} with {position_size:.2f} SOL")
-                        
+                    
                             # Execute with priority for bot wallets
                             if wallet_style == 'BOT_TRADER':
                                 logging.warning(f"🤖 EXECUTING BOT COPY IMMEDIATELY!")
                         
+                            logging.info(f"🔍 DEBUG: About to execute trade for {buy['token'][:8]}")
+                    
                             # Execute the trade
-                            self.execute_trade(
-                                buy['token'], 
-                                'COPY_TRADE', 
-                                position_size, 
-                                token_data['price'], 
-                                source_wallet=alpha['address']
-                            )
-                        
+                            try:
+                                result = self.execute_trade(
+                                    buy['token'], 
+                                    'COPY_TRADE', 
+                                    position_size, 
+                                    token_data['price'], 
+                                    source_wallet=alpha['address']
+                                )
+                                logging.info(f"🔍 DEBUG: Trade execution result: {result}")
+                            except Exception as trade_error:
+                                logging.error(f"🔍 DEBUG: Trade execution failed: {trade_error}")
+                    
                         else:
                              # Perfect Bots Only - Skip trades without proper token data
                              logging.info(f"❌ Skipping {buy['token'][:8]} from {alpha['name']} - no token data available")
-                            
+                    else:
+                        logging.info(f"🔍 DEBUG: Skipping {buy['token'][:8]} - already in positions or monitoring")
+                        
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
                 logging.error(traceback.format_exc())
@@ -1855,150 +1885,107 @@ class AdaptiveAlphaTrader:
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
-    """Get recent buys from a wallet using Helius API with improved error handling"""
+    """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
     
     try:
+        # DEBUG: Log what we're checking
+        logging.info(f"🔍 DEBUG: Getting recent buys for {wallet_address[:8]}...")
+        
         # Get recent signatures for the wallet
         headers = {"Content-Type": "application/json"}
         
         payload = {
             "jsonrpc": "2.0",
-            "id": 1,
+            "id": "get-wallet-signatures",
             "method": "getSignaturesForAddress",
             "params": [
                 wallet_address,
                 {
-                    "limit": 10,
+                    "limit": 10,  # Reduced to 10 for faster processing
                     "commitment": "confirmed"
                 }
             ]
         }
         
         response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=30)
-        logging.info(f"🔍 Helius response for {wallet_address[:8]}: status={response.status_code}")
+        logging.info(f"🔍 DEBUG: Helius signatures response for {wallet_address[:8]}: status={response.status_code}")
         
         if response.status_code != 200:
+            logging.warning(f"❌ DEBUG: Helius signatures API error for {wallet_address[:8]}: {response.status_code}")
             return []
-            
-        signatures = response.json().get('result', [])
-        new_buys = []
         
-        # Check each transaction
-        for sig_info in signatures:
-            try:
-                # Skip if older than 5 minutes
-                block_time = sig_info.get('blockTime', 0)
-                if block_time < (time.time() - 300):
-                    continue
-                    
-                sig = sig_info['signature']
-                
-                # Get transaction details
-                tx_payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTransaction",
-                    "params": [
-                        sig,
-                        {
-                            "encoding": "jsonParsed",
-                            "commitment": "confirmed",
-                            "maxSupportedTransactionVersion": 0
-                        }
-                    ]
-                }
-                
-                tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=30)
-                
-                if tx_response.status_code == 200:
-                    tx_data = tx_response.json().get('result')
-                    
-                    if tx_data and tx_data.get('meta', {}).get('err') is None:
-                        # Look for swap instructions (Jupiter, Raydium, etc)
-                        instructions = tx_data.get('transaction', {}).get('message', {}).get('instructions', [])
-                        
-                        for instruction in instructions:
-                            program_id = instruction.get('programId', '')
-                            
-                            # Check if it's a swap (Jupiter, Raydium, Orca, etc)
-                            if program_id in ['JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  # Jupiter v6
-                                             'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  # Jupiter v4
-                                             '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium
-                                             'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc']:  # Orca
-                                
-                                # Extract token info from the transaction
-                                post_balances = tx_data.get('meta', {}).get('postTokenBalances', [])
-                                pre_balances = tx_data.get('meta', {}).get('preTokenBalances', [])
-                                
-                                # Find new tokens acquired
-                                for post in post_balances:
-                                    try:
-                                        # Check if this is the wallet's token
-                                        if post.get('owner') == wallet_address:
-                                            mint = post.get('mint')
-                                            
-                                            # Check if this is a new token (not in pre-balances)
-                                            is_new = True
-                                            for pre in pre_balances:
-                                                if pre.get('mint') == mint and pre.get('owner') == wallet_address:
-                                                    # SAFE FLOAT CONVERSION - Fix for the error
-                                                    try:
-                                                        pre_amount_str = pre.get('uiTokenAmount', {}).get('amount', '0')
-                                                        post_amount_str = post.get('uiTokenAmount', {}).get('amount', '0')
-                                                        
-                                                        # Handle None or empty values
-                                                        if pre_amount_str is None or pre_amount_str == '':
-                                                            pre_amount = 0.0
-                                                        else:
-                                                            pre_amount = float(pre_amount_str)
-                                                            
-                                                        if post_amount_str is None or post_amount_str == '':
-                                                            post_amount = 0.0
-                                                        else:
-                                                            post_amount = float(post_amount_str)
-                                                            
-                                                        if post_amount <= pre_amount:
-                                                            is_new = False
-                                                    except (ValueError, TypeError):
-                                                        # If conversion fails, assume it's new
-                                                        pass
-                                                    break
-                                            
-                                            # Skip SOL and USDC
-                                            if mint not in ['So11111111111111111111111111111111111111112',
-                                                           'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'] and is_new:
-                                                
-                                                # SAFE UI AMOUNT CONVERSION
-                                                try:
-                                                    ui_amount_str = post.get('uiTokenAmount', {}).get('uiAmount', '0')
-                                                    if ui_amount_str is None or ui_amount_str == '':
-                                                        ui_amount = 0.0
-                                                    else:
-                                                        ui_amount = float(ui_amount_str)
-                                                except (ValueError, TypeError):
-                                                    ui_amount = 0.0
-                                                
-                                                new_buys.append({
-                                                    'token': mint,
-                                                    'amount': ui_amount,
-                                                    'timestamp': block_time,
-                                                    'signature': sig
-                                                })
-                                                
-                                                logging.info(f"🎯 Detected buy: {wallet_address[:8]} bought {mint[:8]}")
-                                                break
-                                    except Exception as token_error:
-                                        logging.debug(f"Error processing token balance: {token_error}")
-                                        continue
-                                        
-            except Exception as sig_error:
-                logging.debug(f"Error processing signature {sig_info.get('signature', 'unknown')}: {sig_error}")
+        signatures_data = response.json()
+        
+        if "result" not in signatures_data or not signatures_data["result"]:
+            logging.info(f"🔍 DEBUG: No signatures found for {wallet_address[:8]}")
+            return []
+        
+        logging.info(f"🔍 DEBUG: Found {len(signatures_data['result'])} signatures for {wallet_address[:8]}")
+        
+        recent_buys = []
+        signatures = signatures_data["result"][:5]  # Only check last 5 transactions
+        
+        for i, sig_info in enumerate(signatures):
+            if sig_info.get("err"):
+                logging.info(f"🔍 DEBUG: Skipping failed tx {i+1}/5 for {wallet_address[:8]}")
                 continue
-                                
-        return new_buys
+                
+            logging.info(f"🔍 DEBUG: Processing tx {i+1}/5 for {wallet_address[:8]}: {sig_info['signature'][:8]}...")
+                
+            # Get transaction details
+            tx_payload = {
+                "jsonrpc": "2.0",
+                "id": "get-transaction",
+                "method": "getTransaction",
+                "params": [
+                    sig_info["signature"],
+                    {
+                        "encoding": "jsonParsed",
+                        "maxSupportedTransactionVersion": 0,
+                        "commitment": "confirmed"
+                    }
+                ]
+            }
+            
+            tx_response = requests.post(HELIUS_RPC_URL, json=tx_payload, headers=headers, timeout=30)
+            
+            if tx_response.status_code != 200:
+                logging.warning(f"🔍 DEBUG: Failed to get tx details for {sig_info['signature'][:8]}")
+                continue
+            
+            tx_data = tx_response.json()
+            
+            if "result" not in tx_data or not tx_data["result"]:
+                logging.info(f"🔍 DEBUG: No tx data for {sig_info['signature'][:8]}")
+                continue
+                
+            # Parse transaction for buy signals
+            transaction = tx_data["result"]
+            is_buy = is_buy_transaction(transaction, wallet_address)
+            
+            logging.info(f"🔍 DEBUG: Transaction {sig_info['signature'][:8]} is_buy: {is_buy}")
+            
+            if is_buy:
+                token = extract_token_from_transaction(transaction)
+                if token:
+                    recent_buys.append({
+                        'signature': sig_info["signature"],
+                        'token': token,
+                        'timestamp': sig_info.get("blockTime", 0),
+                        'slot': sig_info.get("slot", 0)
+                    })
+                    logging.info(f"🔍 DEBUG: Added buy: {token[:8]} from tx {sig_info['signature'][:8]}")
+                else:
+                    logging.info(f"🔍 DEBUG: Could not extract token from buy transaction {sig_info['signature'][:8]}")
         
+        logging.info(f"🔍 DEBUG: Final result for {wallet_address[:8]}: {len(recent_buys)} buys found")
+        return recent_buys
+        
+    except requests.exceptions.Timeout:
+        logging.error(f"Timeout getting wallet buys for {wallet_address[:8]}: Helius API taking >30 seconds")
+        return []
     except Exception as e:
-        logging.error(f"Error getting wallet buys: {e}")
+        logging.error(f"Error getting wallet buys for {wallet_address[:8]}: {e}")
         return []
 
 def check_wallet_health():
