@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import joblib
 import xgboost as xgb
 import pandas as pd
+import sqlite3  # Add this line
 import websocket
 import threading
 import numpy as np
