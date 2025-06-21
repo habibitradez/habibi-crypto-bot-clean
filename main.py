@@ -592,7 +592,361 @@ class TradingBrain:
         logging.info(f"   Daily: {self.daily_stats['trades']} trades, "
                     f"{self.daily_stats['wins']} wins, "
                     f"{self.daily_stats['pnl_sol']:+.3f} SOL")
+
+class MLTradingBrain:
+    """ML Brain that learns from your 2000+ real trades"""
+    
+    def __init__(self, db_connection):
+        self.db = db_connection
+        self.rf_model = None
+        self.xgb_model = None
+        self.scaler = StandardScaler()
+        self.is_trained = False
+        self.last_training = None
+        self.min_confidence = 0.65  # Minimum confidence to take trade
         
+    def prepare_features_from_trade_history(self):
+        """Extract features from your actual trading history"""
+        
+        logging.info("📊 Preparing ML features from trading history...")
+        
+        # Query your actual trades with all relevant data
+        query = """
+        SELECT 
+            ct.wallet_address,
+            ct.token_address,
+            ct.entry_price,
+            ct.exit_price,
+            ct.profit_sol,
+            ct.hold_time_minutes,
+            ct.created_at,
+            CASE WHEN ct.profit_sol > 0 THEN 1 ELSE 0 END as profitable,
+            
+            -- Wallet stats at time of trade
+            (SELECT COUNT(*) FROM copy_trades ct2 
+             WHERE ct2.wallet_address = ct.wallet_address 
+             AND ct2.created_at < ct.created_at) as wallet_prior_trades,
+            
+            (SELECT SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+             FROM copy_trades ct2 
+             WHERE ct2.wallet_address = ct.wallet_address 
+             AND ct2.created_at < ct.created_at
+             AND ct2.status = 'closed') as wallet_historical_wr,
+            
+            -- Recent wallet performance
+            (SELECT SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*)
+             FROM copy_trades ct2 
+             WHERE ct2.wallet_address = ct.wallet_address 
+             AND ct2.created_at < ct.created_at
+             AND ct2.created_at > datetime(ct.created_at, '-1 day')
+             AND ct2.status = 'closed') as wallet_24h_wr,
+            
+            -- Market conditions (you'll need to join with your market data table)
+            td.liquidity,
+            td.volume_24h,
+            td.holder_count,
+            td.price_change_5m,
+            td.price_change_1h
+            
+        FROM copy_trades ct
+        LEFT JOIN token_data td ON ct.token_address = td.token_address
+        WHERE ct.status = 'closed'
+            AND ct.created_at > datetime('now', '-30 days')
+        ORDER BY ct.created_at DESC
+        """
+        
+        df = pd.read_sql(query, self.db)
+        
+        # Engineer additional features
+        df = self.engineer_ml_features(df)
+        
+        return df
+    
+    def engineer_ml_features(self, df):
+        """Create powerful features for ML"""
+        
+        # Time features
+        df['hour'] = pd.to_datetime(df['created_at']).dt.hour
+        df['day_of_week'] = pd.to_datetime(df['created_at']).dt.dayofweek
+        
+        # Wallet momentum
+        df['wallet_momentum'] = df['wallet_24h_wr'] - df['wallet_historical_wr']
+        
+        # Market features
+        df['liquidity_to_volume'] = df['liquidity'] / (df['volume_24h'] + 1)
+        df['price_momentum'] = df['price_change_5m'] * df['price_change_1h']
+        
+        # Risk features
+        df['is_low_liq'] = (df['liquidity'] < 10000).astype(int)
+        df['is_high_volume'] = (df['volume_24h'] > 50000).astype(int)
+        
+        # Fill NaN values
+        df = df.fillna(0)
+        
+        return df
+    
+    def train_models(self):
+        """Train ML models on your real trading data"""
+        
+        logging.info("🚀 Training ML models on your trading history...")
+        
+        # Get prepared data
+        df = self.prepare_features_from_trade_history()
+        
+        if len(df) < 100:
+            logging.warning("⚠️ Not enough trades for ML training (need 100+)")
+            return False
+        
+        # Define features
+        feature_cols = [
+            'wallet_prior_trades', 'wallet_historical_wr', 'wallet_24h_wr',
+            'wallet_momentum', 'liquidity', 'volume_24h', 'holder_count',
+            'price_change_5m', 'price_change_1h', 'liquidity_to_volume',
+            'price_momentum', 'hour', 'day_of_week', 'is_low_liq', 'is_high_volume'
+        ]
+        
+        X = df[feature_cols]
+        y = df['profitable']
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42, stratify=y
+        )
+        
+        # Scale features
+        X_train_scaled = self.scaler.fit_transform(X_train)
+        X_test_scaled = self.scaler.transform(X_test)
+        
+        # Train Random Forest
+        logging.info("🌲 Training Random Forest...")
+        self.rf_model = RandomForestClassifier(
+            n_estimators=100,
+            max_depth=8,
+            min_samples_split=20,
+            class_weight='balanced',
+            random_state=42
+        )
+        self.rf_model.fit(X_train_scaled, y_train)
+        
+        # Train XGBoost
+        logging.info("🚀 Training XGBoost...")
+        self.xgb_model = xgb.XGBClassifier(
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            random_state=42,
+            use_label_encoder=False,
+            eval_metric='logloss'
+        )
+        self.xgb_model.fit(X_train_scaled, y_train)
+        
+        # Evaluate
+        rf_score = self.rf_model.score(X_test_scaled, y_test)
+        xgb_score = self.xgb_model.score(X_test_scaled, y_test)
+        
+        logging.info(f"✅ Random Forest Accuracy: {rf_score:.2%}")
+        logging.info(f"✅ XGBoost Accuracy: {xgb_score:.2%}")
+        
+        self.is_trained = True
+        self.last_training = datetime.now()
+        
+        # Save models
+        self.save_models()
+        
+        return True
+    
+    def predict_trade(self, wallet_stats, token_data):
+        """Predict if a trade will be profitable"""
+        
+        if not self.is_trained:
+            return None, 0.5  # No prediction available
+        
+        # Prepare features
+        features = [
+            wallet_stats.get('total_trades', 0),
+            wallet_stats.get('win_rate', 50),
+            wallet_stats.get('recent_win_rate', 50),
+            wallet_stats.get('win_rate', 50) - wallet_stats.get('recent_win_rate', 50),  # momentum
+            token_data.get('liquidity', 0),
+            token_data.get('volume', 0),
+            token_data.get('holders', 0),
+            token_data.get('price_change_5m', 0),
+            token_data.get('price_change_1h', 0),
+            token_data.get('liquidity', 0) / (token_data.get('volume', 1) + 1),
+            token_data.get('price_change_5m', 0) * token_data.get('price_change_1h', 0),
+            datetime.now().hour,
+            datetime.now().weekday(),
+            int(token_data.get('liquidity', 0) < 10000),
+            int(token_data.get('volume', 0) > 50000)
+        ]
+        
+        # Scale features
+        features_scaled = self.scaler.transform([features])
+        
+        # Get predictions
+        rf_proba = self.rf_model.predict_proba(features_scaled)[0][1]
+        xgb_proba = self.xgb_model.predict_proba(features_scaled)[0][1]
+        
+        # Ensemble prediction
+        ensemble_proba = (rf_proba + xgb_proba) / 2
+        
+        # Determine action
+        if ensemble_proba >= 0.75:
+            action = "STRONG_BUY"
+        elif ensemble_proba >= 0.65:
+            action = "BUY"
+        elif ensemble_proba >= 0.55:
+            action = "WEAK_BUY"
+        else:
+            action = "SKIP"
+        
+        return action, ensemble_proba
+    
+    def save_models(self):
+        """Save trained models"""
+        try:
+            joblib.dump(self.rf_model, 'ml_models/rf_model.pkl')
+            joblib.dump(self.xgb_model, 'ml_models/xgb_model.pkl')
+            joblib.dump(self.scaler, 'ml_models/scaler.pkl')
+            logging.info("💾 ML models saved successfully")
+        except Exception as e:
+            logging.error(f"Error saving models: {e}")
+    
+    def load_models(self):
+        """Load pre-trained models"""
+        try:
+            self.rf_model = joblib.load('ml_models/rf_model.pkl')
+            self.xgb_model = joblib.load('ml_models/xgb_model.pkl')
+            self.scaler = joblib.load('ml_models/scaler.pkl')
+            self.is_trained = True
+            logging.info("✅ ML models loaded successfully")
+            return True
+        except:
+            logging.info("📊 No pre-trained models found, will train on first run")
+            return False
+
+    def enhanced_check_alpha_wallets_with_ml(self):
+        """Your existing check_alpha_wallets enhanced with ML"""
+    
+        current_time = time.time()
+    
+        # Initialize ML brain if not exists
+        if not hasattr(self, 'ml_brain'):
+            self.ml_brain = MLTradingBrain(self.db)
+        
+            # Try loading models or train new ones
+            if not self.ml_brain.load_models():
+                if self.ml_brain.train_models():
+                    logging.info("✅ ML models trained successfully")
+                else:
+                    logging.info("⚠️ Running without ML (not enough data yet)")
+    
+        for alpha in self.alpha_wallets:
+            # Skip if not active
+            if not alpha.get('active', True):
+                continue
+        
+            # Your existing check interval logic
+            wallet_style = alpha.get('style', 'MEDIUM_TRADER')
+            check_interval = alpha.get('check_interval', 5)
+        
+            # Check if it's time to check this wallet
+            last_check = alpha.get('last_check', 0)
+            if current_time - last_check < check_interval:
+                continue
+        
+            alpha['last_check'] = current_time
+        
+            # Get wallet stats for ML
+            wallet_stats = {
+                'total_trades': alpha.get('total_trades', 0),
+                'win_rate': alpha.get('win_rate', 50),
+                'recent_win_rate': alpha.get('recent_wr', 50)
+            }
+        
+            # Get recent buys
+            recent_buys = self.get_wallet_recent_buys_helius(alpha['address'])
+        
+            if recent_buys:
+                logging.info(f"🚨 {alpha['name']} ({wallet_style}) made {len(recent_buys)} buys!")
+            
+                for buy in recent_buys:
+                    # Get token data
+                    token_data = self.get_token_snapshot(buy['token'], wallet_style)
+                
+                    if not token_data and wallet_style.startswith('PERFECT_BOT'):
+                        # Your existing perfect bot fallback
+                        token_data = self.create_fallback_token_data(buy['token'])
+                
+                    if token_data:
+                        # Get ML prediction
+                        ml_action = None
+                        ml_confidence = 0.5
+                    
+                        if self.ml_brain.is_trained:
+                            ml_action, ml_confidence = self.ml_brain.predict_trade(
+                                wallet_stats, token_data
+                            )
+                            logging.info(f"🤖 ML Prediction: {ml_action} (Confidence: {ml_confidence:.2%})")
+                    
+                        # Decision logic combining wallet performance and ML
+                        should_copy = False
+                        position_multiplier = 1.0
+                    
+                        if ml_action == "STRONG_BUY":
+                            should_copy = True
+                            position_multiplier = 1.5
+                        elif ml_action == "BUY":
+                            should_copy = True
+                            position_multiplier = 1.0
+                        elif ml_action == "WEAK_BUY" and alpha.get('win_rate', 50) > 65:
+                            should_copy = True
+                            position_multiplier = 0.7
+                        elif ml_action == "SKIP":
+                            logging.info(f"🚫 ML recommends skipping {buy['token'][:8]}")
+                            continue
+                        else:
+                            # No ML prediction, use wallet win rate
+                            if alpha.get('win_rate', 50) >= 65:
+                                should_copy = True
+                    
+                        if should_copy:
+                            # Calculate position size with ML adjustment
+                            base_position = alpha.get('position_size', 0.25)
+                            adjusted_position = base_position * position_multiplier
+                        
+                            # Your existing copy trade logic
+                            self.execute_copy_trade_enhanced(
+                                buy, alpha, token_data, adjusted_position, ml_confidence
+                            )
+
+
+    def initialize_ml_system(self):
+        """Initialize ML system on bot startup"""
+    
+        logging.info("🤖 Initializing ML Trading Brain...")
+    
+        # Create ML brain
+        self.ml_brain = MLTradingBrain(self.db)
+    
+        # Check if we have enough data
+        trade_count = self.db.execute(
+            "SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'"
+        ).fetchone()['count']
+    
+        logging.info(f"📊 Found {trade_count} completed trades for ML training")
+    
+        if trade_count >= 100:
+            # Try loading existing models
+            if not self.ml_brain.load_models():
+                # Train new models
+                self.ml_brain.train_models()
+        else:
+            logging.info(f"⚠️ Need {100 - trade_count} more trades before ML can be trained")
+    
+        # Schedule periodic retraining (every 24 hours)
+        self.schedule_ml_retraining()
+    
 
 class AdaptiveAlphaTrader:
     """Watches alpha wallets and adapts strategy based on price action"""
