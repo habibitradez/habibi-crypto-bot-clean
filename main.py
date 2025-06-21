@@ -3907,6 +3907,157 @@ def close_copy_trade_position(token_address: str):
     except Exception as e:
         logging.error(f"Error closing position: {e}")
 
+
+def is_buy_transaction(transaction, wallet_address):
+    """Check if a transaction represents a buy (swap from SOL/USDC to another token)"""
+    try:
+        if not transaction or 'transaction' not in transaction:
+            return False
+            
+        tx = transaction['transaction']
+        if 'message' not in tx or 'instructions' not in tx['message']:
+            return False
+            
+        instructions = tx['message']['instructions']
+        
+        # Look for swap instructions
+        for instruction in instructions:
+            if not isinstance(instruction, dict):
+                continue
+                
+            # Check for Jupiter/Raydium/Orca swap programs
+            program_id = instruction.get('programId', '')
+            
+            # Common Solana DEX program IDs
+            swap_programs = [
+                'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',  # Jupiter V6
+                'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',  # Jupiter V4
+                '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', # Raydium AMM
+                '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM', # Raydium CLMM
+                'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',  # Orca Whirlpool
+                'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1', # Orca V1
+                '9qvG1zUp8xF1Bi4m6UdRNby1BAAuaDrUxSpv4CmRRMjL', # Orca V2
+            ]
+            
+            if program_id in swap_programs:
+                # This is likely a swap instruction
+                # Check if it involves the wallet address
+                accounts = instruction.get('accounts', [])
+                if wallet_address in accounts:
+                    # Additional check: look for token account changes
+                    if 'parsed' in instruction:
+                        parsed = instruction['parsed']
+                        if parsed.get('type') in ['swap', 'swapV2', 'swapBaseIn', 'swapBaseOut']:
+                            return True
+                    
+                    # If no parsed data, assume it's a buy if wallet is involved
+                    return True
+        
+        # Alternative method: Check account changes (pre/post balances)
+        meta = transaction.get('meta', {})
+        if 'preTokenBalances' in meta and 'postTokenBalances' in meta:
+            pre_balances = meta['preTokenBalances']
+            post_balances = meta['postTokenBalances']
+            
+            # Look for the wallet's token balance changes
+            for pre_bal in pre_balances:
+                if pre_bal.get('owner') == wallet_address:
+                    # Find corresponding post balance
+                    for post_bal in post_balances:
+                        if (post_bal.get('owner') == wallet_address and 
+                            post_bal.get('mint') == pre_bal.get('mint')):
+                            
+                            pre_amount = float(pre_bal.get('uiTokenAmount', {}).get('uiAmount', 0))
+                            post_amount = float(post_bal.get('uiTokenAmount', {}).get('uiAmount', 0))
+                            
+                            # If token balance increased, it's likely a buy
+                            if post_amount > pre_amount:
+                                return True
+        
+        return False
+        
+    except Exception as e:
+        logging.debug(f"Error in is_buy_transaction: {e}")
+        return False
+
+def extract_token_from_transaction(transaction):
+    """Extract the token address that was bought in the transaction"""
+    try:
+        if not transaction or 'transaction' not in transaction:
+            return None
+            
+        meta = transaction.get('meta', {})
+        
+        # Method 1: Check post token balances for new tokens
+        if 'postTokenBalances' in meta:
+            post_balances = meta['postTokenBalances']
+            
+            # Look for the largest token balance change (likely the bought token)
+            largest_increase = 0
+            target_mint = None
+            
+            for balance in post_balances:
+                ui_amount = balance.get('uiTokenAmount', {}).get('uiAmount', 0)
+                if ui_amount and ui_amount > largest_increase:
+                    mint = balance.get('mint')
+                    if mint and mint != 'So11111111111111111111111111111111111111112':  # Not WSOL
+                        largest_increase = ui_amount
+                        target_mint = mint
+            
+            if target_mint:
+                return target_mint
+        
+        # Method 2: Parse swap instructions
+        tx = transaction['transaction']
+        if 'message' not in tx or 'instructions' not in tx['message']:
+            return None
+            
+        instructions = tx['message']['instructions']
+        
+        for instruction in instructions:
+            if not isinstance(instruction, dict):
+                continue
+                
+            # Look for parsed swap data
+            if 'parsed' in instruction:
+                parsed = instruction['parsed']
+                if 'info' in parsed:
+                    info = parsed['info']
+                    
+                    # Common patterns for token swaps
+                    if 'destination' in info:
+                        # This might be the destination token account
+                        dest_account = info['destination']
+                        # We'd need to resolve this to a mint address
+                        
+                    if 'tokenSwap' in info:
+                        return info.get('tokenSwap')
+        
+        # Method 3: Look at account keys for mints
+        if 'accountKeys' in tx['message']:
+            account_keys = tx['message']['accountKeys']
+            
+            # Token mints are typically 44 characters and start with specific patterns
+            for key in account_keys:
+                if isinstance(key, str) and len(key) == 44:
+                    # Skip well-known addresses
+                    if key not in [
+                        'So11111111111111111111111111111111111111112',  # WSOL
+                        'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',  # USDC
+                        'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB',  # USDT
+                        '11111111111111111111111111111111',             # System Program
+                        'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',   # Token Program
+                    ]:
+                        # This could be a token mint
+                        return key
+        
+        return None
+        
+    except Exception as e:
+        logging.debug(f"Error in extract_token_from_transaction: {e}")
+        return None
+
+
 # Add this function to load more wallets from Dune export
 def load_additional_wallets_from_dune():
     """Load more wallets from your Dune analytics export"""
