@@ -27,6 +27,7 @@ from collections import defaultdict
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.preprocessing import StandardScaler
 from collections import deque
 
 # Solana imports using solders instead of solana
@@ -3386,7 +3387,7 @@ def run_adaptive_ai_system():
             
             # 5. Check for profit conversion every 30 minutes (or configured interval)
             conversion_interval = float(CONFIG.get('CONVERSION_CHECK_INTERVAL', 1800))
-            if CONFIG.get('AUTO_CONVERT_PROFITS', 'true').lower() == 'true':
+            if str(CONFIG.get('AUTO_CONVERT_PROFITS', 'true')).lower() == 'true':
                 if current_time - last_conversion_check > conversion_interval:
                     last_conversion_check = current_time
                     
@@ -4033,6 +4034,8 @@ def get_wallet_balance_sol():
     """Get current wallet SOL balance"""
     try:
         # Use the wallet instance's get_balance method
+        global wallet  # Add this line first
+        
         balance = wallet.get_balance()
         logging.info(f"Current wallet balance: {balance:.4f} SOL")
         return balance
