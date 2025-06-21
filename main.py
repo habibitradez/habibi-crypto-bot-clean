@@ -211,6 +211,11 @@ CONFIG = {
     'SKIP_UNNECESSARY_CHECKS': os.environ.get('SKIP_UNNECESSARY_CHECKS', 'true').lower() == 'true',
     'HELIUS_PRIORITY_FEE': os.environ.get('HELIUS_PRIORITY_FEE', 'true').lower() == 'true',
     'SNIPE_DELAY_SECONDS': float(os.environ.get('SNIPE_DELAY_SECONDS', '0.5')),
+    'AUTO_CONVERT_PROFITS': os.getenv('AUTO_CONVERT_PROFITS', 'true').lower() == 'true',
+    'TARGET_DAILY_PROFIT': float(os.getenv('TARGET_DAILY_PROFIT', '500')),
+    'CONVERSION_CHECK_INTERVAL': int(os.getenv('CONVERSION_CHECK_INTERVAL', '1800')),
+    'MIN_PROFIT_TO_CONVERT': float(os.getenv('MIN_PROFIT_TO_CONVERT', '2.0')),
+    'KEEP_TRADING_BALANCE': float(os.getenv('KEEP_TRADING_BALANCE', '4.0')),
 
     # Memory optimization
     'RPC_CALL_DELAY_MS': int(os.environ.get('RPC_CALL_DELAY_MS', '300')),
@@ -1010,7 +1015,17 @@ class DatabaseManager:
             last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
-        
+
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS profit_conversions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            amount_sol REAL NOT NULL,
+            amount_usdc REAL NOT NULL,
+            conversion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            session_number INTEGER DEFAULT 1
+        )
+        ''')
+    
         self.conn.commit()
         logging.info("✅ Database tables created/verified")
     
@@ -1111,6 +1126,7 @@ class DatabaseManager:
         ''', (min_trades, limit))
         
         return cursor.fetchall()
+
     
     def close(self):
         """Close database connection"""
@@ -2923,6 +2939,183 @@ class AdaptiveAlphaTrader:
             else:
                 logging.info("📊 Need more trades to determine best wallets. Currently following all 30.")
 
+    def check_and_convert_profits(self):
+        """Check if we've hit daily target and convert profits to USDC"""
+        try:
+            # Get current stats
+            daily_pnl_sol = self.brain.daily_stats.get('pnl_sol', 0)
+            daily_pnl_usd = daily_pnl_sol * 240  # Assuming $240/SOL
+        
+            # Check if we've hit the daily target
+            daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 500))
+        
+            if daily_pnl_usd >= daily_target:
+                logging.info(f"🎯 Daily target hit! ${daily_pnl_usd:.0f} >= ${daily_target}")
+            
+                # Convert profits to USDC
+                if self.convert_profits_to_usdc(daily_pnl_sol):
+                    # Reset daily stats but keep lifetime stats
+                    self.brain.daily_stats = {'trades': 0, 'wins': 0, 'pnl_sol': 0}
+                    self.brain.daily_stats['start_time'] = time.time()
+                
+                    logging.info("✅ Profits converted to USDC - continuing trading!")
+                    return True
+        
+            return False
+        
+        except Exception as e:
+            logging.error(f"Error checking profit conversion: {e}")
+            return False
+
+    def convert_profits_to_usdc(self, profit_amount_sol):
+        """Convert profits to USDC using existing function"""
+        try:
+            # Use your existing conversion function
+            result = convert_profits_to_usdc(profit_amount_sol)
+        
+            if result:
+                logging.info(f"💰 Successfully converted {profit_amount_sol:.3f} SOL to USDC")
+            
+                # Record this conversion in database if available
+                if hasattr(self, 'db_manager'):
+                    try:
+                        cursor = self.db_manager.conn.cursor()
+                        cursor.execute('''
+                            INSERT INTO profit_conversions (amount_sol, amount_usdc, conversion_time)
+                            VALUES (?, ?, CURRENT_TIMESTAMP)
+                        ''', (profit_amount_sol, profit_amount_sol * 240))
+                        self.db_manager.conn.commit()
+                    except:
+                        pass
+            
+                return True
+            else:
+                logging.error("Failed to convert profits to USDC")
+                return False
+            
+        except Exception as e:
+            logging.error(f"Error converting to USDC: {e}")
+            return False
+
+    def get_total_usdc_converted_today(self):
+        """Get total USDC converted today"""
+        try:
+            if hasattr(self, 'db_manager'):
+                cursor = self.db_manager.conn.cursor()
+                result = cursor.execute('''
+                    SELECT SUM(amount_usdc) 
+                    FROM profit_conversions 
+                    WHERE DATE(conversion_time) = DATE('now')
+                ''').fetchone()
+            
+                return result[0] if result[0] else 0
+            return 0
+        except:
+            return 0
+
+    def reset_daily_stats_midnight(self):
+        """Reset daily stats at midnight but keep USDC conversion history"""
+        try:
+            current_hour = datetime.now().hour
+            
+            if not hasattr(self, 'last_reset_day'):
+                self.last_reset_day = datetime.now().day
+            
+            current_day = datetime.now().day
+            
+            # Check if it's a new day
+            if current_day != self.last_reset_day:
+                # Show end of day summary
+                logging.info("\n" + "="*60)
+                logging.info("🌙 === END OF DAY SUMMARY ===")
+                logging.info(f"📅 Date: {datetime.now().strftime('%Y-%m-%d')}")
+                
+                # Get total USDC converted today
+                total_converted = self.get_total_usdc_converted_today()
+                
+                if hasattr(self, 'db_manager'):
+                    # Get today's trading summary
+                    try:
+                        today_stats = self.db_manager.conn.execute('''
+                            SELECT 
+                                COUNT(*) as total_trades,
+                                SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                                SUM(profit_sol) as total_profit_sol
+                            FROM copy_trades
+                            WHERE DATE(created_at) = DATE('now')
+                                AND status = 'closed'
+                        ''').fetchone()
+                        
+                        if today_stats and today_stats['total_trades'] > 0:
+                            win_rate = (today_stats['wins'] / today_stats['total_trades']) * 100
+                            logging.info(f"📊 Today's Performance:")
+                            logging.info(f"   Total Trades: {today_stats['total_trades']}")
+                            logging.info(f"   Win Rate: {win_rate:.1f}%")
+                            logging.info(f"   Total P&L: {today_stats['total_profit_sol']:.3f} SOL (${today_stats['total_profit_sol']*240:.0f})")
+                        
+                        if total_converted > 0:
+                            sessions = self.db_manager.conn.execute('''
+                                SELECT COUNT(DISTINCT session_number) 
+                                FROM profit_conversions 
+                                WHERE DATE(conversion_time) = DATE('now')
+                            ''').fetchone()[0]
+                            logging.info(f"💵 Total USDC Secured: ${total_converted:.0f}")
+                            logging.info(f"📊 Trading Sessions Completed: {sessions}")
+                            
+                            # Get breakdown by session
+                            session_breakdown = self.db_manager.conn.execute('''
+                                SELECT session_number, SUM(amount_usdc) as session_total
+                                FROM profit_conversions
+                                WHERE DATE(conversion_time) = DATE('now')
+                                GROUP BY session_number
+                                ORDER BY session_number
+                            ''').fetchall()
+                            
+                            if session_breakdown:
+                                logging.info("📈 Session Breakdown:")
+                                for session in session_breakdown:
+                                    logging.info(f"   Session #{session['session_number']}: ${session['session_total']:.0f}")
+                        
+                        # Show top performing wallets for the day
+                        top_daily_wallets = self.db_manager.conn.execute('''
+                            SELECT 
+                                wallet_name,
+                                COUNT(*) as trades,
+                                SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                                SUM(profit_sol) as profit
+                            FROM copy_trades
+                            WHERE DATE(created_at) = DATE('now')
+                                AND status = 'closed'
+                            GROUP BY wallet_name
+                            ORDER BY profit DESC
+                            LIMIT 3
+                        ''').fetchall()
+                        
+                        if top_daily_wallets:
+                            logging.info("🏆 Top Wallets Today:")
+                            for wallet in top_daily_wallets:
+                                if wallet['trades'] > 0:
+                                    wr = (wallet['wins'] / wallet['trades']) * 100
+                                    logging.info(f"   {wallet['wallet_name']}: {wr:.0f}% WR, {wallet['profit']:.3f} SOL")
+                        
+                    except Exception as e:
+                        logging.error(f"Error getting daily summary: {e}")
+                
+                # Reset for new day
+                self.brain.daily_stats = {'trades': 0, 'wins': 0, 'pnl_sol': 0, 'start_time': time.time()}
+                self.last_reset_day = current_day
+                
+                # Reset session count for new day
+                session_count = 1  # This would need to be handled in the main loop
+                
+                logging.info("☀️ === NEW TRADING DAY STARTED ===")
+                logging.info(f"📅 Date: {datetime.now().strftime('%Y-%m-%d')}")
+                logging.info("🎯 Daily Target: $500 per session")
+                logging.info("="*60 + "\n")
+                
+        except Exception as e:
+            logging.error(f"Error in daily reset: {e}")
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
@@ -3041,7 +3234,7 @@ def check_wallet_health():
 
 
 def run_adaptive_ai_system():
-    """Main function to run the complete system with database tracking"""
+    """Main function to run the complete system with automatic profit conversion for 24/7 trading"""
 
     global wallet
     # Add this check
@@ -3054,8 +3247,9 @@ def run_adaptive_ai_system():
     logging.info(f"📡 Loading {len(ALPHA_WALLETS_CONFIG)} alpha wallets...")
     logging.info("🔍 + Independent token hunting active")
     logging.info("🎯 Strategies: MOMENTUM (pumps), DIP_BUY (dumps), SCALP (stable)")
-    logging.info("💰 Target: $500/day through consistent profits")
+    logging.info("💰 Target: $500/session, continuous 24/7 trading")
     logging.info("📊 Database tracking: ENABLED - Will discover REAL top performers")
+    logging.info("💵 Auto-conversion: ENABLED - Profits secured to USDC")
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
@@ -3101,17 +3295,39 @@ def run_adaptive_ai_system():
         active = "✅" if wallet_info.get('active', True) else "❌"
         logging.info(f"   {active} {wallet_info['name']} - Style: {style}")
     
-    # Main trading loop
+    # Main trading loop variables
     last_stats_time = 0
     last_hunt_time = 0
     last_alpha_exit_check = 0
     last_performance_check = 0
+    last_conversion_check = 0
+    last_midnight_check = 0
     iteration = 0
+    session_count = 1
+    
+    # Check how many sessions completed today
+    if hasattr(trader, 'db_manager'):
+        try:
+            today_sessions = trader.db_manager.conn.execute('''
+                SELECT COUNT(DISTINCT session_number) 
+                FROM profit_conversions 
+                WHERE DATE(conversion_time) = DATE('now')
+            ''').fetchone()[0]
+            if today_sessions > 0:
+                session_count = today_sessions + 1
+                logging.info(f"📊 Continuing session #{session_count} for today")
+        except:
+            pass
     
     while True:
         try:
             current_time = time.time()
             iteration += 1
+            
+            # Check for midnight reset
+            if current_time - last_midnight_check > 300:  # Check every 5 minutes
+                last_midnight_check = current_time
+                trader.reset_daily_stats_midnight()
             
             # Check wallet health every 50 iterations
             if iteration % 50 == 0:
@@ -3138,7 +3354,33 @@ def run_adaptive_ai_system():
                 trader.check_alpha_exits()
                 last_alpha_exit_check = current_time
             
-            # 5. Analyze wallet performance every hour
+            # 5. Check for profit conversion every 30 minutes (or configured interval)
+            conversion_interval = float(CONFIG.get('CONVERSION_CHECK_INTERVAL', 1800))
+            if CONFIG.get('AUTO_CONVERT_PROFITS', 'true').lower() == 'true':
+                if current_time - last_conversion_check > conversion_interval:
+                    last_conversion_check = current_time
+                    
+                    # Check if we should convert profits
+                    if trader.check_and_convert_profits():
+                        session_count += 1
+                        logging.info(f"🔄 Starting trading session #{session_count} for today")
+                        
+                        # Show total converted today
+                        total_converted = trader.get_total_usdc_converted_today()
+                        logging.info(f"💵 Total USDC secured today: ${total_converted:.0f}")
+                        
+                        # Update session number in database
+                        if hasattr(trader, 'db_manager'):
+                            try:
+                                trader.db_manager.conn.execute(
+                                    'UPDATE profit_conversions SET session_number = ? WHERE DATE(conversion_time) = DATE("now")',
+                                    (session_count,)
+                                )
+                                trader.db_manager.conn.commit()
+                            except:
+                                pass
+            
+            # 6. Analyze wallet performance every hour
             if current_time - last_performance_check > 3600:  # Every hour
                 last_performance_check = current_time
                 trader.analyze_real_wallet_performance()
@@ -3158,12 +3400,15 @@ def run_adaptive_ai_system():
                                     wallet['active'] = True
                                     logging.info(f"✅ Re-enabling high performer: {wallet['name']} ({win_rate:.1f}% WR)")
             
-            # 6. Show stats every 5 minutes
+            # 7. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
                 last_stats_time = current_time
                 
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
+                
+                # Show session info
+                logging.info(f"   Session: #{session_count} today")
                 
                 # Count active vs disabled wallets
                 active_wallets = sum(1 for w in trader.alpha_wallets if w.get('active', True))
@@ -3178,8 +3423,33 @@ def run_adaptive_ai_system():
                 
                 logging.info(f"   Sources: {alpha_tokens} from alphas, {hunt_tokens} self-discovered")
                 logging.info(f"   Positions: {len(trader.positions)} active")
-                logging.info(f"   Daily: {stats['trades']} trades, {stats['wins']} wins")
-                logging.info(f"   P&L: {stats['pnl_sol']:+.3f} SOL (${stats['pnl_sol']*240:+.0f})")
+                logging.info(f"   Session Trades: {stats['trades']} ({stats['wins']} wins)")
+                
+                # Show progress toward target
+                daily_pnl_sol = stats['pnl_sol']
+                daily_pnl_usd = daily_pnl_sol * 240
+                daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 500))
+                progress_pct = (daily_pnl_usd / daily_target) * 100 if daily_target > 0 else 0
+                
+                logging.info(f"   Session P&L: {daily_pnl_sol:+.3f} SOL (${daily_pnl_usd:+.0f})")
+                logging.info(f"   Target Progress: {progress_pct:.0f}% of ${daily_target}")
+                
+                # Show total USDC converted today
+                total_converted = trader.get_total_usdc_converted_today()
+                if total_converted > 0:
+                    logging.info(f"   💵 USDC Secured Today: ${total_converted:.0f}")
+                
+                # Estimate time to target
+                if stats['trades'] > 0 and daily_pnl_usd > 0:
+                    elapsed_hours = (current_time - stats.get('start_time', current_time)) / 3600
+                    if elapsed_hours > 0.1:  # At least 6 minutes
+                        hourly_rate = daily_pnl_usd / elapsed_hours
+                        if hourly_rate > 0:
+                            hours_to_target = (daily_target - daily_pnl_usd) / hourly_rate
+                            if 0 < hours_to_target < 24:
+                                logging.info(f"   ⏰ Est. Time to Target: {hours_to_target:.1f} hours")
+                            elif daily_pnl_usd >= daily_target:
+                                logging.info(f"   ✅ Target reached! Ready for conversion")
                 
                 # Show wallet balance
                 try:
@@ -3259,7 +3529,7 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
-            
+
 # Global rate limiter for Jupiter
 class RateLimiter:
     def __init__(self, max_requests=50, time_window=60):  # 50 requests per 60 seconds (leaving buffer)
