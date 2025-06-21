@@ -14874,6 +14874,9 @@ def get_all_token_balances(wallet_pubkey):
 
 def main():
     """Main entry point - AI Adaptive Trading System with Database Tracking"""
+    global wallet  # Make sure wallet is declared global
+
+    print(f"DEBUG: wallet variable at start = {wallet if 'wallet' in globals() else 'NOT DEFINED'}")
     
     # Clear banner
     logging.info("=" * 60)
