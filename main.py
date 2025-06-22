@@ -3191,6 +3191,39 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error checking existing positions: {e}")
             
 
+    def schedule_ml_retraining(self):
+        """Schedule ML retraining every 5 hours"""
+        if hasattr(self, 'ml_brain') and self.ml_brain:
+            # Train every 5 hours (18000 seconds)
+            self.ml_retrain_timer = threading.Timer(18000, self.retrain_ml_models)
+            self.ml_retrain_timer.daemon = True  # Dies when main program exits
+            self.ml_retrain_timer.start()
+            logging.info("📅 Scheduled ML retraining in 5 hours")
+
+    def retrain_ml_models(self):
+        """Retrain ML models with latest data"""
+        try:
+            if hasattr(self, 'ml_brain') and hasattr(self, 'db_manager'):
+                # Check if we have enough trades
+                total_trades = self.db_manager.conn.execute(
+                    'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
+                ).fetchone()[0]
+                
+                if total_trades >= 100:
+                    logging.info(f"🔄 Starting scheduled ML retraining with {total_trades} trades...")
+                    self.ml_brain.train_models()
+                    logging.info("✅ ML models retrained successfully")
+                else:
+                    logging.info(f"⏳ Skipping retraining - only {total_trades} trades (need 100+)")
+                
+            # Schedule next retraining
+            self.schedule_ml_retraining()
+            
+        except Exception as e:
+            logging.error(f"Error during ML retraining: {e}")
+            # Still schedule next retraining
+            self.schedule_ml_retraining()
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
