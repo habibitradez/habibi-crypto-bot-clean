@@ -13023,7 +13023,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         logging.info(f"⚡ Executing: {command_str}")
         
         # Increased timeout for sells (60s) and buys (30s)
-        timeout_duration = 90 if is_sell else 90
+        timeout_duration = 120 if is_sell else 120
         
         result = subprocess.run([
             'node', 'swap.js',
