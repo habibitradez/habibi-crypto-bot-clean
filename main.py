@@ -2510,6 +2510,18 @@ class AdaptiveAlphaTrader:
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
         """Ensures a position gets sold even if first attempt fails - with database tracking"""
+        global wallet  # Add this to access global wallet
+        
+        # Ensure we have a valid wallet before attempting to sell
+        if not wallet or not hasattr(wallet, 'public_key'):
+            wallet = get_valid_wallet()
+            if not wallet:
+                logging.error("❌ No valid wallet available for selling")
+                # Still try to clean up the position
+                if token in self.positions:
+                    del self.positions[token]
+                return False
+        
         max_attempts = 3
         for attempt in range(max_attempts):
             try:
