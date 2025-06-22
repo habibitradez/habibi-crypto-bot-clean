@@ -3330,7 +3330,16 @@ def run_adaptive_ai_system():
     trader = AdaptiveAlphaTrader(wallet)
     
     # CHECK FOR EXISTING POSITIONS FROM BEFORE RESTART
-    trader.check_existing_positions_on_startup()  # ✅ ADD THIS LINE
+    trader.check_existing_positions_on_startup()
+    
+    # TEMPORARY FIX - CLEAR STUCK POSITIONS
+    if len(trader.positions) > 0:
+        logging.warning(f"⚠️ Found {len(trader.positions)} positions on startup")
+        for token, pos in trader.positions.items():
+            logging.info(f"   Position: {token[:8]} - Strategy: {pos.get('strategy', 'UNKNOWN')}")
+        logging.warning("🧹 Clearing all positions to start fresh")
+        trader.positions.clear()
+        logging.info("✅ Cleared all positions - starting fresh")
     
     # REPLACE the manual wallet adding with automatic discovery
     logging.info("🔍 Loading ALL wallets for performance analysis...")
