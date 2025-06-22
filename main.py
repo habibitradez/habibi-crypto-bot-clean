@@ -8270,6 +8270,7 @@ def execute_optimized_sell(token_address, amount_sol):
         import traceback
         
         logging.info(f"💰 Starting sell for {token_address[:8]}")
+        logging.info(f"💰 Starting sell for {token_address[:8]} with 120s timeout")
         
         # Check if we have tokens to sell
         token_balance = get_token_balance(wallet.public_key, token_address)
@@ -8408,7 +8409,7 @@ def force_sell_token(token_address):
         ], 
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=90,
         cwd='/opt/render/project/src'
         )
         
@@ -13036,6 +13037,8 @@ def execute_via_javascript(token_address, amount, is_sell=False):
         timeout=timeout_duration,  # Dynamic timeout based on operation
         cwd='/opt/render/project/src'
         )
+
+        logging.info(f"✅ Subprocess completed without timeout")
         
         stdout_output = result.stdout if result.stdout else ""
         stderr_output = result.stderr if result.stderr else ""
@@ -13066,7 +13069,7 @@ def execute_via_javascript(token_address, amount, is_sell=False):
             return False, combined_output
             
     except subprocess.TimeoutExpired:
-        timeout_duration = 60 if is_sell else 30
+        timeout_duration = 120 if is_sell else 120
         logging.error(f"⏰ TIMEOUT: {timeout_duration} seconds exceeded for {token_address}")
         return False, f"Timeout after {timeout_duration} seconds"
     except Exception as e:
