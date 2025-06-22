@@ -494,7 +494,7 @@ async function executeSwap() {
     const connection = new Connection(RPC_URL, {
       commitment: 'processed', // CHANGED: faster confirmation
       disableRetryOnRateLimit: false,
-      confirmTransactionInitialTimeout: 60000, // REDUCED from 90000
+      confirmTransactionInitialTimeout: 120000, // REDUCED from 90000
       wsEndpoint: undefined, // Disable WebSocket to avoid connection issues
       httpHeaders: {
         'Content-Type': 'application/json',
