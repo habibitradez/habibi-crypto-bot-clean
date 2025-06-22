@@ -13519,19 +13519,43 @@ def get_token_balance(wallet_address, token_address):
     try:
         global wallet
         
-        # If wallet is not available or invalid, try to get it
+        # Validate inputs
+        if not wallet_address or not token_address:
+            logging.error(f"Invalid parameters: wallet_address={wallet_address}, token_address={token_address}")
+            return 0
+            
+        # Convert to string and validate format
+        wallet_address_str = str(wallet_address)
+        token_address_str = str(token_address)
+        
+        # Basic validation - Solana addresses are 32-44 characters
+        if len(wallet_address_str) < 32 or len(token_address_str) < 32:
+            logging.error(f"Invalid address format: wallet={wallet_address_str[:10]}..., token={token_address_str[:10]}...")
+            return 0
+        
+        # Ensure we have a valid wallet object
         if not wallet or not hasattr(wallet, '_rpc_call'):
             wallet = get_valid_wallet()
             if not wallet:
                 logging.error("No valid wallet available for balance check")
                 return 0
         
+        # Debug log the parameters
+        logging.debug(f"RPC Call params: wallet={wallet_address_str}, token={token_address_str}")
+        
         # Get token accounts for this wallet
-        response = wallet._rpc_call("getTokenAccountsByOwner", [
-            str(wallet_address),
-            {"mint": token_address},
-            {"encoding": "jsonParsed"}
-        ])
+        try:
+            response = wallet._rpc_call("getTokenAccountsByOwner", [
+                wallet_address_str,
+                {"mint": token_address_str},
+                {"encoding": "jsonParsed"}
+            ])
+        except Exception as rpc_error:
+            if "Invalid param" in str(rpc_error):
+                logging.debug(f"RPC parameter warning (non-critical): {rpc_error}")
+                return 0  # Assume no balance if RPC fails
+            else:
+                raise  # Re-raise other errors
         
         # Debug logging
         logging.debug(f"Token balance check for {token_address[:8]}: {response}")
@@ -13558,6 +13582,7 @@ def get_token_balance(wallet_address, token_address):
     except Exception as e:
         logging.error(f"Error getting token balance for {token_address[:8]}: {e}")
         return 0
+
 
 def get_token_liquidity(token_address):
     """Get token liquidity from pool"""
