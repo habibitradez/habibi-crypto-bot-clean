@@ -88,7 +88,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -8245,6 +8245,12 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
 def execute_optimized_sell(token_address, amount_sol):
     """Sell tokens using JavaScript swap implementation"""
     global wallet
+
+    if not wallet or not hasattr(wallet, 'public_key'):
+        logging.error("❌ Invalid wallet object in execute_optimized_sell")
+        wallet = get_valid_wallet()  # Try to get a valid wallet
+        if not wallet:
+            return None
     
     try:
         import os  # CRITICAL FIX - Import os at the beginning
@@ -13499,7 +13505,13 @@ def get_token_volume_24h(token_address):
 def get_token_balance(wallet_address, token_address):
     """Get token balance for a specific token with debugging"""
     try:
-        # Get token accounts for this wallet
+        global wallet  # Make sure we have access to wallet
+        
+        # If wallet_address is passed as a wallet object by mistake, extract the public key
+        if hasattr(wallet_address, 'public_key'):
+            wallet_address = str(wallet_address.public_key)
+        
+        # Use the global wallet object for RPC call
         response = wallet._rpc_call("getTokenAccountsByOwner", [
             str(wallet_address),
             {"mint": token_address},
