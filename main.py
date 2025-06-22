@@ -2428,28 +2428,28 @@ class AdaptiveAlphaTrader:
                 'stop_loss': 15,
                 'take_profit': 50,
                 'position_size_multiplier': 1.2,
-                'min_liquidity': 20000
+                'min_liquidity': 10000
             },
             'HOLDER': {
                 'max_hold_time': 480,  # 8 hours
                 'stop_loss': 25,
                 'take_profit': 100,
                 'position_size_multiplier': 1.5,
-                'min_liquidity': 50000
+                'min_liquidity': 25000
             },
             'SNIPER': {
                 'max_hold_time': 10,  # 10 minutes quick flips
                 'stop_loss': 5,
                 'take_profit': 10,
                 'position_size_multiplier': 0.8,
-                'min_liquidity': 3000
+                'min_liquidity': 1500
             },
             'BOT_TRADER': {
                 'max_hold_time': 5,
                 'stop_loss': 3,
                 'take_profit': 8,
                 'position_size_multiplier': 2.0,
-                'min_liquidity': 10000,
+                'min_liquidity': 5000,
                 'copy_delay': 0
             },
             'PERFECT_BOT_FAST': {  # Alpha13 - High frequency, 2.2hr avg hold
