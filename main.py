@@ -13517,13 +13517,16 @@ def get_token_volume_24h(token_address):
 def get_token_balance(wallet_address, token_address):
     """Get token balance for a specific token with debugging"""
     try:
-        global wallet  # Make sure we have access to wallet
+        global wallet
         
-        # If wallet_address is passed as a wallet object by mistake, extract the public key
-        if hasattr(wallet_address, 'public_key'):
-            wallet_address = str(wallet_address.public_key)
+        # If wallet is not available or invalid, try to get it
+        if not wallet or not hasattr(wallet, '_rpc_call'):
+            wallet = get_valid_wallet()
+            if not wallet:
+                logging.error("No valid wallet available for balance check")
+                return 0
         
-        # Use the global wallet object for RPC call
+        # Get token accounts for this wallet
         response = wallet._rpc_call("getTokenAccountsByOwner", [
             str(wallet_address),
             {"mint": token_address},
