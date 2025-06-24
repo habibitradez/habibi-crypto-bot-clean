@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import joblib
+import psycopg2
 import xgboost as xgb
 import pandas as pd
 import sqlite3  # Add this line
@@ -29,6 +30,7 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from collections import deque
+from psycopg2.extras import RealDictCursor
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
@@ -958,181 +960,300 @@ class DatabaseManager:
     """Manages trading database for tracking real performance"""
     
     def __init__(self, db_path='trading_bot.db'):
-        self.db_path = db_path
-        self.conn = sqlite3.connect(db_path)
-        self.conn.row_factory = sqlite3.Row  # Enable column access by name
+        # Use PostgreSQL connection string from environment
+        self.conn_string = os.environ.get("DATABASE_URL")
+        if not self.conn_string:
+            raise ValueError("DATABASE_URL not set in environment variables!")
         self.create_tables()
-        
+    
+    def get_connection(self):
+        """Get a new connection for each operation"""
+        return psycopg2.connect(self.conn_string, cursor_factory=RealDictCursor)
+    
+    @property
+    def conn(self):
+        """For compatibility with existing code"""
+        return self.get_connection()
+    
     def create_tables(self):
         """Create all necessary tables"""
-        cursor = self.conn.cursor()
-        
-        # Table for tracking all trades
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS copy_trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            wallet_address TEXT NOT NULL,
-            wallet_name TEXT,
-            token_address TEXT NOT NULL,
-            entry_price REAL NOT NULL,
-            exit_price REAL,
-            position_size REAL NOT NULL,
-            profit_sol REAL,
-            profit_pct REAL,
-            status TEXT DEFAULT 'open',
-            strategy TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            closed_at TIMESTAMP,
-            hold_time_minutes REAL,
-            exit_reason TEXT
-        )
-        ''')
-        
-        # Table for wallet performance summary
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS wallet_performance (
-            wallet_address TEXT PRIMARY KEY,
-            wallet_name TEXT,
-            total_trades INTEGER DEFAULT 0,
-            wins INTEGER DEFAULT 0,
-            losses INTEGER DEFAULT 0,
-            total_profit_sol REAL DEFAULT 0,
-            best_trade_sol REAL DEFAULT 0,
-            worst_trade_sol REAL DEFAULT 0,
-            avg_hold_time_minutes REAL DEFAULT 0,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-        
-        # Table for token data (optional but useful)
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS token_data (
-            token_address TEXT PRIMARY KEY,
-            symbol TEXT,
-            liquidity REAL,
-            volume_24h REAL,
-            holder_count INTEGER,
-            price_change_5m REAL,
-            price_change_1h REAL,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        ''')
-
-        cursor.execute('''
-        CREATE TABLE IF NOT EXISTS profit_conversions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            amount_sol REAL NOT NULL,
-            amount_usdc REAL NOT NULL,
-            conversion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            session_number INTEGER DEFAULT 1
-        )
-        ''')
-    
-        self.conn.commit()
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Table for tracking all trades
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS copy_trades (
+                    id SERIAL PRIMARY KEY,
+                    wallet_address TEXT NOT NULL,
+                    wallet_name TEXT,
+                    token_address TEXT NOT NULL,
+                    token_symbol TEXT,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL,
+                    position_size REAL NOT NULL,
+                    profit_sol REAL,
+                    profit_pct REAL,
+                    status TEXT DEFAULT 'open',
+                    strategy TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closed_at TIMESTAMP,
+                    hold_time_minutes REAL,
+                    exit_reason TEXT
+                )
+                ''')
+                
+                # Table for wallet performance summary
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS wallet_performance (
+                    wallet_address TEXT PRIMARY KEY,
+                    wallet_name TEXT,
+                    total_trades INTEGER DEFAULT 0,
+                    wins INTEGER DEFAULT 0,
+                    losses INTEGER DEFAULT 0,
+                    total_profit_sol REAL DEFAULT 0,
+                    best_trade_sol REAL DEFAULT 0,
+                    worst_trade_sol REAL DEFAULT 0,
+                    avg_hold_time_minutes REAL DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                ''')
+                
+                # Table for token data
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS token_data (
+                    token_address TEXT PRIMARY KEY,
+                    symbol TEXT,
+                    liquidity REAL,
+                    volume_24h REAL,
+                    holder_count INTEGER,
+                    price_change_5m REAL,
+                    price_change_1h REAL,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                ''')
+                
+                # Table for profit conversions
+                cursor.execute('''
+                CREATE TABLE IF NOT EXISTS profit_conversions (
+                    id SERIAL PRIMARY KEY,
+                    amount_sol REAL NOT NULL,
+                    amount_usdc REAL NOT NULL,
+                    conversion_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    session_number INTEGER DEFAULT 1
+                )
+                ''')
+                
+                conn.commit()
         logging.info("✅ Database tables created/verified")
     
-    def record_trade_open(self, wallet_address, wallet_name, token_address, entry_price, position_size, strategy):
+    def record_trade_open(self, wallet_address, wallet_name, token_address, token_symbol, entry_price, position_size, strategy):
         """Record when a trade is opened"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-        INSERT INTO copy_trades (wallet_address, wallet_name, token_address, entry_price, position_size, strategy)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ''', (wallet_address, wallet_name, token_address, entry_price, position_size, strategy))
-        
-        self.conn.commit()
-        return cursor.lastrowid
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                INSERT INTO copy_trades (wallet_address, wallet_name, token_address, token_symbol, entry_price, position_size, strategy)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                ''', (wallet_address, wallet_name, token_address, token_symbol, entry_price, position_size, strategy))
+                trade_id = cursor.fetchone()['id']
+                conn.commit()
+                return trade_id
     
     def record_trade_close(self, trade_id, exit_price, exit_reason):
         """Record when a trade is closed"""
-        cursor = self.conn.cursor()
-        
-        # Get trade details
-        cursor.execute('SELECT * FROM copy_trades WHERE id = ?', (trade_id,))
-        trade = cursor.fetchone()
-        
-        if trade:
-            # Calculate profit
-            profit_sol = (exit_price - trade['entry_price']) * trade['position_size'] / trade['entry_price']
-            profit_pct = ((exit_price - trade['entry_price']) / trade['entry_price']) * 100
-            hold_time = (datetime.now() - datetime.fromisoformat(trade['created_at'])).seconds / 60
-            
-            # Update trade record
-            cursor.execute('''
-            UPDATE copy_trades 
-            SET exit_price = ?, profit_sol = ?, profit_pct = ?, status = 'closed',
-                closed_at = CURRENT_TIMESTAMP, hold_time_minutes = ?, exit_reason = ?
-            WHERE id = ?
-            ''', (exit_price, profit_sol, profit_pct, hold_time, exit_reason, trade_id))
-            
-            # Update wallet performance
-            self.update_wallet_performance(trade['wallet_address'], profit_sol > 0, profit_sol, hold_time)
-            
-            self.conn.commit()
-            return profit_sol, profit_pct
-        
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Get trade details
+                cursor.execute('SELECT * FROM copy_trades WHERE id = %s', (trade_id,))
+                trade = cursor.fetchone()
+                
+                if trade:
+                    # Calculate profit
+                    profit_sol = (exit_price - trade['entry_price']) * trade['position_size'] / trade['entry_price']
+                    profit_pct = ((exit_price - trade['entry_price']) / trade['entry_price']) * 100
+                    
+                    # Update trade record
+                    cursor.execute('''
+                    UPDATE copy_trades 
+                    SET exit_price = %s, profit_sol = %s, profit_pct = %s, status = 'closed',
+                        closed_at = CURRENT_TIMESTAMP, hold_time_minutes = EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at))/60, exit_reason = %s
+                    WHERE id = %s
+                    ''', (exit_price, profit_sol, profit_pct, exit_reason, trade_id))
+                    
+                    # Update wallet performance
+                    self.update_wallet_performance(trade['wallet_address'], profit_sol > 0, profit_sol, 0)
+                    
+                    conn.commit()
+                    return profit_sol, profit_pct
+                
         return 0, 0
     
     def update_wallet_performance(self, wallet_address, is_win, profit_sol, hold_time):
         """Update wallet performance stats"""
-        cursor = self.conn.cursor()
-        
-        # Check if wallet exists
-        cursor.execute('SELECT * FROM wallet_performance WHERE wallet_address = ?', (wallet_address,))
-        existing = cursor.fetchone()
-        
-        if existing:
-            # Update existing
-            wins = existing['wins'] + (1 if is_win else 0)
-            losses = existing['losses'] + (0 if is_win else 1)
-            total_trades = wins + losses
-            total_profit = existing['total_profit_sol'] + profit_sol
-            best_trade = max(existing['best_trade_sol'], profit_sol)
-            worst_trade = min(existing['worst_trade_sol'], profit_sol)
-            avg_hold = ((existing['avg_hold_time_minutes'] * existing['total_trades']) + hold_time) / total_trades
-            
-            cursor.execute('''
-            UPDATE wallet_performance 
-            SET total_trades = ?, wins = ?, losses = ?, total_profit_sol = ?,
-                best_trade_sol = ?, worst_trade_sol = ?, avg_hold_time_minutes = ?,
-                last_updated = CURRENT_TIMESTAMP
-            WHERE wallet_address = ?
-            ''', (total_trades, wins, losses, total_profit, best_trade, worst_trade, avg_hold, wallet_address))
-        else:
-            # Insert new
-            cursor.execute('''
-            INSERT INTO wallet_performance (wallet_address, total_trades, wins, losses, total_profit_sol,
-                                          best_trade_sol, worst_trade_sol, avg_hold_time_minutes)
-            VALUES (?, 1, ?, ?, ?, ?, ?, ?)
-            ''', (wallet_address, 1 if is_win else 0, 0 if is_win else 1, profit_sol, 
-                  profit_sol if profit_sol > 0 else 0, profit_sol if profit_sol < 0 else 0, hold_time))
-        
-        self.conn.commit()
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                # Check if wallet exists
+                cursor.execute('SELECT * FROM wallet_performance WHERE wallet_address = %s', (wallet_address,))
+                existing = cursor.fetchone()
+                
+                if existing:
+                    # Update existing
+                    wins = existing['wins'] + (1 if is_win else 0)
+                    losses = existing['losses'] + (0 if is_win else 1)
+                    total_trades = wins + losses
+                    total_profit = existing['total_profit_sol'] + profit_sol
+                    best_trade = max(existing['best_trade_sol'], profit_sol)
+                    worst_trade = min(existing['worst_trade_sol'], profit_sol)
+                    avg_hold = ((existing['avg_hold_time_minutes'] * existing['total_trades']) + hold_time) / total_trades if total_trades > 0 else 0
+                    
+                    cursor.execute('''
+                    UPDATE wallet_performance 
+                    SET total_trades = %s, wins = %s, losses = %s, total_profit_sol = %s,
+                        best_trade_sol = %s, worst_trade_sol = %s, avg_hold_time_minutes = %s,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE wallet_address = %s
+                    ''', (total_trades, wins, losses, total_profit, best_trade, worst_trade, avg_hold, wallet_address))
+                else:
+                    # Insert new
+                    cursor.execute('''
+                    INSERT INTO wallet_performance (wallet_address, wallet_name, total_trades, wins, losses, total_profit_sol,
+                                                  best_trade_sol, worst_trade_sol, avg_hold_time_minutes)
+                    VALUES (%s, %s, 1, %s, %s, %s, %s, %s, %s)
+                    ''', (wallet_address, None, 1 if is_win else 0, 0 if is_win else 1, profit_sol,
+                          profit_sol if profit_sol > 0 else 0, profit_sol if profit_sol < 0 else 0, hold_time))
+                
+                conn.commit()
     
     def get_wallet_stats(self, wallet_address):
         """Get performance stats for a wallet"""
-        cursor = self.conn.cursor()
-        cursor.execute('SELECT * FROM wallet_performance WHERE wallet_address = ?', (wallet_address,))
-        return cursor.fetchone()
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT * FROM wallet_performance WHERE wallet_address = %s', (wallet_address,))
+                return cursor.fetchone()
     
     def get_top_wallets(self, min_trades=10, limit=10):
         """Get top performing wallets based on REAL data"""
-        cursor = self.conn.cursor()
-        cursor.execute('''
-        SELECT *, 
-               (wins * 100.0 / total_trades) as win_rate,
-               (total_profit_sol / total_trades) as avg_profit_per_trade
-        FROM wallet_performance 
-        WHERE total_trades >= ?
-        ORDER BY win_rate DESC, total_profit_sol DESC
-        LIMIT ?
-        ''', (min_trades, limit))
-        
-        return cursor.fetchall()
-
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT *,
+                    CASE WHEN total_trades > 0 THEN (wins * 100.0 / total_trades) ELSE 0 END as win_rate,
+                    CASE WHEN total_trades > 0 THEN (total_profit_sol / total_trades) ELSE 0 END as avg_profit_per_trade
+                FROM wallet_performance
+                WHERE total_trades >= %s
+                ORDER BY win_rate DESC, total_profit_sol DESC
+                LIMIT %s
+                ''', (min_trades, limit))
+                return cursor.fetchall()
+    
+    def get_recent_trades(self, limit=10):
+        """Get recent completed trades"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT * FROM copy_trades 
+                WHERE status = 'closed' 
+                ORDER BY closed_at DESC 
+                LIMIT %s
+                ''', (limit,))
+                return cursor.fetchall()
+    
+    def get_active_trades(self):
+        """Get all currently open trades"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT * FROM copy_trades 
+                WHERE status = 'open' 
+                ORDER BY created_at DESC
+                ''')
+                return cursor.fetchall()
+    
+    def get_wallet_trades(self, wallet_address, limit=50):
+        """Get trades for a specific wallet"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT * FROM copy_trades 
+                WHERE wallet_address = %s 
+                ORDER BY created_at DESC 
+                LIMIT %s
+                ''', (wallet_address, limit))
+                return cursor.fetchall()
+    
+    def get_token_stats(self, token_address):
+        """Get trading stats for a specific token"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT 
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(profit_sol) as total_profit,
+                    AVG(profit_pct) as avg_profit_pct,
+                    AVG(hold_time_minutes) as avg_hold_time
+                FROM copy_trades 
+                WHERE token_address = %s AND status = 'closed'
+                ''', (token_address,))
+                return cursor.fetchone()
+    
+    def record_profit_conversion(self, amount_sol, amount_usdc, session_number=1):
+        """Record when profits are converted to USDC"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                INSERT INTO profit_conversions (amount_sol, amount_usdc, session_number)
+                VALUES (%s, %s, %s)
+                ''', (amount_sol, amount_usdc, session_number))
+                conn.commit()
+    
+    def get_todays_conversions(self):
+        """Get all profit conversions for today"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('''
+                SELECT * FROM profit_conversions 
+                WHERE DATE(conversion_time) = CURRENT_DATE
+                ORDER BY conversion_time DESC
+                ''')
+                return cursor.fetchall()
+    
+    def get_session_stats(self, start_time=None):
+        """Get stats for current trading session"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                if not start_time:
+                    start_time = datetime.now() - timedelta(hours=24)
+                
+                cursor.execute('''
+                SELECT 
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(profit_sol) as total_profit_sol,
+                    AVG(profit_pct) as avg_profit_pct,
+                    MAX(profit_sol) as best_trade,
+                    MIN(profit_sol) as worst_trade
+                FROM copy_trades 
+                WHERE status = 'closed' AND closed_at >= %s
+                ''', (start_time,))
+                return cursor.fetchone()
+    
+    def cleanup_old_trades(self, days_to_keep=30):
+        """Remove old trades to keep database size manageable"""
+        with self.get_connection() as conn:
+            with conn.cursor() as cursor:
+                cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+                cursor.execute('''
+                DELETE FROM copy_trades 
+                WHERE closed_at < %s AND status = 'closed'
+                ''', (cutoff_date,))
+                deleted = cursor.rowcount
+                conn.commit()
+                if deleted > 0:
+                    logging.info(f"Cleaned up {deleted} old trades")
     
     def close(self):
-        """Close database connection"""
-        self.conn.close()
+        """PostgreSQL connections are closed automatically with context manager"""
+        pass
 
 
 class AdaptiveAlphaTrader:
@@ -1814,6 +1935,19 @@ class AdaptiveAlphaTrader:
                     pnl_pct = ((current_price - entry_price) / entry_price) * 100
                     pnl_sol = position_size * (pnl_pct / 100)
                     
+                    # TRAILING STOP - CRITICAL ADDITION!
+                    if pnl_pct > 10:  # If we're up 10%+
+                        # Update peak price
+                        if current_price > position.get('peak_price', position['entry_price']):
+                            position['peak_price'] = current_price
+                            
+                        # Check if price dropped 30% from peak
+                        drop_from_peak = ((position['peak_price'] - current_price) / position['peak_price']) * 100
+                        if drop_from_peak > 30:
+                            logging.warning(f"🔴 TRAILING STOP: {token[:8]} dropped {drop_from_peak:.1f}% from peak")
+                            self.ensure_position_sold(token, position, "trailing_stop")
+                            continue
+                    
                     # Update peak price for trailing stop
                     if current_price > position.get('peak_price', entry_price):
                         position['peak_price'] = current_price
@@ -1832,6 +1966,21 @@ class AdaptiveAlphaTrader:
                     stop_loss_pct = -float(style_params.get('stop_loss', 8))
                     max_hold_minutes = float(style_params.get('max_hold_time', 240))
                     take_profit_pct = float(style_params.get('take_profit', 20))
+                    
+                    # PARTIAL PROFIT TAKING - NEW!
+                    if pnl_pct >= take_profit_pct:
+                        # Take 50% profit first time
+                        if not position.get('partial_sold', False):
+                            half_size = position['size'] / 2
+                            logging.info(f"💰 PARTIAL PROFIT: Selling 50% of {token[:8]} at {pnl_pct:.1f}%")
+                            execute_optimized_sell(token, half_size)
+                            position['size'] = half_size
+                            position['partial_sold'] = True
+                        else:
+                            # Sell remaining if up another 20%
+                            if pnl_pct >= take_profit_pct + 20:
+                                self.ensure_position_sold(token, position, "final_take_profit")
+                        continue
                     
                     # Special handling for PERFECT_BOT positions
                     if alpha_style == 'PERFECT_BOT':
@@ -1860,33 +2009,6 @@ class AdaptiveAlphaTrader:
                         else:
                             logging.info(f"⏰ MAX HOLD TIME for {token[:8]}: {hold_time:.0f} minutes")
                         self.ensure_position_sold(token, position, 'max_hold_time')
-                        continue
-                    
-                    # TRAILING STOP LOGIC - Use global config for now
-                    if CONFIG.get('TRAILING_STOP_ENABLED', 'true').lower() == 'true' and pnl_pct >= float(CONFIG.get('TRAIL_TRIGGER_PCT', 15)):
-                        # Calculate trailing stop level
-                        trail_distance = float(CONFIG.get('TRAIL_DISTANCE_PCT', 5))
-                        peak_pnl_pct = ((position['peak_price'] - entry_price) / entry_price) * 100
-                        trail_stop_pct = peak_pnl_pct - trail_distance
-                        
-                        if pnl_pct <= trail_stop_pct:
-                            if alpha_style == 'PERFECT_BOT':
-                                logging.info(f"📉 PERFECT BOT TRAILING STOP: {alpha_name}")
-                                logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
-                            else:
-                                logging.info(f"📉 TRAILING STOP HIT for {token[:8]}")
-                                logging.info(f"   Peak: +{peak_pnl_pct:.1f}% → Current: +{pnl_pct:.1f}%")
-                            self.ensure_position_sold(token, position, 'trailing_stop')
-                            continue
-                    
-                    # TAKE PROFIT - Use wallet-specific take profit
-                    if pnl_pct >= take_profit_pct:
-                        if alpha_style == 'PERFECT_BOT':
-                            logging.info(f"🎯 PERFECT BOT TAKE PROFIT: {alpha_name}")
-                            logging.info(f"   {token[:8]}: +{pnl_pct:.1f}% hit {take_profit_pct}% target!")
-                        else:
-                            logging.info(f"🎯 TAKE PROFIT HIT for {token[:8]}: +{pnl_pct:.1f}%")
-                        self.ensure_position_sold(token, position, 'take_profit')
                         continue
                     
                     # Regular position status logging
@@ -3223,6 +3345,29 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error during ML retraining: {e}")
             # Still schedule next retraining
             self.schedule_ml_retraining()
+
+def import_sqlite_to_postgres():
+    """One-time import from SQLite to PostgreSQL"""
+    import sqlite3
+    
+    # Connect to old SQLite
+    sqlite_conn = sqlite3.connect('trading_bot.db')
+    sqlite_cur = sqlite_conn.cursor()
+    
+    # Get all trades
+    trades = sqlite_cur.execute("SELECT * FROM copy_trades").fetchall()
+    
+    # Insert into PostgreSQL
+    pg_conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+    pg_cur = pg_conn.cursor()
+    
+    for trade in trades:
+        pg_cur.execute("""
+            INSERT INTO copy_trades (...) VALUES (...)
+        """, trade)
+    
+    pg_conn.commit()
+    logging.info(f"✅ Imported {len(trades)} trades to PostgreSQL!")
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
@@ -15024,6 +15169,23 @@ def main():
     logging.info("🎯 Target: $500/day through consistent profits")
     logging.info("=" * 60)
     
+    # TEST POSTGRESQL CONNECTION FIRST
+    def test_database_connection():
+        try:
+            import psycopg2
+            conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+            conn.close()
+            logging.info("✅ PostgreSQL connection successful!")
+            return True
+        except Exception as e:
+            logging.error(f"❌ PostgreSQL connection failed: {e}")
+            logging.error("Make sure DATABASE_URL is set in environment variables")
+            return False
+    
+    if not test_database_connection():
+        logging.error("Cannot start without database connection!")
+        return
+    
     # CHECK FOR EMERGENCY SELL FIRST
     if CONFIG.get('FORCE_SELL_ALL', 'false').lower() == 'true':
         logging.warning("🚨 FORCE_SELL_ALL IS ACTIVE - EMERGENCY MODE")
@@ -15047,7 +15209,38 @@ def main():
         # Check database for historical data
         try:
             db = DatabaseManager()
-            total_trades = db.conn.execute('SELECT COUNT(*) FROM copy_trades WHERE status = "closed"').fetchone()[0]
+            
+            # One-time import from SQLite if needed
+            if os.path.exists('current_backup.db'):
+                logging.info("📥 Found backup database - importing to PostgreSQL...")
+                try:
+                    import sqlite3
+                    sqlite_conn = sqlite3.connect('current_backup.db')
+                    sqlite_cur = sqlite_conn.cursor()
+                    
+                    # Check if already imported
+                    existing_trades = db.conn.execute('SELECT COUNT(*) FROM copy_trades').fetchone()[0]
+                    if existing_trades == 0:
+                        # Import trades
+                        trades = sqlite_cur.execute("SELECT * FROM copy_trades").fetchall()
+                        for trade in trades:
+                            # Insert into PostgreSQL (adjust columns as needed)
+                            db.record_trade_open(
+                                trade[1],  # wallet_address
+                                trade[2],  # wallet_name
+                                trade[3],  # token_address
+                                trade[4],  # token_symbol
+                                trade[5],  # buy_price
+                                trade[7],  # entry_sol
+                                trade[12]  # strategy
+                            )
+                        logging.info(f"✅ Imported {len(trades)} trades to PostgreSQL!")
+                        os.rename('current_backup.db', 'current_backup.db.imported')
+                    sqlite_conn.close()
+                except Exception as e:
+                    logging.error(f"Import failed: {e}")
+            
+            total_trades = db.conn.execute('SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',)).fetchone()[0]
             
             if total_trades > 0:
                 logging.info(f"   📊 Historical Data: {total_trades} trades recorded")
@@ -15200,11 +15393,11 @@ def main():
                 if 'trader' in globals() and hasattr(trader, 'db_manager'):
                     try:
                         lifetime_trades = trader.db_manager.conn.execute(
-                            'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
+                            'SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',)
                         ).fetchone()[0]
                         
                         lifetime_profit = trader.db_manager.conn.execute(
-                            'SELECT SUM(profit_sol) FROM copy_trades WHERE status = "closed"'
+                            'SELECT SUM(profit_sol) FROM copy_trades WHERE status = %s', ('closed',)
                         ).fetchone()[0] or 0
                         
                         logging.info("\n📊 LIFETIME STATISTICS (All Sessions):")
