@@ -170,9 +170,9 @@ CONFIG = {
     'DIP_PATTERN_MAX_DUMP': float(os.getenv('DIP_PATTERN_MAX_DUMP', '-60')),
     
     # Position Management (UPDATED)
-    'BASE_POSITION_SIZE': float(os.getenv('BASE_POSITION_SIZE', '0.3')),
-    'MIN_POSITION_SIZE': float(os.getenv('MIN_POSITION_SIZE', '0.15')),
-    'MAX_POSITION_SIZE': float(os.getenv('MAX_POSITION_SIZE', '0.5')),
+    'BASE_POSITION_SIZE': float(os.getenv('BASE_POSITION_SIZE', '0.05')),
+    'MIN_POSITION_SIZE': float(os.getenv('MIN_POSITION_SIZE', '0.03')),
+    'MAX_POSITION_SIZE': float(os.getenv('MAX_POSITION_SIZE', '0.15')),
     'MAX_CONCURRENT_POSITIONS': int(os.getenv('MAX_CONCURRENT_POSITIONS', '5')),
     
     # Timing (NEW)
@@ -185,10 +185,10 @@ CONFIG = {
     'STOP_TRADING_BALANCE': float(os.getenv('STOP_TRADING_BALANCE', '3.0')),
     
     # Trading parameters (UPDATED for AI)
-    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),  # Reduced from 30
+    'PROFIT_TARGET_PCT': int(os.environ.get('PROFIT_TARGET_PERCENT', '20')),  # Reduced from 30
     'FORCE_SELL_ALL': os.environ.get('FORCE_SELL_ALL', 'false'),
     'PROFIT_TARGET_PERCENT': int(os.environ.get('PROFIT_TARGET_PERCENT', '15')),
-    'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '10')),
+    'PARTIAL_PROFIT_TARGET_PCT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '15')),
     'PARTIAL_PROFIT_PERCENT': int(os.environ.get('PARTIAL_PROFIT_PERCENT', '50')),
     'STOP_LOSS_PCT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),  # Tighter from 5
     'STOP_LOSS_PERCENT': int(os.environ.get('STOP_LOSS_PERCENT', '8')),
@@ -1155,6 +1155,10 @@ class AdaptiveAlphaTrader:
     """Watches alpha wallets and adapts strategy based on price action"""
     
     def __init__(self, wallet_instance):
+        self.daily_trades = 0
+        self.daily_trade_limit = 20
+        self.last_trade_date = datetime.now().date()
+        self.min_ml_confidence = 0.75
         self.wallet = wallet_instance
         self.alpha_wallets = []
         self.ml_brain = None
@@ -1209,171 +1213,105 @@ class AdaptiveAlphaTrader:
         logging.info(f"✅ Following {style} wallet: {name} ({wallet_address[:8]}...)")
         
     def check_alpha_wallets(self):
-        """Enhanced check with wallet style awareness and DEBUG LOGGING"""
+        """FIXED - Actually uses ML to filter and limits trades"""
         current_time = time.time()
+        
+        # HOURLY TRADE LIMITING
+        if not hasattr(self, 'hourly_trades'):
+            self.hourly_trades = 0
+            self.hour_start = time.time()
+        
+        # Reset hourly counter
+        if current_time - self.hour_start > 3600:
+            self.hourly_trades = 0
+            self.hour_start = current_time
+            
+        # CRITICAL: LIMIT TRADES PER HOUR
+        if self.hourly_trades >= 20:  # MAX 20 trades per hour, not 1560!
+            return
 
-        for alpha in self.alpha_wallets:
-            # Skip if not active
+        for alpha in self.alpha_wallets[:5]:  # Only check top 5 wallets
             if not alpha.get('active', True):
-                logging.warning(f"🔍 DEBUG: Skipping {alpha['name']} - not active")
                 continue
-        
-            # Dynamic check intervals based on wallet style
+                
+            # Dynamic check intervals
             wallet_style = alpha.get('style', 'SCALPER')
-    
-            if wallet_style == 'BOT_TRADER':
-                check_interval = 5  # Check every 5 seconds for bots
-            elif wallet_style == 'SNIPER':
-                check_interval = 10  # 10 seconds for snipers
-            elif wallet_style == 'ELITE_BOT':
-                check_interval = 5  # Check every 5 seconds for elite bots
-            elif wallet_style == 'PERFECT_BOT':
-                check_interval = 5  # Check every 5 seconds for perfect bots
-            elif wallet_style == 'PERFECT_BOT_FAST':
-                check_interval = 3  # Every 3 seconds for high-frequency perfect bot
-            elif wallet_style == 'PERFECT_BOT_SNIPER': 
-                check_interval = 3  # Every 3 seconds for sniper perfect bot
-            elif wallet_style == 'PERFECT_BOT_SWING':
-                check_interval = 10  # Every 10 seconds for swing perfect bot
-            elif wallet_style == 'MULTI_DAY_HOLDER':
-                check_interval = 30  # Less frequent for long-term holders
-            elif wallet_style == 'HOLDER':
-                check_interval = 30  # 30 seconds for holders
-            else:
-                check_interval = 20  # Default 20 seconds
-        
-            # DEBUG: Log check timing
-            time_since_last = current_time - self.last_check[alpha['address']]
+            check_interval = self.wallet_styles.get(alpha['address'], {}).get('check_interval', 20)
+            
+            time_since_last = current_time - self.last_check.get(alpha['address'], 0)
             if time_since_last < check_interval:
-                logging.info(f"🔍 DEBUG: Skipping {alpha['name']} - checked {time_since_last:.1f}s ago (interval: {check_interval}s)")
                 continue
-    
+                
             self.last_check[alpha['address']] = current_time
-        
-            # DEBUG: Log what we're checking
-            logging.info(f"🔍 DEBUG: Checking {alpha['name']} ({wallet_style}) - {alpha['address'][:8]}...")
-    
+            
             try:
                 new_buys = get_wallet_recent_buys_helius(alpha['address'])
-            
-                # DEBUG: Log results
-                logging.info(f"🔍 DEBUG: {alpha['name']} returned {len(new_buys) if new_buys else 0} recent buys")
-            
+                
                 if new_buys:
-                    # DEBUG: Log buy details
-                    for buy in new_buys:
-                        logging.info(f"🔍 DEBUG: Found buy - Token: {buy.get('token', 'Unknown')[:8]}, Timestamp: {buy.get('timestamp', 'Unknown')}")
-                
-                    # Alert differently based on wallet style
-                    if wallet_style == 'BOT_TRADER':
-                        logging.warning(f"🤖 BOT SIGNAL: {alpha['name']} made {len(new_buys)} buys!")
-                    else:
-                        logging.info(f"🚨 {alpha['name']} ({wallet_style}) made {len(new_buys)} buys!")
-            
-                for buy in new_buys:
-                    # DEBUG: Log processing
-                    logging.info(f"🔍 DEBUG: Processing buy {buy['token'][:8]} from {alpha['name']}")
-                
-                    # INSTANT COPY if not already in position
-                    if buy['token'] not in self.positions and buy['token'] not in self.monitoring:
-                        logging.info(f"🔍 DEBUG: Token {buy['token'][:8]} not in positions/monitoring - proceeding")
-                
-                        # Get token data with error handling
+                    for buy in new_buys[:1]:  # Only process FIRST buy
+                        # Skip if already in position/monitoring
+                        if buy['token'] in self.positions or buy['token'] in self.monitoring:
+                            continue
+                            
+                        # Get token data
                         token_data = self.get_token_snapshot(buy['token'], wallet_style)
-                
-                        # Log what we found
-                        if token_data:
-                            logging.info(f"📊 Token {buy['token'][:8]} - Price: ${token_data.get('price', 0):.8f}, Liq: ${token_data.get('liquidity', 0):.0f}")
-                        else:
-                            logging.warning(f"🔍 DEBUG: No token data for {buy['token'][:8]} - this will cause skip")
-                
-                        # Get wallet style parameters
-                        style_params = self.wallet_styles.get(alpha['address'], self.get_style_params('SCALPER'))
-                        min_liquidity = style_params.get('min_liquidity', 1000)
-                    
-                        logging.info(f"🔍 DEBUG: {alpha['name']} style params - min_liquidity: ${min_liquidity}")
-                
-                        # More aggressive approach for alpha copying
-                        if token_data and token_data.get('price', 0) > 0:
-                            liquidity = token_data.get('liquidity', 0)
-                    
-                            # Skip if liquidity too low for this wallet style
-                            if liquidity < min_liquidity:
-                                logging.warning(f"⚠️ Skipping {buy['token'][:8]} - liquidity ${liquidity} below {wallet_style} minimum ${min_liquidity}")
+                        if not token_data or token_data.get('price', 0) == 0:
+                            continue
+                            
+                        # GET WALLET STATS FOR ML
+                        wallet_stats = None
+                        if hasattr(self, 'db_manager'):
+                            wallet_stats = self.db_manager.get_wallet_stats(alpha['address'])
+                        
+                        # ML FILTERING - THIS IS CRITICAL!
+                        if hasattr(self, 'ml_brain') and self.ml_brain.is_trained and wallet_stats:
+                            action, confidence = self.ml_brain.predict_trade(
+                                wallet_stats or {'win_rate': 50, 'total_trades': 0}, 
+                                token_data
+                            )
+                            
+                            # ONLY TAKE HIGH CONFIDENCE TRADES
+                            if action not in ['STRONG_BUY', 'BUY'] or confidence < 0.75:
+                                logging.info(f"❌ ML REJECTED: {alpha['name']} trade - {confidence:.1%} confidence")
                                 continue
-                    
-                            # Base position sizing
-                            if liquidity > 50000:  # Excellent liquidity
-                                base_position = 0.3
-                                liq_tier = "EXCELLENT"
-                            elif liquidity > 10000:  # Good liquidity
-                                base_position = 0.2
-                                liq_tier = "HIGH"
-                            elif liquidity > 5000:  # Medium liquidity
-                                base_position = 0.15
-                                liq_tier = "MED"
-                            elif liquidity > 1000:  # Low liquidity
-                                base_position = 0.1
-                                liq_tier = "LOW"
                             else:
-                                base_position = 0.05
-                                liq_tier = "RISKY"
-                    
-                            # Adjust position size based on wallet performance
-                            wallet_perf = self.wallet_performance.get(alpha['address'], {})
-                            win_rate = (wallet_perf.get('wins', 0) / wallet_perf.get('trades_copied', 1)) * 100 if wallet_perf.get('trades_copied', 0) > 0 else 50
-                    
-                            # Position multipliers based on wallet win rate
-                            if win_rate >= 90:  # Bot-like performance
-                                multiplier = 2.0
-                                confidence = "🤖 BOT"
-                            elif win_rate >= 80:  # Your 82% wallets
-                                multiplier = 1.5
-                                confidence = "💎 HIGH"
-                            elif win_rate >= 60:
-                                multiplier = 1.2
-                                confidence = "✅ GOOD"
-                            else:
-                                multiplier = 1.0
-                                confidence = "📊 NORMAL"
-                    
-                            # Apply wallet style multiplier
-                            style_multiplier = style_params.get('position_size_multiplier', 1.0)
-                    
-                            # Final position size
-                            position_size = base_position * multiplier * style_multiplier
-                            position_size = min(position_size, 0.5)  # Cap at 0.5 SOL max
-                    
-                            logging.info(f"{confidence} {liq_tier} LIQ COPY: Following {alpha['name']} ({win_rate:.0f}% WR) into {buy['token'][:8]} with {position_size:.2f} SOL")
-                    
-                            # Execute with priority for bot wallets
-                            if wallet_style == 'BOT_TRADER':
-                                logging.warning(f"🤖 EXECUTING BOT COPY IMMEDIATELY!")
+                                logging.info(f"✅ ML APPROVED: {alpha['name']} trade - {confidence:.1%} confidence")
                         
-                            logging.info(f"🔍 DEBUG: About to execute trade for {buy['token'][:8]}")
-                    
-                            # Execute the trade
-                            try:
-                                result = self.execute_trade(
-                                    buy['token'], 
-                                    'COPY_TRADE', 
-                                    position_size, 
-                                    token_data['price'], 
-                                    source_wallet=alpha['address']
-                                )
-                                logging.info(f"🔍 DEBUG: Trade execution result: {result}")
-                            except Exception as trade_error:
-                                logging.error(f"🔍 DEBUG: Trade execution failed: {trade_error}")
-                    
-                        else:
-                             # Perfect Bots Only - Skip trades without proper token data
-                             logging.info(f"❌ Skipping {buy['token'][:8]} from {alpha['name']} - no token data available")
-                    else:
-                        logging.info(f"🔍 DEBUG: Skipping {buy['token'][:8]} - already in positions or monitoring")
+                        # Check liquidity
+                        style_params = self.wallet_styles.get(alpha['address'], self.get_style_params('SCALPER'))
+                        min_liquidity = style_params.get('min_liquidity', 5000)
                         
+                        if token_data.get('liquidity', 0) < min_liquidity:
+                            logging.warning(f"⚠️ Skipping {buy['token'][:8]} - low liquidity")
+                            continue
+                        
+                        # POSITION SIZING - SMALL!
+                        base_position = 0.05  # Start with 0.05 SOL
+                        
+                        # Adjust based on wallet performance
+                        wallet_perf = self.wallet_performance.get(alpha['address'], {})
+                        if wallet_perf.get('trades_copied', 0) > 0:
+                            win_rate = (wallet_perf.get('wins', 0) / wallet_perf.get('trades_copied', 1)) * 100
+                            if win_rate >= 70:
+                                base_position = 0.1  # Double for good wallets
+                        
+                        # Never exceed 0.15 SOL per trade
+                        position_size = min(base_position, 0.15)
+                        
+                        logging.info(f"💎 ML-APPROVED COPY: {alpha['name']} into {buy['token'][:8]} with {position_size:.2f} SOL")
+                        
+                        # Execute trade
+                        if self.execute_trade(
+                            buy['token'], 
+                            'COPY_TRADE', 
+                            position_size, 
+                            token_data['price'], 
+                            source_wallet=alpha['address']
+                        ):
+                            self.hourly_trades += 1
+                            
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
-                logging.error(traceback.format_exc())
                 
     def check_alpha_exits(self):
         """Enhanced alpha exit detection - monitors when alpha wallets sell positions"""
@@ -1733,15 +1671,23 @@ class AdaptiveAlphaTrader:
                     
     def execute_trade(self, token_address, strategy, position_size, entry_price, source_wallet=None):
         """Execute the trade using your working function with source wallet tracking and database recording"""
+        
+        # SAFETY CHECK FIRST
+        if not self.is_token_safe(token_address):
+            logging.error(f"❌ REJECTED UNSAFE TOKEN: {token_address[:8]}")
+            return False
+        
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
     
-        # Set targets based on strategy
+        # Set targets based on strategy - UPDATED WITH REALISTIC TARGETS
         if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
-            targets = {'take_profit': 1.15, 'stop_loss': 0.93, 'trailing': True}
+            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': True}  # 20% profit, 8% loss
         elif strategy == 'DIP_BUY':
-            targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': False}
-        else:  # SCALP
-            targets = {'take_profit': 1.05, 'stop_loss': 0.97, 'trailing': False}
+            targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': True}  # 25% profit, 10% loss
+        elif strategy == 'SCALP':
+            targets = {'take_profit': 1.15, 'stop_loss': 0.95, 'trailing': False}  # 15% profit, 5% loss
+        else:
+            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': True}  # Default
     
         # USE YOUR WORKING FUNCTION!
         signature = execute_optimized_transaction(token_address, position_size)
@@ -1757,7 +1703,8 @@ class AdaptiveAlphaTrader:
                 'entry_time': time.time(),
                 'peak_price': entry_price,
                 'signature': signature,
-                'source_wallet': source_wallet  # Track which alpha we're following
+                'source_wallet': source_wallet,  # Track which alpha we're following
+                'partial_sold': False  # Track partial profit taking
             }
         
             # Update brain stats
@@ -1781,7 +1728,7 @@ class AdaptiveAlphaTrader:
                         source_wallet or "SELF_DISCOVERED",
                         wallet_name,
                         token_address,
-                        "UNKNOWN",  # ✅ This is correct - token_symbol parameter is here
+                        "UNKNOWN",  # token_symbol
                         entry_price,
                         position_size,
                         strategy
@@ -1831,29 +1778,23 @@ class AdaptiveAlphaTrader:
                     pnl_pct = ((current_price - entry_price) / entry_price) * 100
                     pnl_sol = position_size * (pnl_pct / 100)
                     
-                    # TRAILING STOP - CRITICAL ADDITION!
-                    if pnl_pct > 10:  # If we're up 10%+
+                    # TRAILING STOP LOGIC - CRITICAL!
+                    if pnl_pct > 15:  # If we're up 15%+
                         # Update peak price
-                        if current_price > position.get('peak_price', position['entry_price']):
+                        if current_price > position.get('peak_price', entry_price):
                             position['peak_price'] = current_price
+                            logging.info(f"📈 New peak for {token[:8]}: +{pnl_pct:.1f}%")
                             
-                        # Check if price dropped 30% from peak
-                        drop_from_peak = ((position['peak_price'] - current_price) / position['peak_price']) * 100
+                        # Calculate drop from peak
+                        peak = position.get('peak_price', entry_price)
+                        drop_from_peak = ((peak - current_price) / peak) * 100
+                        
+                        # Sell if dropped 30% from peak
                         if drop_from_peak > 30:
                             logging.warning(f"🔴 TRAILING STOP: {token[:8]} dropped {drop_from_peak:.1f}% from peak")
+                            logging.warning(f"   Peak: ${peak:.8f}, Now: ${current_price:.8f}")
                             self.ensure_position_sold(token, position, "trailing_stop")
                             continue
-                    
-                    # Update peak price for trailing stop
-                    if current_price > position.get('peak_price', entry_price):
-                        position['peak_price'] = current_price
-                        
-                        # Special logging for PERFECT_BOT peaks
-                        if alpha_style == 'PERFECT_BOT':
-                            logging.info(f"🏆 PERFECT BOT NEW PEAK: {alpha_name}")
-                            logging.info(f"   Token: {token[:8]} | Peak: +{pnl_pct:.1f}% (+{pnl_sol:.3f} SOL)")
-                        else:
-                            logging.info(f"📈 New peak for {token[:8]}: +{pnl_pct:.1f}%")
                     
                     # Hold time
                     hold_time = (current_time - entry_time) / 60
@@ -1863,18 +1804,23 @@ class AdaptiveAlphaTrader:
                     max_hold_minutes = float(style_params.get('max_hold_time', 240))
                     take_profit_pct = float(style_params.get('take_profit', 20))
                     
-                    # PARTIAL PROFIT TAKING - NEW!
+                    # PARTIAL PROFIT TAKING - CRITICAL!
                     if pnl_pct >= take_profit_pct:
-                        # Take 50% profit first time
+                        # Check if we've already taken partial profits
                         if not position.get('partial_sold', False):
+                            # Sell 50% first time we hit target
                             half_size = position['size'] / 2
-                            logging.info(f"💰 PARTIAL PROFIT: Selling 50% of {token[:8]} at {pnl_pct:.1f}%")
-                            execute_optimized_sell(token, half_size)
-                            position['size'] = half_size
-                            position['partial_sold'] = True
+                            logging.info(f"💰 PARTIAL PROFIT: Selling 50% of {token[:8]} at {pnl_pct:.1f}% gain")
+                            
+                            result = execute_optimized_sell(token, half_size)
+                            if result and result != "no-tokens":
+                                position['size'] = half_size  # Update remaining size
+                                position['partial_sold'] = True
+                                logging.info(f"✅ Sold 50% - keeping other 50% for more gains")
                         else:
-                            # Sell remaining if up another 20%
-                            if pnl_pct >= take_profit_pct + 20:
+                            # If already took partial, wait for +10% more then sell rest
+                            if pnl_pct >= take_profit_pct + 10:
+                                logging.info(f"🎯 FINAL PROFIT: Selling remaining position at {pnl_pct:.1f}%")
                                 self.ensure_position_sold(token, position, "final_take_profit")
                         continue
                     
@@ -2432,98 +2378,69 @@ class AdaptiveAlphaTrader:
             self.last_reclassification = time.time()
 
     def get_style_params(self, style):
-        """Updated for faster capital rotation and consistent profits"""
+        """UPDATED WITH REALISTIC PROFIT TARGETS"""
         styles = {
             'SCALPER': {
                 'max_hold_time': 30,
                 'stop_loss': 8,
-                'take_profit': 15,
+                'take_profit': 20,  # 20% not 100%!
                 'position_size_multiplier': 1.0,
-                'min_liquidity': 3000
+                'min_liquidity': 5000,
+                'check_interval': 20
             },
             'SWINGER': {
-                'max_hold_time': 60,  # 2 hours
-                'stop_loss': 15,
-                'take_profit': 25,
+                'max_hold_time': 60,
+                'stop_loss': 10,
+                'take_profit': 25,  # 25% not 50%!
                 'position_size_multiplier': 1.0,
-                'min_liquidity': 3000
+                'min_liquidity': 10000,
+                'check_interval': 30
             },
             'HOLDER': {
-                'max_hold_time': 120,  # 8 hours
-                'stop_loss': 15,
-                'take_profit': 25,
-                'position_size_multiplier': 1.5,
-                'min_liquidity': 10000
+                'max_hold_time': 120,
+                'stop_loss': 12,
+                'take_profit': 30,  # 30% not 100%!
+                'position_size_multiplier': 1.0,
+                'min_liquidity': 20000,
+                'check_interval': 60
             },
             'SNIPER': {
-                'max_hold_time': 10,  # 10 minutes quick flips
-                'stop_loss': 5,
-                'take_profit': 10,
+                'max_hold_time': 15,
+                'stop_loss': 6,
+                'take_profit': 15,  # Quick 15%
                 'position_size_multiplier': 0.8,
-                'min_liquidity': 1500
+                'min_liquidity': 3000,
+                'check_interval': 10
             },
             'BOT_TRADER': {
-                'max_hold_time': 5,
-                'stop_loss': 3,
-                'take_profit': 8,
-                'position_size_multiplier': 2.0,
-                'min_liquidity': 3000,
-                'copy_delay': 0
-            },
-            'PERFECT_BOT_FAST': {  # Alpha13 - High frequency, 2.2hr avg hold
-                'max_hold_time': 60,   # 3 hours
-                'stop_loss': 10,        
-                'take_profit': 20,      # REDUCED from 75% to 35% for faster rotation
-                'position_size_multiplier': 3.0,  # Max confidence
-                'min_liquidity': 1000,  # Very low to catch all trades
-                'copy_delay': 0,        # Immediate copy
-                'check_interval': 3     # Check every 3 seconds
-            },
-            'PERFECT_BOT_SNIPER': {  # Alpha20 - Ultra selective, 1hr avg hold  
-                'max_hold_time': 60,    # 1.5 hours
-                'stop_loss': 8,        
-                'take_profit': 15,      # REDUCED from 50% to 30% for faster rotation
-                'position_size_multiplier': 4.0,  # Highest confidence (only 5 trades!)
-                'min_liquidity': 500,   # Ultra low for selective trades
-                'copy_delay': 0,        # Immediate copy
-                'check_interval': 3     # Check every 3 seconds
-            },
-            'PERFECT_BOT_SWING': {  # Alpha8 - Very selective, 1-day avg hold
-                'max_hold_time': 360,  # 1 day (reduced from 2 days)
-                'stop_loss': 15,        # Reduced from 25% for tighter risk
-                'take_profit': 40,      # REDUCED from 200% to 80% for faster rotation
-                'position_size_multiplier': 2.5,  # High confidence
-                'min_liquidity': 5000,  
-                'copy_delay': 0,        # Immediate copy
-                'check_interval': 10    # Less frequent for swing trader
-            },
-            'ELITE_BOT': {  # For 80%+ win rate wallets
-                'max_hold_time': 120,   # 2 hours (reduced from 4 hours)
-                'stop_loss': 10,        # Tighter from 12%
-                'take_profit': 25,      # REDUCED from 60% to 25% for faster rotation
-                'position_size_multiplier': 2.0,
-                'min_liquidity': 3000,
+                'max_hold_time': 10,
+                'stop_loss': 5,
+                'take_profit': 10,  # Small but consistent
+                'position_size_multiplier': 1.5,
+                'min_liquidity': 5000,
                 'copy_delay': 0,
                 'check_interval': 5
             },
-            'MULTI_DAY_HOLDER': {
-                'max_hold_time': 360,   # 12 hours (reduced from 3 days)
-                'stop_loss': 15,        # Tighter from 30%
-                'take_profit': 30,      # REDUCED from 200% to 50% for faster rotation
-                'position_size_multiplier': 1.0,
-                'min_liquidity': 5000,
-                'check_interval': 30
-            },
-            'HIGH_FREQUENCY': {  # For wallets like Alpha 19 (394 trades/day)
-                'max_hold_time': 30,    # 1 hour (reduced from 2 hours)
-                'stop_loss': 5,         # Tighter from 6%
-                'take_profit': 10,      # REDUCED from 18% to 20% for consistency
-                'position_size_multiplier': 0.8,  # Smaller size, more trades
+            'PERFECT_BOT': {
+                'max_hold_time': 30,
+                'stop_loss': 8,
+                'take_profit': 20,  # NOT 200%!
+                'position_size_multiplier': 2.0,
                 'min_liquidity': 5000,
                 'check_interval': 5
+            },
+            'ELITE_BOT': {
+                'max_hold_time': 60,
+                'stop_loss': 10,
+                'take_profit': 25,
+                'position_size_multiplier': 1.5,
+                'min_liquidity': 10000,
+                'check_interval': 10
             }
         }
-        return styles.get(style, styles['ELITE_BOT'])
+        
+        # Return default if style not found
+        return styles.get(style, styles['SCALPER'])
 
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
@@ -3296,6 +3213,28 @@ def import_sqlite_to_postgres():
     logging.info(f"✅ Imported {len(trades)} trades to PostgreSQL!")
 
 
+def is_token_safe(self, token_address):
+        """Check if token is safe from rug pulls"""
+        try:
+            # This is a simplified version - implement full checks
+            liquidity = get_token_liquidity(token_address)
+            holders = get_holder_count(token_address)
+            
+            # Basic safety checks
+            if liquidity < 5000:  # Less than $5k liquidity
+                logging.warning(f"🚨 Low liquidity: ${liquidity}")
+                return False
+                
+            if holders < 50:  # Less than 50 holders
+                logging.warning(f"🚨 Low holders: {holders}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error checking token safety: {e}")
+            return False  # Default to unsafe
+
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
     """Get recent buys from a wallet using Helius API with DEBUG LOGGING"""
@@ -3520,6 +3459,22 @@ def run_adaptive_ai_system():
             current_time = time.time()
             iteration += 1
             
+            # EMERGENCY STOP CHECKS - CRITICAL!
+            current_balance = wallet.get_balance()
+            if current_balance < 2.0:
+                logging.error(f"🚨 EMERGENCY: Balance {current_balance} below 2 SOL minimum")
+                logging.error("STOPPING ALL TRADING")
+                trader.emergency_sell_all_positions()
+                return  # EXIT THE PROGRAM
+                
+            # Check session losses
+            session_loss = trader.brain.daily_stats.get('pnl_sol', 0)
+            if session_loss < -0.5:  # Lost 0.5 SOL
+                logging.error(f"🚨 SESSION LOSS LIMIT: Lost {session_loss} SOL")
+                logging.error("STOPPING TRADING FOR TODAY")
+                trader.emergency_sell_all_positions()
+                return  # EXIT THE PROGRAM
+            
             # Check for midnight reset
             if current_time - last_midnight_check > 300:  # Check every 5 minutes
                 last_midnight_check = current_time
@@ -3739,6 +3694,8 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
+
+
 
 # Global rate limiter for Jupiter
 class RateLimiter:
