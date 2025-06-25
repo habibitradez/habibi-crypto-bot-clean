@@ -2749,7 +2749,7 @@ class AdaptiveAlphaTrader:
         
         try:
             with self.db.get_connection() as conn:
-                with conn.cursor() as cursor:
+            with conn.cursor() as cursor:
             cursor.execute(analyze_query)
             results = cursor.fetchall()
             
