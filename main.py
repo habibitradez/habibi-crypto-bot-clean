@@ -15240,7 +15240,10 @@ def main():
                 except Exception as e:
                     logging.error(f"Import failed: {e}")
             
-            total_trades = db.conn.execute('SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',)).fetchone()[0]
+            with db.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute('SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',))
+                    total_trades = cur.fetchone()[0]
             
             if total_trades > 0:
                 logging.info(f"   📊 Historical Data: {total_trades} trades recorded")
