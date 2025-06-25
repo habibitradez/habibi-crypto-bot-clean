@@ -90,7 +90,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -1886,6 +1886,7 @@ class AdaptiveAlphaTrader:
                         source_wallet or "SELF_DISCOVERED",
                         wallet_name,
                         token_address,
+                        "UNKNOWN",  # ✅ This is correct - token_symbol parameter is here
                         entry_price,
                         position_size,
                         strategy
@@ -2809,7 +2810,7 @@ class AdaptiveAlphaTrader:
             SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as daily_win_rate,
             SUM(profit_sol) as daily_profit
         FROM copy_trades
-        WHERE wallet_address = ?
+        WHERE wallet_address = %s
             AND status = 'closed'
         GROUP BY DATE(created_at)
         ORDER BY trade_date DESC
@@ -2817,7 +2818,7 @@ class AdaptiveAlphaTrader:
         """
         
         try:
-            with self.db.get_connection() as conn:
+            with self.db_manager.get_connection() as conn:  # Changed from self.db
                 with conn.cursor() as cursor:
                     cursor.execute(pattern_query, (wallet_address,))
                     results = cursor.fetchall()
@@ -2991,6 +2992,7 @@ class AdaptiveAlphaTrader:
                 source_wallet or "SELF_DISCOVERED",
                 wallet_name,
                 token_address,
+                "UNKNOWN",  # token_symbol - Add this parameter
                 entry_price,
                 position_size,
                 strategy
@@ -3139,14 +3141,15 @@ class AdaptiveAlphaTrader:
         """Get total USDC converted today"""
         try:
             if hasattr(self, 'db_manager'):
-                cursor = self.db_manager.conn.cursor()
-                result = cursor.execute('''
-                    SELECT SUM(amount_usdc) 
-                    FROM profit_conversions 
-                    WHERE DATE(conversion_time) = DATE('now')
-                ''').fetchone()
-            
-                return result[0] if result[0] else 0
+                with self.db_manager.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute('''
+                            SELECT SUM(amount_usdc) 
+                            FROM profit_conversions 
+                            WHERE DATE(conversion_time) = CURRENT_DATE
+                        ''')
+                        result = cursor.fetchone()
+                        return result[0] if result and result[0] else 0
             return 0
         except:
             return 0
@@ -3174,15 +3177,18 @@ class AdaptiveAlphaTrader:
                 if hasattr(self, 'db_manager'):
                     # Get today's trading summary
                     try:
-                        today_stats = self.db_manager.conn.execute('''
-                            SELECT 
-                                COUNT(*) as total_trades,
-                                SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
-                                SUM(profit_sol) as total_profit_sol
-                            FROM copy_trades
-                            WHERE DATE(created_at) = DATE('now')
-                                AND status = 'closed'
-                        ''').fetchone()
+                        with self.db_manager.get_connection() as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute('''
+                                    SELECT 
+                                        COUNT(*) as total_trades,
+                                        SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                                        SUM(profit_sol) as total_profit_sol
+                                    FROM copy_trades
+                                    WHERE DATE(created_at) = CURRENT_DATE
+                                        AND status = 'closed'
+                                ''')
+                                today_stats = cursor.fetchone()
                         
                         if today_stats and today_stats['total_trades'] > 0:
                             win_rate = (today_stats['wins'] / today_stats['total_trades']) * 100
@@ -3192,22 +3198,30 @@ class AdaptiveAlphaTrader:
                             logging.info(f"   Total P&L: {today_stats['total_profit_sol']:.3f} SOL (${today_stats['total_profit_sol']*240:.0f})")
                         
                         if total_converted > 0:
-                            sessions = self.db_manager.conn.execute('''
-                                SELECT COUNT(DISTINCT session_number) 
-                                FROM profit_conversions 
-                                WHERE DATE(conversion_time) = DATE('now')
-                            ''').fetchone()[0]
+                            with self.db_manager.get_connection() as conn:
+                                with conn.cursor() as cursor:
+                                    cursor.execute('''
+                                        SELECT COUNT(DISTINCT session_number) 
+                                        FROM profit_conversions 
+                                        WHERE DATE(conversion_time) = CURRENT_DATE
+                                    ''')
+                                    result = cursor.fetchone()
+                                    sessions = result[0] if result else 0
+                            
                             logging.info(f"💵 Total USDC Secured: ${total_converted:.0f}")
                             logging.info(f"📊 Trading Sessions Completed: {sessions}")
                             
                             # Get breakdown by session
-                            session_breakdown = self.db_manager.conn.execute('''
-                                SELECT session_number, SUM(amount_usdc) as session_total
-                                FROM profit_conversions
-                                WHERE DATE(conversion_time) = DATE('now')
-                                GROUP BY session_number
-                                ORDER BY session_number
-                            ''').fetchall()
+                            with self.db_manager.get_connection() as conn:
+                                with conn.cursor() as cursor:
+                                    cursor.execute('''
+                                        SELECT session_number, SUM(amount_usdc) as session_total
+                                        FROM profit_conversions
+                                        WHERE DATE(conversion_time) = CURRENT_DATE
+                                        GROUP BY session_number
+                                        ORDER BY session_number
+                                    ''')
+                                    session_breakdown = cursor.fetchall()
                             
                             if session_breakdown:
                                 logging.info("📈 Session Breakdown:")
@@ -3215,19 +3229,22 @@ class AdaptiveAlphaTrader:
                                     logging.info(f"   Session #{session['session_number']}: ${session['session_total']:.0f}")
                         
                         # Show top performing wallets for the day
-                        top_daily_wallets = self.db_manager.conn.execute('''
-                            SELECT 
-                                wallet_name,
-                                COUNT(*) as trades,
-                                SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
-                                SUM(profit_sol) as profit
-                            FROM copy_trades
-                            WHERE DATE(created_at) = DATE('now')
-                                AND status = 'closed'
-                            GROUP BY wallet_name
-                            ORDER BY profit DESC
-                            LIMIT 3
-                        ''').fetchall()
+                        with self.db_manager.get_connection() as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute('''
+                                    SELECT 
+                                        wallet_name,
+                                        COUNT(*) as trades,
+                                        SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins,
+                                        SUM(profit_sol) as profit
+                                    FROM copy_trades
+                                    WHERE DATE(created_at) = CURRENT_DATE
+                                        AND status = 'closed'
+                                    GROUP BY wallet_name
+                                    ORDER BY profit DESC
+                                    LIMIT 3
+                                ''')
+                                top_daily_wallets = cursor.fetchall()
                         
                         if top_daily_wallets:
                             logging.info("🏆 Top Wallets Today:")
@@ -3253,7 +3270,7 @@ class AdaptiveAlphaTrader:
                 
         except Exception as e:
             logging.error(f"Error in daily reset: {e}")
-
+            
     def initialize_ml_system(self):
         """Initialize ML system on bot startup"""
     
@@ -3331,9 +3348,14 @@ class AdaptiveAlphaTrader:
         try:
             if hasattr(self, 'ml_brain') and hasattr(self, 'db_manager'):
                 # Check if we have enough trades
-                total_trades = self.db_manager.conn.execute(
-                    'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
-                ).fetchone()[0]
+                with self.db_manager.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute(
+                            'SELECT COUNT(*) FROM copy_trades WHERE status = %s',
+                            ('closed',)
+                        )
+                        result = cursor.fetchone()
+                        total_trades = result[0] if result else 0
                 
                 if total_trades >= 100:
                     logging.info(f"🔄 Starting scheduled ML retraining with {total_trades} trades...")
@@ -3349,29 +3371,35 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error during ML retraining: {e}")
             # Still schedule next retraining
             self.schedule_ml_retraining()
+            
+        except Exception as e:
+            logging.error(f"Error during ML retraining: {e}")
+            # Still schedule next retraining
+            self.schedule_ml_retraining()
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
-    
+        
     # Connect to old SQLite
     sqlite_conn = sqlite3.connect('trading_bot.db')
     sqlite_cur = sqlite_conn.cursor()
-    
+        
     # Get all trades
     trades = sqlite_cur.execute("SELECT * FROM copy_trades").fetchall()
-    
+        
     # Insert into PostgreSQL
     pg_conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
     pg_cur = pg_conn.cursor()
-    
+        
     for trade in trades:
         pg_cur.execute("""
             INSERT INTO copy_trades (...) VALUES (...)
         """, trade)
-    
+        
     pg_conn.commit()
     logging.info(f"✅ Imported {len(trades)} trades to PostgreSQL!")
+
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
@@ -3577,11 +3605,15 @@ def run_adaptive_ai_system():
     # Check how many sessions completed today
     if hasattr(trader, 'db_manager'):
         try:
-            today_sessions = trader.db_manager.conn.execute('''
-                SELECT COUNT(DISTINCT session_number) 
-                FROM profit_conversions 
-                WHERE DATE(conversion_time) = DATE('now')
-            ''').fetchone()[0]
+            with trader.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''
+                        SELECT COUNT(DISTINCT session_number) 
+                        FROM profit_conversions 
+                        WHERE DATE(conversion_time) = CURRENT_DATE
+                    ''')
+                    result = cursor.fetchone()
+                    today_sessions = result[0] if result else 0
             if today_sessions > 0:
                 session_count = today_sessions + 1
                 logging.info(f"📊 Continuing session #{session_count} for today")
@@ -3641,11 +3673,13 @@ def run_adaptive_ai_system():
                         # Update session number in database
                         if hasattr(trader, 'db_manager'):
                             try:
-                                trader.db_manager.conn.execute(
-                                    'UPDATE profit_conversions SET session_number = ? WHERE DATE(conversion_time) = DATE("now")',
-                                    (session_count,)
-                                )
-                                trader.db_manager.conn.commit()
+                                with trader.db_manager.get_connection() as conn:
+                                    with conn.cursor() as cursor:
+                                        cursor.execute(
+                                            'UPDATE profit_conversions SET session_number = %s WHERE DATE(conversion_time) = CURRENT_DATE',
+                                            (session_count,)
+                                        )
+                                        conn.commit()
                             except:
                                 pass
             
@@ -3730,19 +3764,25 @@ def run_adaptive_ai_system():
                 
                 # Show which wallets have been most active
                 if hasattr(trader, 'db_manager'):
-                    recent_active = trader.db_manager.conn.execute('''
-                        SELECT wallet_name, COUNT(*) as recent_trades 
-                        FROM copy_trades 
-                        WHERE created_at > datetime('now', '-1 hour')
-                        GROUP BY wallet_name 
-                        ORDER BY recent_trades DESC 
-                        LIMIT 3
-                    ''').fetchall()
-                    
-                    if recent_active:
-                        logging.info("   Most active (last hour):")
-                        for wallet in recent_active:
-                            logging.info(f"      {wallet['wallet_name']}: {wallet['recent_trades']} signals")
+                    try:
+                        with trader.db_manager.get_connection() as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute('''
+                                    SELECT wallet_name, COUNT(*) as recent_trades 
+                                    FROM copy_trades 
+                                    WHERE created_at > NOW() - INTERVAL '1 hour'
+                                    GROUP BY wallet_name 
+                                    ORDER BY recent_trades DESC 
+                                    LIMIT 3
+                                ''')
+                                recent_active = cursor.fetchall()
+                        
+                        if recent_active:
+                            logging.info("   Most active (last hour):")
+                            for wallet in recent_active:
+                                logging.info(f"      {wallet['wallet_name']}: {wallet['recent_trades']} signals")
+                    except:
+                        pass
                 
                 # Show any insights
                 if stats['trades'] > 0:
@@ -3763,15 +3803,21 @@ def run_adaptive_ai_system():
                 
                 # Show database stats
                 if hasattr(trader, 'db_manager'):
-                    total_trades = trader.db_manager.conn.execute(
-                        'SELECT COUNT(*) FROM copy_trades WHERE status = "closed"'
-                    ).fetchone()[0]
-                    logging.info(f"   📊 Total trades recorded: {total_trades}")
-                    
-                    if total_trades >= 100:
-                        logging.info("   🤖 ML training data: READY (100+ trades)")
-                    else:
-                        logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
+                    try:
+                        with trader.db_manager.get_connection() as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute('SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',))
+                                result = cursor.fetchone()
+                                total_trades = result[0] if result else 0
+                        
+                        logging.info(f"   📊 Total trades recorded: {total_trades}")
+                        
+                        if total_trades >= 100:
+                            logging.info("   🤖 ML training data: READY (100+ trades)")
+                        else:
+                            logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
+                    except:
+                        pass
                 
             time.sleep(5)  # Check every 5 seconds
             
