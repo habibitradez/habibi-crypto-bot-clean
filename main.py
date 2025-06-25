@@ -605,8 +605,10 @@ class TradingBrain:
 class MLTradingBrain:
     """ML Brain that learns from your 2000+ real trades"""
     
-    def __init__(self, db_connection):
-        self.db = db_connection
+    def __init__(self, trader_instance):
+        """Initialize with the AdaptiveAlphaTrader instance"""
+        self.trader = trader_instance  # Store the trader instance
+        self.db = trader_instance  # For backward compatibility with prepare_features_from_trade_history
         self.rf_model = None
         self.xgb_model = None
         self.scaler = StandardScaler()
@@ -647,10 +649,10 @@ class MLTradingBrain:
              FROM copy_trades ct2 
              WHERE ct2.wallet_address = ct.wallet_address 
              AND ct2.created_at < ct.created_at
-             AND ct2.created_at > datetime(ct.created_at, '-1 day')
+             AND ct2.created_at > ct.created_at - INTERVAL '1 day'
              AND ct2.status = 'closed') as wallet_24h_wr,
             
-            -- Market conditions (you'll need to join with your market data table)
+            -- Market conditions
             td.liquidity,
             td.volume_24h,
             td.holder_count,
@@ -660,11 +662,25 @@ class MLTradingBrain:
         FROM copy_trades ct
         LEFT JOIN token_data td ON ct.token_address = td.token_address
         WHERE ct.status = 'closed'
-            AND ct.created_at > datetime('now', '-30 days')
+            AND ct.created_at > NOW() - INTERVAL '30 days'
         ORDER BY ct.created_at DESC
         """
         
-        df = pd.read_sql(query, self.db)
+        # For PostgreSQL with psycopg2, we need to use the connection string
+        if hasattr(self.db, 'db_manager'):
+            # If db is the AdaptiveAlphaTrader instance
+            df = pd.read_sql(query, self.db.db_manager.conn_string)
+        elif hasattr(self.db, 'conn_string'):
+            # If db is the DatabaseManager directly
+            df = pd.read_sql(query, self.db.conn_string)
+        else:
+            # Fallback - try to get connection string from environment
+            import os
+            conn_string = os.environ.get("DATABASE_URL")
+            if conn_string:
+                df = pd.read_sql(query, conn_string)
+            else:
+                raise ValueError("Cannot find database connection string")
         
         # Engineer additional features
         df = self.engineer_ml_features(df)
@@ -834,127 +850,6 @@ class MLTradingBrain:
             logging.info("📊 No pre-trained models found, will train on first run")
             return False
 
-    def enhanced_check_alpha_wallets_with_ml(self):
-        """Your existing check_alpha_wallets enhanced with ML"""
-    
-        current_time = time.time()
-    
-        # Initialize ML brain if not exists
-        if not hasattr(self, 'ml_brain'):
-            self.ml_brain = MLTradingBrain(self.db)
-        
-            # Try loading models or train new ones
-            if not self.ml_brain.load_models():
-                if self.ml_brain.train_models():
-                    logging.info("✅ ML models trained successfully")
-                else:
-                    logging.info("⚠️ Running without ML (not enough data yet)")
-    
-        for alpha in self.alpha_wallets:
-            # Skip if not active
-            if not alpha.get('active', True):
-                continue
-        
-            # Your existing check interval logic
-            wallet_style = alpha.get('style', 'MEDIUM_TRADER')
-            check_interval = alpha.get('check_interval', 5)
-        
-            # Check if it's time to check this wallet
-            last_check = alpha.get('last_check', 0)
-            if current_time - last_check < check_interval:
-                continue
-        
-            alpha['last_check'] = current_time
-        
-            # Get wallet stats for ML
-            wallet_stats = {
-                'total_trades': alpha.get('total_trades', 0),
-                'win_rate': alpha.get('win_rate', 50),
-                'recent_win_rate': alpha.get('recent_wr', 50)
-            }
-        
-            # Get recent buys
-            recent_buys = self.get_wallet_recent_buys_helius(alpha['address'])
-        
-            if recent_buys:
-                logging.info(f"🚨 {alpha['name']} ({wallet_style}) made {len(recent_buys)} buys!")
-            
-                for buy in recent_buys:
-                    # Get token data
-                    token_data = self.get_token_snapshot(buy['token'], wallet_style)
-                
-                    if not token_data and wallet_style.startswith('PERFECT_BOT'):
-                        # Your existing perfect bot fallback
-                        token_data = self.create_fallback_token_data(buy['token'])
-                
-                    if token_data:
-                        # Get ML prediction
-                        ml_action = None
-                        ml_confidence = 0.5
-                    
-                        if self.ml_brain.is_trained:
-                            ml_action, ml_confidence = self.ml_brain.predict_trade(
-                                wallet_stats, token_data
-                            )
-                            logging.info(f"🤖 ML Prediction: {ml_action} (Confidence: {ml_confidence:.2%})")
-                    
-                        # Decision logic combining wallet performance and ML
-                        should_copy = False
-                        position_multiplier = 1.0
-                    
-                        if ml_action == "STRONG_BUY":
-                            should_copy = True
-                            position_multiplier = 1.5
-                        elif ml_action == "BUY":
-                            should_copy = True
-                            position_multiplier = 1.0
-                        elif ml_action == "WEAK_BUY" and alpha.get('win_rate', 50) > 65:
-                            should_copy = True
-                            position_multiplier = 0.7
-                        elif ml_action == "SKIP":
-                            logging.info(f"🚫 ML recommends skipping {buy['token'][:8]}")
-                            continue
-                        else:
-                            # No ML prediction, use wallet win rate
-                            if alpha.get('win_rate', 50) >= 65:
-                                should_copy = True
-                    
-                        if should_copy:
-                            # Calculate position size with ML adjustment
-                            base_position = alpha.get('position_size', 0.25)
-                            adjusted_position = base_position * position_multiplier
-                        
-                            # Your existing copy trade logic
-                            self.execute_copy_trade_enhanced(
-                                buy, alpha, token_data, adjusted_position, ml_confidence
-                            )
-
-
-    def initialize_ml_system(self):
-        """Initialize ML system on bot startup"""
-    
-        logging.info("🤖 Initializing ML Trading Brain...")
-    
-        # Create ML brain
-        self.ml_brain = MLTradingBrain(self.db)
-    
-        # Check if we have enough data
-        trade_count = self.db.execute(
-            "SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'"
-        ).fetchone()['count']
-    
-        logging.info(f"📊 Found {trade_count} completed trades for ML training")
-    
-        if trade_count >= 100:
-            # Try loading existing models
-            if not self.ml_brain.load_models():
-                # Train new models
-                self.ml_brain.train_models()
-        else:
-            logging.info(f"⚠️ Need {100 - trade_count} more trades before ML can be trained")
-    
-        # Schedule periodic retraining (every 24 hours)
-        self.schedule_ml_retraining()
 
 class DatabaseManager:
     """Manages trading database for tracking real performance"""
