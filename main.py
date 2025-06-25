@@ -2748,7 +2748,8 @@ class AdaptiveAlphaTrader:
         """
         
         try:
-            cursor = self.db.cursor()
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cursor:
             cursor.execute(analyze_query)
             results = cursor.fetchall()
             
@@ -2816,7 +2817,8 @@ class AdaptiveAlphaTrader:
         """
         
         try:
-            cursor = self.db.cursor()
+            with self.db.get_connection() as conn:
+                with conn.cursor() as cursor:
             cursor.execute(pattern_query, (wallet_address,))
             results = cursor.fetchall()
             
@@ -3262,7 +3264,8 @@ class AdaptiveAlphaTrader:
     
         # Check if we have enough data
         try:
-            cursor = self.db.cursor()
+            with self.db.get_connection() as conn:
+            with conn.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'")
             result = cursor.fetchone()
         
@@ -15243,7 +15246,8 @@ def main():
             with db.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute('SELECT COUNT(*) FROM copy_trades WHERE status = %s', ('closed',))
-                    total_trades = cur.fetchone()[0]
+                    result = cur.fetchone()
+                    total_trades = result[0] if result else 0
             
             if total_trades > 0:
                 logging.info(f"   📊 Historical Data: {total_trades} trades recorded")
