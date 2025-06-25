@@ -3264,7 +3264,8 @@ class AdaptiveAlphaTrader:
     
         # Check if we have enough data
         try:
-            with self.db.get_connection() as conn:
+            logging.info(f"DEBUG: self.db type is {type(self.db)}")
+            with self.db_manager.get_connection() as conn:
                 with conn.cursor() as cursor:
                     cursor.execute("SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'")
                     result = cursor.fetchone()
