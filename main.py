@@ -3265,9 +3265,9 @@ class AdaptiveAlphaTrader:
         # Check if we have enough data
         try:
             with self.db.get_connection() as conn:
-            with conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'")
-            result = cursor.fetchone()
+                with conn.cursor() as cursor:
+                    cursor.execute("SELECT COUNT(*) as count FROM copy_trades WHERE status = 'closed'")
+                    result = cursor.fetchone()
         
             trade_count = result['count'] if isinstance(result, dict) else result[0]
         
