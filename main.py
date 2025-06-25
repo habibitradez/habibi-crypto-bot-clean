@@ -2819,8 +2819,8 @@ class AdaptiveAlphaTrader:
         try:
             with self.db.get_connection() as conn:
                 with conn.cursor() as cursor:
-            cursor.execute(pattern_query, (wallet_address,))
-            results = cursor.fetchall()
+                    cursor.execute(pattern_query, (wallet_address,))
+                    results = cursor.fetchall()
             
             if not results:
                 return self.get_default_wallet_pattern()
