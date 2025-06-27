@@ -1262,43 +1262,89 @@ class AdaptiveAlphaTrader:
                         wallet_stats = None
                         if hasattr(self, 'db_manager'):
                             wallet_stats = self.db_manager.get_wallet_stats(alpha['address'])
+
+                        if not hasattr(self, 'ml_brain'):
+                            logging.error("❌ ML Brain not initialized - initializing now")
+                            self.initialize_ml_system()
+                        
+                        if not self.ml_brain or not self.ml_brain.is_trained:
+                            logging.warning("⚠️ ML not trained - attempting to train")
+                            self.force_ml_training()
                         
                         # ML FILTERING - THIS IS CRITICAL!
-                        if hasattr(self, 'ml_brain') and self.ml_brain.is_trained and wallet_stats:
+                        if hasattr(self, 'ml_brain') and self.ml_brain and self.ml_brain.is_trained and wallet_stats:
                             action, confidence = self.ml_brain.predict_trade(
                                 wallet_stats or {'win_rate': 50, 'total_trades': 0}, 
                                 token_data
                             )
                             
+                            # DEBUG LOG
+                            logging.debug(f"ML inputs - wallet_stats: {wallet_stats}, is_trained: {self.ml_brain.is_trained}")
+                            logging.info(f"🤖 ML Decision: {action} with {confidence:.1%} confidence for ${token_data.get('liquidity', 0):,.0f} liquidity")
+                            
                             # ONLY TAKE HIGH CONFIDENCE TRADES
-                            if action not in ['STRONG_BUY', 'BUY'] or confidence < 0.75:
-                                logging.info(f"❌ ML REJECTED: {alpha['name']} trade - {confidence:.1%} confidence")
+                            if action not in ['STRONG_BUY', 'BUY'] or confidence < self.min_ml_confidence:
+                                logging.info(f"❌ ML REJECTED: {alpha['name']} trade - {confidence:.1%} confidence < {self.min_ml_confidence:.1%} required")
                                 continue
                             else:
                                 logging.info(f"✅ ML APPROVED: {alpha['name']} trade - {confidence:.1%} confidence")
+                        else:
+                            # If ML not ready, be extra cautious
+                            if not (token_data.get('liquidity', 0) > 10000 and token_data.get('holders', 0) > 100):
+                                logging.warning(f"⚠️ No ML available - skipping low quality token")
+                                continue
                         
                         # Check liquidity
                         style_params = self.wallet_styles.get(alpha['address'], self.get_style_params('SCALPER'))
                         min_liquidity = style_params.get('min_liquidity', 5000)
                         
                         if token_data.get('liquidity', 0) < min_liquidity:
-                            logging.warning(f"⚠️ Skipping {buy['token'][:8]} - low liquidity")
+                            logging.warning(f"⚠️ Skipping {buy['token'][:8]} - low liquidity ${token_data.get('liquidity', 0)} < ${min_liquidity}")
                             continue
                         
-                        # POSITION SIZING - SMALL!
-                        base_position = 0.05  # Start with 0.05 SOL
+                        # ULTRA-CONSERVATIVE POSITION SIZING
+                        current_balance = self.wallet.get_balance()
+                        
+                        # Never use more than 2% of balance per trade
+                        max_position = current_balance * 0.02
+                        
+                        # Base position size on balance and CONFIG
+                        base_position = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
+                        
+                        # Adjust based on balance
+                        if current_balance < 2:
+                            base_position = 0.02  # Ultra tiny for <2 SOL
+                        elif current_balance < 5:
+                            base_position = min(0.05, base_position)  # Small for <5 SOL
+                        elif current_balance < 10:
+                            base_position = min(0.1, base_position)   # Moderate for <10 SOL
                         
                         # Adjust based on wallet performance
                         wallet_perf = self.wallet_performance.get(alpha['address'], {})
-                        if wallet_perf.get('trades_copied', 0) > 0:
+                        if wallet_perf.get('trades_copied', 0) > 10:
                             win_rate = (wallet_perf.get('wins', 0) / wallet_perf.get('trades_copied', 1)) * 100
                             if win_rate >= 70:
-                                base_position = 0.1  # Double for good wallets
+                                base_position = base_position * 1.5  # 50% larger for proven winners
+                            elif win_rate < 40:
+                                base_position = base_position * 0.5  # 50% smaller for poor performers
                         
-                        # Never exceed 0.15 SOL per trade
-                        position_size = min(base_position, 0.15)
+                        # Apply all limits
+                        position_size = min(
+                            base_position,
+                            max_position,  # 2% of balance max
+                            current_balance * 0.1,  # 10% of balance absolute max
+                            float(CONFIG.get('MAX_POSITION_SIZE', 0.15))  # Config max
+                        )
                         
-                        logging.info(f"💎 ML-APPROVED COPY: {alpha['name']} into {buy['token'][:8]} with {position_size:.2f} SOL")
+                        # Skip if position would be too small
+                        if position_size < 0.01:
+                            logging.warning(f"⚠️ Position size too small ({position_size:.3f} SOL), skipping")
+                            continue
+                        
+                        logging.info(f"💎 ML-APPROVED COPY: {alpha['name']} into {buy['token'][:8]}")
+                        logging.info(f"   Position: {position_size:.3f} SOL ({position_size/current_balance*100:.1f}% of balance)")
+                        logging.info(f"   Liquidity: ${token_data.get('liquidity', 0):,.0f}")
+                        logging.info(f"   Holders: {token_data.get('holders', 0)}")
                         
                         # Execute trade
                         if self.execute_trade(
@@ -1309,6 +1355,10 @@ class AdaptiveAlphaTrader:
                             source_wallet=alpha['address']
                         ):
                             self.hourly_trades += 1
+                            
+                            # Update wallet performance tracking
+                            wallet_perf['trades_signaled'] += 1
+                            wallet_perf['trades_copied'] += 1
                             
             except Exception as e:
                 logging.error(f"Error checking wallet {alpha['name']}: {e}")
@@ -1621,7 +1671,7 @@ class AdaptiveAlphaTrader:
                 
             # Determine strategy based on source
             strategy = None
-            position_size = 0.15  # Conservative with 4 SOL
+            position_size = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
             
             if data['alpha_wallet'] == 'SELF_DISCOVERED':
                 # Handle self-discovered tokens
@@ -1629,17 +1679,17 @@ class AdaptiveAlphaTrader:
                 if data['strategy'] == 'FRESH_LAUNCH':
                     if time_elapsed < 10 and price_change > 0:
                         strategy = 'LAUNCH_SCALP'
-                        position_size = 0.1  # Smaller for higher risk
+                        position_size = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
                         
                 elif data['strategy'] == 'VOLUME_SPIKE':
                     if price_change > 5:
                         strategy = 'VOLUME_MOMENTUM'
-                        position_size = 0.15
+                        position_size = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
                         
                 elif data['strategy'] == 'DIP_PATTERN':
                     if price_change > -40:  # Not dumping further
                         strategy = 'DIP_RECOVERY'
-                        position_size = 0.15
+                        position_size = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
                         
             else:
                 # Handle alpha wallet signals
@@ -1651,7 +1701,7 @@ class AdaptiveAlphaTrader:
                     logging.info(f"💎 DIP detected: {price_change:.1f}% down")
                 elif 10 < time_elapsed < 30 and -5 < price_change < 5:
                     strategy = 'SCALP'
-                    position_size = 0.2  # Larger for smaller profit
+                    position_size = float(CONFIG.get('BASE_POSITION_SIZE', 0.05))
                     logging.info(f"⚡ SCALP opportunity: stable at {price_change:+.1f}%")
                     
             # Execute if we found a strategy
@@ -1672,7 +1722,17 @@ class AdaptiveAlphaTrader:
     def execute_trade(self, token_address, strategy, position_size, entry_price, source_wallet=None):
         """Execute the trade using your working function with source wallet tracking and database recording"""
         
-        # SAFETY CHECK FIRST
+        # CHECK DAILY TRADE LIMIT FIRST
+        current_date = datetime.now().date()
+        if current_date != self.last_trade_date:
+            self.daily_trades = 0
+            self.last_trade_date = current_date
+            
+        if self.daily_trades >= self.daily_trade_limit:
+            logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
+            return False
+        
+        # SAFETY CHECK
         if not self.is_token_safe(token_address):
             logging.error(f"❌ REJECTED UNSAFE TOKEN: {token_address[:8]}")
             return False
@@ -1681,13 +1741,17 @@ class AdaptiveAlphaTrader:
     
         # Set targets based on strategy - UPDATED WITH REALISTIC TARGETS
         if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
-            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': True}  # 20% profit, 8% loss
-        elif strategy == 'DIP_BUY':
-            targets = {'take_profit': 1.25, 'stop_loss': 0.90, 'trailing': True}  # 25% profit, 10% loss
-        elif strategy == 'SCALP':
-            targets = {'take_profit': 1.15, 'stop_loss': 0.95, 'trailing': False}  # 15% profit, 5% loss
+            targets = {'take_profit': 1.25, 'stop_loss': 0.94, 'trailing': True}  # 20% profit, 8% loss
+        elif strategy == 'DIP_BUY' or strategy == 'DIP_RECOVERY':
+            targets = {'take_profit': 1.30, 'stop_loss': 0.94, 'trailing': True}  # 25% profit, 10% loss
+        elif strategy == 'SCALP' or strategy == 'LAUNCH_SCALP':
+            targets = {'take_profit': 1.20, 'stop_loss': 0.96, 'trailing': False}  # 15% profit, 5% loss
+        elif strategy == 'VOLUME_MOMENTUM' or strategy == 'VOLUME_SPIKE':
+            targets = {'take_profit': 1.20, 'stop_loss': 0.93, 'trailing': True}  # 20% profit, 7% loss
+        elif strategy == 'FRESH_LAUNCH':
+            targets = {'take_profit': 1.30, 'stop_loss': 0.90, 'trailing': True}  # 30% profit, 10% loss
         else:
-            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': True}  # Default
+            targets = {'take_profit': 1.20, 'stop_loss': 0.92, 'trailing': True}  # Default safe targets
     
         # USE YOUR WORKING FUNCTION!
         signature = execute_optimized_transaction(token_address, position_size)
@@ -1709,6 +1773,9 @@ class AdaptiveAlphaTrader:
         
             # Update brain stats
             self.brain.daily_stats['trades'] += 1
+            
+            # INCREMENT DAILY TRADE COUNTER
+            self.daily_trades += 1
         
             # Remove from monitoring
             if token_address in self.monitoring:
@@ -1744,6 +1811,8 @@ class AdaptiveAlphaTrader:
                     # Don't fail the trade if database recording fails
         
             logging.info(f"✅ {strategy} position opened: {position_size} SOL")
+            logging.info(f"   Take Profit: {(targets['take_profit']-1)*100:.0f}%")
+            logging.info(f"   Stop Loss: {(1-targets['stop_loss'])*100:.0f}%")
             return True
         else:
             logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
@@ -2788,33 +2857,7 @@ class AdaptiveAlphaTrader:
         else:
             print("No high performers found - check your database!")
 
-    def execute_trade_with_db_tracking(self, token_address, strategy, position_size, entry_price, source_wallet=None):
-        """Enhanced execute_trade that tracks in database"""
     
-        # Get wallet info
-        wallet_info = next((w for w in self.alpha_wallets if w['address'] == source_wallet), None)
-        wallet_name = wallet_info['name'] if wallet_info else "Unknown"
-    
-        # Execute the actual trade (your existing code)
-        success = self.execute_trade(token_address, strategy, position_size, entry_price, source_wallet)
-    
-        if success:
-            # Record in database
-            trade_id = self.db_manager.record_trade_open(
-                source_wallet or "SELF_DISCOVERED",
-                wallet_name,
-                token_address,
-                "UNKNOWN",  # token_symbol - Add this parameter
-                entry_price,
-                position_size,
-                strategy
-            )
-        
-            # Store trade ID for later
-            self.trade_ids[token_address] = trade_id
-        
-        return success
-
     def record_trade_close_with_db(self, token_address, exit_price, exit_reason):
         """Record trade close in database"""
     
@@ -3189,6 +3232,141 @@ class AdaptiveAlphaTrader:
             # Still schedule next retraining
             self.schedule_ml_retraining()
 
+    def is_token_safe(self, token_address):
+        """Check if token is safe from rug pulls"""
+        try:
+            # This is a simplified version - implement full checks
+            liquidity = get_token_liquidity(token_address)
+            holders = get_holder_count(token_address)
+            
+            # Basic safety checks
+            if liquidity < 5000:  # Less than $5k liquidity
+                logging.warning(f"🚨 Low liquidity: ${liquidity}")
+                return False
+                
+            if holders < 50:  # Less than 50 holders
+                logging.warning(f"🚨 Low holders: {holders}")
+                return False
+                
+            return True
+            
+        except Exception as e:
+            logging.error(f"Error checking token safety: {e}")
+            return False  # Default to unsafe
+
+    def verify_ml_status(self):
+        """Debug method to check ML status"""
+        logging.info("🔍 === ML STATUS CHECK ===")
+        
+        # Check if ML brain exists
+        if not hasattr(self, 'ml_brain'):
+            logging.error("❌ ML Brain not initialized!")
+            return False
+            
+        # Check if trained
+        if not self.ml_brain or not self.ml_brain.is_trained:
+            logging.error("❌ ML Model not trained!")
+            
+            # Check how many trades we have
+            try:
+                with self.db_manager.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM copy_trades WHERE status = 'closed'")
+                        result = cursor.fetchone()
+                        count = result[0] if result else 0
+                        
+                logging.info(f"📊 Total completed trades: {count}")
+                if count >= 100:
+                    logging.info("✅ Enough data - training ML now...")
+                    self.ml_brain.train_models()
+                else:
+                    logging.info(f"⏳ Need {100-count} more trades for ML training")
+            except Exception as e:
+                logging.error(f"Error checking trades: {e}")
+                
+            return False
+            
+        # ML is trained!
+        logging.info("✅ ML Model is TRAINED and READY!")
+        logging.info(f"🎯 Minimum confidence required: {self.min_ml_confidence:.1%}")
+        
+        # Test prediction
+        try:
+            test_wallet = {'win_rate': 50, 'total_trades': 100}
+            test_token = {
+                'liquidity': 10000,
+                'holders': 100,
+                'volume': 5000,
+                'age': 30,
+                'price': 0.001
+            }
+            
+            action, confidence = self.ml_brain.predict_trade(test_wallet, test_token)
+            logging.info(f"🧪 Test prediction: {action} with {confidence:.1%} confidence")
+            
+        except Exception as e:
+            logging.error(f"❌ ML prediction test failed: {e}")
+            return False
+            
+        return True
+
+    def verify_ml_status(self):
+        """Debug method to check ML status"""
+        logging.info("🔍 === ML STATUS CHECK ===")
+        
+        # Check if ML brain exists
+        if not hasattr(self, 'ml_brain'):
+            logging.error("❌ ML Brain not initialized!")
+            return False
+            
+        # Check if trained
+        if not self.ml_brain or not self.ml_brain.is_trained:
+            logging.error("❌ ML Model not trained!")
+            
+            # Check how many trades we have
+            try:
+                with self.db_manager.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute("SELECT COUNT(*) FROM copy_trades WHERE status = 'closed'")
+                        result = cursor.fetchone()
+                        count = result[0] if result else 0
+                        
+                logging.info(f"📊 Total completed trades: {count}")
+                if count >= 100:
+                    logging.info("✅ Enough data - training ML now...")
+                    self.ml_brain.train_models()
+                else:
+                    logging.info(f"⏳ Need {100-count} more trades for ML training")
+            except Exception as e:
+                logging.error(f"Error checking trades: {e}")
+                
+            return False
+            
+        # ML is trained!
+        logging.info("✅ ML Model is TRAINED and READY!")
+        logging.info(f"🎯 Minimum confidence required: {self.min_ml_confidence:.1%}")
+        
+        # Test prediction
+        try:
+            test_wallet = {'win_rate': 50, 'total_trades': 100}
+            test_token = {
+                'liquidity': 10000,
+                'holders': 100,
+                'volume': 5000,
+                'age': 30,
+                'price': 0.001
+            }
+            
+            action, confidence = self.ml_brain.predict_trade(test_wallet, test_token)
+            logging.info(f"🧪 Test prediction: {action} with {confidence:.1%} confidence")
+            
+        except Exception as e:
+            logging.error(f"❌ ML prediction test failed: {e}")
+            return False
+            
+        return True
+
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -3212,28 +3390,6 @@ def import_sqlite_to_postgres():
     pg_conn.commit()
     logging.info(f"✅ Imported {len(trades)} trades to PostgreSQL!")
 
-
-def is_token_safe(self, token_address):
-        """Check if token is safe from rug pulls"""
-        try:
-            # This is a simplified version - implement full checks
-            liquidity = get_token_liquidity(token_address)
-            holders = get_holder_count(token_address)
-            
-            # Basic safety checks
-            if liquidity < 5000:  # Less than $5k liquidity
-                logging.warning(f"🚨 Low liquidity: ${liquidity}")
-                return False
-                
-            if holders < 50:  # Less than 50 holders
-                logging.warning(f"🚨 Low holders: {holders}")
-                return False
-                
-            return True
-            
-        except Exception as e:
-            logging.error(f"Error checking token safety: {e}")
-            return False  # Default to unsafe
 
 # Helper functions for wallet monitoring
 def get_wallet_recent_buys_helius(wallet_address):
@@ -3372,6 +3528,14 @@ def run_adaptive_ai_system():
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
+
+    ml_working = trader.verify_ml_status()
+    if not ml_working:
+        logging.warning("⚠️ ML NOT WORKING - Attempting to force train...")
+        if trader.force_ml_training():
+            logging.info("✅ ML training successful!")
+        else:
+            logging.error("❌ ML could not be trained - bot will be less effective!")
     
     # CHECK FOR EXISTING POSITIONS FROM BEFORE RESTART
     trader.check_existing_positions_on_startup()
@@ -3461,15 +3625,30 @@ def run_adaptive_ai_system():
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = wallet.get_balance()
-            if current_balance < 2.0:
-                logging.error(f"🚨 EMERGENCY: Balance {current_balance} below 2 SOL minimum")
+            if current_balance < float(CONFIG.get('MIN_WALLET_BALANCE', 1.0)):
+                logging.error(f"🚨 EMERGENCY: Balance {current_balance} below {CONFIG.get('MIN_WALLET_BALANCE', 1.0)} SOL minimum")
                 logging.error("STOPPING ALL TRADING")
                 trader.emergency_sell_all_positions()
                 return  # EXIT THE PROGRAM
                 
+            # LOW BALANCE MODE - Adjust settings dynamically
+            if current_balance < 3.0:
+                # Override configs for safety
+                CONFIG['BASE_POSITION_SIZE'] = '0.02'
+                CONFIG['MAX_POSITION_SIZE'] = '0.05'
+                trader.daily_trade_limit = 10
+                trader.min_ml_confidence = 0.80  # Higher confidence required
+                
+                if not hasattr(trader, 'low_balance_warned'):
+                    logging.warning(f"⚠️ LOW BALANCE MODE ACTIVATED: {current_balance:.3f} SOL")
+                    logging.warning("   Position sizes: 0.02-0.05 SOL")
+                    logging.warning("   Daily limit: 10 trades")
+                    logging.warning("   ML confidence: 80% minimum")
+                    trader.low_balance_warned = True
+                
             # Check session losses
             session_loss = trader.brain.daily_stats.get('pnl_sol', 0)
-            if session_loss < -0.5:  # Lost 0.5 SOL
+            if session_loss < -float(CONFIG.get('DAILY_LOSS_LIMIT', 0.5)):
                 logging.error(f"🚨 SESSION LOSS LIMIT: Lost {session_loss} SOL")
                 logging.error("STOPPING TRADING FOR TODAY")
                 trader.emergency_sell_all_positions()
@@ -3560,6 +3739,12 @@ def run_adaptive_ai_system():
                 stats = trader.brain.daily_stats
                 logging.info("📊 === 5-MINUTE UPDATE ===")
                 
+                # Show balance and config
+                logging.info(f"   Balance: {current_balance:.3f} SOL")
+                logging.info(f"   Position Size: {CONFIG.get('BASE_POSITION_SIZE', '0.05')} SOL")
+                logging.info(f"   Profit Target: {CONFIG.get('PROFIT_TARGET_PERCENT', '15')}%")
+                logging.info(f"   Stop Loss: {CONFIG.get('STOP_LOSS_PERCENT', '6')}%")
+                
                 # Show session info
                 logging.info(f"   Session: #{session_count} today")
                 
@@ -3603,14 +3788,6 @@ def run_adaptive_ai_system():
                                 logging.info(f"   ⏰ Est. Time to Target: {hours_to_target:.1f} hours")
                             elif daily_pnl_usd >= daily_target:
                                 logging.info(f"   ✅ Target reached! Ready for conversion")
-                
-                # Show wallet balance
-                try:
-                    valid_wallet = get_valid_wallet()
-                    balance = valid_wallet.get_balance()
-                    logging.info(f"   Balance: {balance:.3f} SOL")
-                except:
-                    pass
                 
                 # Show which wallets have been most active
                 if hasattr(trader, 'db_manager'):
@@ -3664,6 +3841,9 @@ def run_adaptive_ai_system():
                         
                         if total_trades >= 100:
                             logging.info("   🤖 ML training data: READY (100+ trades)")
+                            if not trader.ml_brain.is_trained:
+                                logging.warning("   ⚠️ ML not trained yet - training now...")
+                                trader.ml_brain.train_models()
                         else:
                             logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
                     except:
@@ -3694,7 +3874,6 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
-
 
 
 # Global rate limiter for Jupiter
