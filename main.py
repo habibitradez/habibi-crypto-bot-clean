@@ -3367,6 +3367,43 @@ class AdaptiveAlphaTrader:
         return True
 
 
+    def save_wallet_status(self):
+        """Save active/disabled wallet status to database"""
+        try:
+            for wallet in self.alpha_wallets:
+                with self.db_manager.get_connection() as conn:
+                    with conn.cursor() as cursor:
+                        cursor.execute('''
+                            INSERT INTO wallet_status (wallet_address, is_active, updated_at)
+                            VALUES (%s, %s, NOW())
+                            ON CONFLICT (wallet_address) 
+                            DO UPDATE SET is_active = EXCLUDED.is_active, updated_at = NOW()
+                        ''', (wallet['address'], wallet.get('active', True)))
+                        conn.commit()
+        except Exception as e:
+            logging.error(f"Error saving wallet status: {e}")
+
+    def load_wallet_status(self):
+        """Load wallet active/disabled status from database"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('SELECT wallet_address, is_active FROM wallet_status')
+                    statuses = cursor.fetchall()
+                    
+            status_dict = {row['wallet_address']: row['is_active'] for row in statuses}
+            
+            # Apply saved status
+            for wallet in self.alpha_wallets:
+                if wallet['address'] in status_dict:
+                    wallet['active'] = status_dict[wallet['address']]
+                    
+            logging.info(f"✅ Loaded wallet status for {len(status_dict)} wallets")
+            
+        except Exception as e:
+            logging.debug(f"No saved wallet status (first run?): {e}")
+
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -3529,6 +3566,8 @@ def run_adaptive_ai_system():
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
 
+    trader.load_wallet_status()
+    
     ml_working = trader.verify_ml_status()
     if not ml_working:
         logging.warning("⚠️ ML NOT WORKING - Attempting to force train...")
@@ -3731,6 +3770,7 @@ def run_adaptive_ai_system():
                                 if not wallet.get('active', True):
                                     wallet['active'] = True
                                     logging.info(f"✅ Re-enabling high performer: {wallet['name']} ({win_rate:.1f}% WR)")
+                                    trader.save_wallet_status()
             
             # 7. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
