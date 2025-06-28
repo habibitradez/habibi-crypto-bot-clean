@@ -1,7 +1,10 @@
 import psycopg2
 import os
 
-
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    print("Set DATABASE_URL environment variable!")
+    exit(1)
 
 try:
     conn = psycopg2.connect(DATABASE_URL)
