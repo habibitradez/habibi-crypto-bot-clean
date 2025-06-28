@@ -90,7 +90,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -1183,6 +1183,16 @@ class AdaptiveAlphaTrader:
             'best_trade': 0,
             'worst_trade': 0
         })
+
+        # Safety check for low balance
+        try:
+            current_balance = self.wallet.get_balance()
+            if current_balance < 3.0:
+                self.max_concurrent_positions = 3  # Even fewer positions
+                logging.warning(f"⚠️ Low balance detected ({current_balance:.2f} SOL) - limiting to 3 concurrent positions")
+        except:
+            pass  # Don't fail init if we can't check balance
+            
         
     def add_alpha_wallet(self, wallet_address, name="", style=None):
         """Enhanced version with style support"""
