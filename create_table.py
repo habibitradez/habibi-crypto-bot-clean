@@ -1,7 +1,7 @@
 import psycopg2
 import os
 
-DATABASE_URL = "postgresql://trading_bot_db_26mq_user:cDSnEoOpjYJmo71Duy1tEhM15gPSnF2o@dpg-d1dg0nffte5s73fkm29g-a.oregon-postgres.render.com/trading_bot_db_26mq"
+
 
 try:
     conn = psycopg2.connect(DATABASE_URL)
