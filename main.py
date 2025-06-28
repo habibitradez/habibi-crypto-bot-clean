@@ -3677,7 +3677,7 @@ def run_adaptive_ai_system():
             iteration += 1
             
             # EMERGENCY STOP CHECKS - CRITICAL!
-            current_balance = wallet.get_balance()  # This is the global wallet object
+            current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
             if current_balance < float(CONFIG.get('MIN_WALLET_BALANCE', 1.0)):
                 logging.error(f"🚨 EMERGENCY: Balance {current_balance} below {CONFIG.get('MIN_WALLET_BALANCE', 1.0)} SOL minimum")
                 logging.error("STOPPING ALL TRADING")
