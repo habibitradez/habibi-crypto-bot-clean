@@ -615,6 +615,10 @@ class MLTradingBrain:
         self.is_trained = False
         self.last_training = None
         self.min_confidence = 0.65  # Minimum confidence to take trade
+
+        import os
+        os.makedirs('ml_models', exist_ok=True)
+        
         
     def prepare_features_from_trade_history(self):
         """Extract features from your actual trading history"""
@@ -3673,7 +3677,7 @@ def run_adaptive_ai_system():
             iteration += 1
             
             # EMERGENCY STOP CHECKS - CRITICAL!
-            current_balance = wallet.get_balance()
+            current_balance = wallet.get_balance()  # This is the global wallet object
             if current_balance < float(CONFIG.get('MIN_WALLET_BALANCE', 1.0)):
                 logging.error(f"🚨 EMERGENCY: Balance {current_balance} below {CONFIG.get('MIN_WALLET_BALANCE', 1.0)} SOL minimum")
                 logging.error("STOPPING ALL TRADING")
@@ -3767,7 +3771,7 @@ def run_adaptive_ai_system():
                 trader.analyze_real_wallet_performance()
                 
                 # Disable poor performers
-                for wallet in trader.alpha_wallets:
+                for alpha_wallet in trader.alpha_wallets:
                     if hasattr(trader, 'db_manager'):
                         wallet_stats = trader.db_manager.get_wallet_stats(wallet['address'])
                         if wallet_stats and wallet_stats['total_trades'] >= 20:
