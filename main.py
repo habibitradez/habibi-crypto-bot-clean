@@ -3561,7 +3561,6 @@ def check_wallet_health():
 
 def run_adaptive_ai_system():
     """Main function to run the complete system with automatic profit conversion for 24/7 trading"""
-
     global wallet
     # Add this check
     if wallet is None:
@@ -3579,7 +3578,6 @@ def run_adaptive_ai_system():
     
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
-
     trader.load_wallet_status()
     
     ml_working = trader.verify_ml_status()
@@ -3616,10 +3614,10 @@ def run_adaptive_ai_system():
             top_wallets = trader.db_manager.get_top_wallets(min_trades=5, limit=10)
             if top_wallets:
                 logging.info("\n🏆 TOP PERFORMERS (from previous trades):")
-                for i, wallet in enumerate(top_wallets[:5]):
-                    win_rate = (wallet['wins'] / wallet['total_trades']) * 100 if wallet['total_trades'] > 0 else 0
-                    wallet_name = next((name for addr, name in ALPHA_WALLETS_CONFIG if addr == wallet['wallet_address']), wallet['wallet_address'][:8])
-                    logging.info(f"   {i+1}. {wallet_name}: {win_rate:.1f}% WR, {wallet['total_profit_sol']:.3f} SOL, {wallet['total_trades']} trades")
+                for i, w in enumerate(top_wallets[:5]):
+                    win_rate = (w['wins'] / w['total_trades']) * 100 if w['total_trades'] > 0 else 0
+                    wallet_name = next((name for addr, name in ALPHA_WALLETS_CONFIG if addr == w['wallet_address']), w['wallet_address'][:8])
+                    logging.info(f"   {i+1}. {wallet_name}: {win_rate:.1f}% WR, {w['total_profit_sol']:.3f} SOL, {w['total_trades']} trades")
             else:
                 logging.info("📊 No historical data yet - will learn which wallets are best as we trade!")
         except Exception as e:
@@ -3627,8 +3625,8 @@ def run_adaptive_ai_system():
     
     # Show wallet styles breakdown
     style_counts = {}
-    for wallet in trader.alpha_wallets:
-        style = wallet.get('style', 'UNKNOWN')
+    for w in trader.alpha_wallets:
+        style = w.get('style', 'UNKNOWN')
         style_counts[style] = style_counts.get(style, 0) + 1
     
     logging.info("\n📈 Wallet Style Distribution:")
@@ -3773,18 +3771,20 @@ def run_adaptive_ai_system():
                 # Disable poor performers
                 for alpha_wallet in trader.alpha_wallets:
                     if hasattr(trader, 'db_manager'):
-                        wallet_stats = trader.db_manager.get_wallet_stats(wallet['address'])
+                        wallet_stats = trader.db_manager.get_wallet_stats(alpha_wallet['address'])
                         if wallet_stats and wallet_stats['total_trades'] >= 20:
                             win_rate = (wallet_stats['wins'] / wallet_stats['total_trades']) * 100
                             if win_rate < 40:
-                                if wallet.get('active', True):
-                                    wallet['active'] = False
-                                    logging.warning(f"❌ Disabling poor performer: {wallet['name']} ({win_rate:.1f}% WR)")
+                                if alpha_wallet.get('active', True):
+                                    alpha_wallet['active'] = False
+                                    logging.warning(f"❌ Disabling poor performer: {alpha_wallet['name']} ({win_rate:.1f}% WR)")
                             elif win_rate > 70 and wallet_stats['total_profit_sol'] > 0.5:
-                                if not wallet.get('active', True):
-                                    wallet['active'] = True
-                                    logging.info(f"✅ Re-enabling high performer: {wallet['name']} ({win_rate:.1f}% WR)")
-                                    trader.save_wallet_status()
+                                if not alpha_wallet.get('active', True):
+                                    alpha_wallet['active'] = True
+                                    logging.info(f"✅ Re-enabling high performer: {alpha_wallet['name']} ({win_rate:.1f}% WR)")
+                
+                # Save wallet status after changes
+                trader.save_wallet_status()
             
             # 7. Show stats every 5 minutes
             if current_time - last_stats_time > 300:
@@ -3860,8 +3860,8 @@ def run_adaptive_ai_system():
                         
                         if recent_active:
                             logging.info("   Most active (last hour):")
-                            for wallet in recent_active:
-                                logging.info(f"      {wallet['wallet_name']}: {wallet['recent_trades']} signals")
+                            for w in recent_active:
+                                logging.info(f"      {w['wallet_name']}: {w['recent_trades']} signals")
                     except:
                         pass
                 
