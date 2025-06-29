@@ -1481,6 +1481,13 @@ class AdaptiveAlphaTrader:
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
         try:
+            # STRATEGY 1: Use learned data from profitable wallets
+            self.find_opportunities_using_learned_data()
+            
+            # STRATEGY 2: Use ML to find winning patterns
+            self.use_ml_for_independent_hunting()
+            
+            # STRATEGY 3: Your existing pattern detection (keep as fallback)
             # Use your EXISTING token discovery function
             logging.info("🔍 Scanning for independent opportunities...")
             new_tokens = enhanced_find_newest_tokens_with_free_apis()[:50]  # Get more tokens to analyze
@@ -1590,6 +1597,181 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error in independent hunting: {e}")
             logging.error(traceback.format_exc())
+
+    def find_opportunities_using_learned_data(self):
+        """Use our learned wallet data to find tokens that profitable wallets are buying"""
+        try:
+            # Get the ACTUAL best performing wallets from YOUR data
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    # Find wallets that made money in last 48 hours
+                    cursor.execute('''
+                        SELECT DISTINCT wallet_address
+                        FROM copy_trades
+                        WHERE status = 'closed'
+                        AND created_at > NOW() - INTERVAL '48 hours'
+                        AND profit_sol > 0.01
+                        GROUP BY wallet_address
+                        HAVING SUM(profit_sol) > 0.1
+                        AND COUNT(*) >= 3
+                    ''')
+                    profitable_wallets = [row['wallet_address'] for row in cursor.fetchall()]
+            
+            if not profitable_wallets:
+                logging.warning("No profitable wallets found in recent data")
+                return
+                
+            logging.info(f"🎯 Scanning {len(profitable_wallets)} PROVEN profitable wallets")
+            
+            # Check what these profitable wallets are buying NOW
+            for wallet in profitable_wallets[:10]:  # Top 10
+                try:
+                    recent_buys = get_wallet_recent_buys_helius(wallet)
+                    
+                    for buy in recent_buys[:2]:  # Check their last 2 buys
+                        token = buy['token']
+                        
+                        # Skip if we already have it
+                        if token in self.positions or token in self.monitoring:
+                            continue
+                            
+                        # Get token data
+                        token_data = self.get_token_snapshot(token)
+                        if not token_data or token_data.get('price', 0) == 0:
+                            continue
+                            
+                        # Count how many profitable wallets bought this
+                        buyers_count = 1
+                        for other_wallet in profitable_wallets[1:5]:
+                            other_buys = get_wallet_recent_buys_helius(other_wallet)
+                            if any(b['token'] == token for b in other_buys):
+                                buyers_count += 1
+                                
+                        # If multiple profitable wallets are buying, it's interesting
+                        if buyers_count >= 2:
+                            logging.info(f"🔥 HOT TOKEN: {token[:8]} bought by {buyers_count} profitable wallets!")
+                            logging.info(f"   Liquidity: ${token_data.get('liquidity', 0):,.0f}")
+                            logging.info(f"   Age: {token_data.get('age', 0):.0f} minutes")
+                            
+                            # Take a position with confidence based on buyer count
+                            confidence_multiplier = min(buyers_count * 0.3, 1.5)  # More buyers = bigger position
+                            position_size = 0.02 * confidence_multiplier
+                            
+                            self.execute_trade(
+                                token,
+                                'DATA_DRIVEN_BUY',
+                                position_size,
+                                token_data['price'],
+                                source_wallet='LEARNED_PATTERN'
+                            )
+                            
+                            logging.info(f"✅ DATA-DRIVEN BUY: {position_size:.3f} SOL based on {buyers_count} smart wallets")
+                            return  # One trade at a time
+                            
+                except Exception as e:
+                    logging.error(f"Error checking profitable wallet {wallet[:8]}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logging.error(f"Error in data-driven hunting: {e}")
+
+    def use_ml_for_independent_hunting(self):
+        """Let ML find patterns in successful trades and hunt similar tokens"""
+        try:
+            if not self.ml_brain or not self.ml_brain.is_trained:
+                return
+                
+            # Get characteristics of our winning trades
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''
+                        SELECT token_address, entry_price, profit_pct
+                        FROM copy_trades
+                        WHERE status = 'closed'
+                        AND profit_pct > 20
+                        AND created_at > NOW() - INTERVAL '7 days'
+                        ORDER BY profit_pct DESC
+                        LIMIT 20
+                    ''')
+                    winning_trades = cursor.fetchall()
+                    
+            if not winning_trades:
+                return
+                
+            # Find similar tokens
+            new_tokens = enhanced_find_newest_tokens_with_free_apis()[:30]
+            
+            for token in new_tokens:
+                try:
+                    token_data = self.get_token_snapshot(token)
+                    if not token_data:
+                        continue
+                        
+                    # Use ML to score this token
+                    # Create fake "perfect wallet" stats for independent trades
+                    perfect_wallet_stats = {
+                        'win_rate': 70,  # Assume we're good at picking
+                        'total_trades': 100,
+                        'avg_profit_per_trade': 0.02
+                    }
+                    
+                    action, confidence = self.ml_brain.predict_trade(
+                        perfect_wallet_stats,
+                        token_data
+                    )
+                    
+                    if action == 'STRONG_BUY' and confidence > 0.8:
+                        logging.info(f"🧠 ML FOUND OPPORTUNITY: {token[:8]}")
+                        logging.info(f"   Confidence: {confidence:.1%}")
+                        logging.info(f"   Liquidity: ${token_data.get('liquidity', 0):,.0f}")
+                        
+                        self.execute_trade(
+                            token,
+                            'ML_HUNT',
+                            0.03,  # Slightly bigger for high confidence
+                            token_data['price'],
+                            source_wallet='ML_PATTERN'
+                        )
+                        return
+                        
+                except Exception as e:
+                    continue
+                    
+        except Exception as e:
+            logging.error(f"Error in ML hunting: {e}")
+
+    def calculate_required_trades_for_target(self):
+        """Calculate how many trades we need to hit daily target"""
+        daily_target = 500  # $500
+        sol_price = 240
+        target_sol = daily_target / sol_price  # ~2.08 SOL
+        
+        current_pnl = self.brain.daily_stats.get('pnl_sol', 0)
+        needed_sol = target_sol - current_pnl
+        
+        if needed_sol > 0:
+            # Assume 25% profit per trade with 60% win rate
+            avg_profit_per_win = 0.02 * 0.25  # 0.005 SOL per win
+            avg_loss_per_loss = 0.02 * 0.06   # 0.0012 SOL per loss
+            
+            # Expected value per trade
+            ev_per_trade = (0.6 * avg_profit_per_win) - (0.4 * avg_loss_per_loss)
+            
+            trades_needed = int(needed_sol / ev_per_trade) if ev_per_trade > 0 else 999
+            
+            logging.info(f"📊 Target Analysis:")
+            logging.info(f"   Daily target: ${daily_target}")
+            logging.info(f"   Current P&L: ${current_pnl * sol_price:.0f}")
+            logging.info(f"   Need: ${needed_sol * sol_price:.0f} more")
+            logging.info(f"   Estimated trades needed: {trades_needed}")
+            
+            # If we need many trades, be more aggressive
+            if trades_needed > 20 and self.brain.daily_stats['trades'] < 5:
+                logging.warning("⚡ AGGRESSIVE MODE: Need more trades to hit target")
+                self.min_ml_confidence = 0.65  # Lower threshold
+                self.daily_trade_limit = 30    # Allow more trades
+                
+        return needed_sol
     
     def on_alpha_buy_detected(self, wallet_address, token_address, amount):
         """Called when an alpha wallet buys - starts monitoring"""
@@ -3969,6 +4151,9 @@ def run_adaptive_ai_system():
                 
                 # Show hot wallets from last 24 hours
                 trader.get_24h_profitable_wallets()
+                
+                # Calculate progress to daily target
+                trader.calculate_required_trades_for_target()
 
                 # Show tracked wallet learning data
                 if hasattr(trader, 'wallet_learning_data'):
