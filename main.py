@@ -1744,7 +1744,7 @@ class AdaptiveAlphaTrader:
 
     def calculate_required_trades_for_target(self):
         """Calculate how many trades we need to hit daily target"""
-        daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 50))
+        daily_target = float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
         sol_price = 240
         target_sol = daily_target / sol_price  # ~2.08 SOL
         
@@ -3168,7 +3168,7 @@ class AdaptiveAlphaTrader:
             daily_pnl_usd = daily_pnl_sol * 240  # Assuming $240/SOL
         
             # Check if we've hit the daily target
-            daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 50))
+            daily_target = float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
         
             if daily_pnl_usd >= daily_target:
                 logging.info(f"🎯 Daily target hit! ${daily_pnl_usd:.0f} >= ${daily_target}")
@@ -4575,7 +4575,7 @@ def run_adaptive_ai_system():
                 # Show progress toward target
                 daily_pnl_sol = stats.get('pnl_sol', 0)
                 daily_pnl_usd = daily_pnl_sol * 240
-                daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 50))
+                daily_target = float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
                 progress_pct = (daily_pnl_usd / daily_target) * 100 if daily_target > 0 else 0
                 
                 logging.info(f"   Session P&L: {daily_pnl_sol:+.3f} SOL (${daily_pnl_usd:+.0f})")
