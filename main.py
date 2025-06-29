@@ -1480,6 +1480,7 @@ class AdaptiveAlphaTrader:
             
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
+        logging.warning("🔍 INDEPENDENT HUNT TRIGGERED!")
         self.enhanced_independent_hunting()
         try:
             # STRATEGY 1: Use learned data from profitable wallets
@@ -3820,6 +3821,7 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
+        logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         """Find tokens with explosive momentum like MORI"""
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
@@ -4368,6 +4370,11 @@ def run_adaptive_ai_system():
         try:
             current_time = time.time()
             iteration += 1
+
+            if iteration == 20:  # After 100 seconds
+                logging.error("🧪 FORCING MOMENTUM CHECK")
+                result = trader.detect_momentum_explosion()
+                logging.error(f"🧪 Result: {result}")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
