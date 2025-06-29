@@ -216,7 +216,7 @@ CONFIG = {
     'HELIUS_PRIORITY_FEE': os.environ.get('HELIUS_PRIORITY_FEE', 'true').lower() == 'true',
     'SNIPE_DELAY_SECONDS': float(os.environ.get('SNIPE_DELAY_SECONDS', '0.5')),
     'AUTO_CONVERT_PROFITS': os.getenv('AUTO_CONVERT_PROFITS', 'true').lower() == 'true',
-    'TARGET_DAILY_PROFIT': float(os.getenv('TARGET_DAILY_PROFIT', '500')),
+    'TARGET_DAILY_PROFIT': float(os.getenv('TARGET_DAILY_PROFIT', '50')),
     'CONVERSION_CHECK_INTERVAL': int(os.getenv('CONVERSION_CHECK_INTERVAL', '1800')),
     'MIN_PROFIT_TO_CONVERT': float(os.getenv('MIN_PROFIT_TO_CONVERT', '2.0')),
     'KEEP_TRADING_BALANCE': float(os.getenv('KEEP_TRADING_BALANCE', '4.0')),
@@ -1163,7 +1163,7 @@ class AdaptiveAlphaTrader:
         self.wallet_trade_tracking = {}
         self.daily_trade_limit = 20
         self.last_trade_date = datetime.now().date()
-        self.min_ml_confidence = 0.75
+        self.min_ml_confidence = 0.60
         self.wallet = wallet_instance
         self.alpha_wallets = []
         self.ml_brain = None
