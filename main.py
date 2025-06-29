@@ -1480,6 +1480,7 @@ class AdaptiveAlphaTrader:
             
     def find_opportunities_independently(self):
         """Hunt for opportunities without waiting for alpha signals"""
+        self.enhanced_independent_hunting()
         try:
             # STRATEGY 1: Use learned data from profitable wallets
             self.find_opportunities_using_learned_data()
@@ -3757,6 +3758,359 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error getting 24h profitable wallets: {e}")
             return []
 
+    def find_winning_wallets_from_recent_pumps(self):
+        """Find wallets that bought tokens before they pumped 100%+"""
+        try:
+            winning_wallets = {}
+            
+            # Step 1: Find tokens that pumped hard recently
+            logging.info("🔍 Searching for recent 100%+ pumps...")
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:200]
+            
+            pumped_tokens = []
+            for token in tokens:
+                try:
+                    # Get current price and price 24h ago
+                    current_price = get_token_price(token)
+                    if not current_price:
+                        continue
+                        
+                    # Check age - we want tokens at least 6 hours old
+                    age = get_token_age_minutes(token)
+                    if age < 360:  # Less than 6 hours
+                        continue
+                    
+                    # Calculate price change
+                    price_24h_ago = get_price_minutes_ago(token, 1440)  # 24 hours
+                    if price_24h_ago and price_24h_ago > 0:
+                        price_change = ((current_price - price_24h_ago) / price_24h_ago) * 100
+                        
+                        if price_change > 100:  # 100%+ gain
+                            pumped_tokens.append({
+                                'token': token,
+                                'change': price_change,
+                                'current_price': current_price
+                            })
+                            logging.info(f"   Found pump: {token[:8]} +{price_change:.0f}%")
+                            
+                except Exception as e:
+                    continue
+            
+            # Step 2: For each pumped token, find early buyers
+            for pump in pumped_tokens[:10]:  # Check top 10 pumps
+                try:
+                    # Get transaction history
+                    logging.info(f"   Analyzing buyers of {pump['token'][:8]}...")
+                    
+                    # Get early transactions using Helius
+                    early_buyers = get_wallet_recent_buys_helius(pump['token'])  # This needs modification
+                    
+                    # For now, simulate finding early buyers
+                    # In production, you'd need to get token transaction history
+                    
+                except Exception as e:
+                    logging.error(f"Error analyzing token {pump['token'][:8]}: {e}")
+                    continue
+            
+            # Return list of winning wallets found
+            return list(winning_wallets.keys())[:10]
+            
+        except Exception as e:
+            logging.error(f"Error finding winning wallets: {e}")
+            return []
+
+    def detect_momentum_explosion(self):
+        """Find tokens with explosive momentum like MORI"""
+        try:
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+            
+            for token in tokens:
+                try:
+                    # Get price now and 5 minutes ago
+                    current_price = get_token_price(token)
+                    price_5m_ago = get_price_minutes_ago(token, 5)
+                    
+                    if current_price and price_5m_ago and price_5m_ago > 0:
+                        price_change_5m = ((current_price - price_5m_ago) / price_5m_ago) * 100
+                        
+                        # Look for 10%+ move in 5 minutes
+                        if price_change_5m > 10:
+                            volume = get_24h_volume(token)
+                            liquidity = get_token_liquidity(token)
+                            
+                            if liquidity and volume > liquidity * 2:
+                                logging.warning(f"🚀 EXPLOSIVE MOMENTUM: {token[:8]}")
+                                logging.warning(f"   5min change: {price_change_5m:.1f}%")
+                                logging.warning(f"   Volume/Liq ratio: {volume/liquidity:.1f}")
+                                
+                                # Take position immediately
+                                self.execute_trade(
+                                    token,
+                                    'MOMENTUM_EXPLOSION',
+                                    0.05,  # Bigger position for momentum
+                                    current_price,
+                                    source_wallet='MOMENTUM_DETECT'
+                                )
+                                return True
+                                
+                except Exception as e:
+                    continue
+                    
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error in momentum detection: {e}")
+            return False
+
+    def find_pre_pump_patterns(self):
+        """Find tokens showing pre-pump patterns like MORI before it pumped"""
+        try:
+            candidates = []
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+            
+            for token in tokens:
+                try:
+                    # Pattern 1: New token (1-3 hours) with growing volume
+                    age = get_token_age_minutes(token)
+                    if not (60 < age < 180):  # 1-3 hours old
+                        continue
+                        
+                    # Pattern 2: Check holder growth
+                    holders = get_holder_count(token)
+                    if not holders or holders < 50:
+                        continue
+                        
+                    # Pattern 3: Volume surge
+                    volume = get_24h_volume(token)
+                    liquidity = get_token_liquidity(token)
+                    
+                    if not liquidity or liquidity < 5000:
+                        continue
+                        
+                    volume_ratio = volume / liquidity
+                    
+                    # Pattern 4: Price starting to move
+                    current_price = get_token_price(token)
+                    price_30m_ago = get_price_minutes_ago(token, 30)
+                    
+                    if current_price and price_30m_ago and price_30m_ago > 0:
+                        price_change_30m = ((current_price - price_30m_ago) / price_30m_ago) * 100
+                        
+                        # Sweet spot: moving but not pumped yet
+                        if 10 < price_change_30m < 50 and volume_ratio > 3:
+                            score = (holders * 0.1) + (price_change_30m * 2) + (volume_ratio * 10)
+                            
+                            candidates.append({
+                                'token': token,
+                                'score': score,
+                                'holders': holders,
+                                'price_change': price_change_30m,
+                                'volume_ratio': volume_ratio,
+                                'liquidity': liquidity
+                            })
+                            
+                except Exception as e:
+                    continue
+            
+            # Sort by score and return best candidate
+            candidates.sort(key=lambda x: x['score'], reverse=True)
+            
+            if candidates:
+                best = candidates[0]
+                logging.warning(f"🎯 PRE-PUMP PATTERN DETECTED: {best['token'][:8]}")
+                logging.warning(f"   Score: {best['score']:.0f}")
+                logging.warning(f"   Holders: {best['holders']}")
+                logging.warning(f"   Price: +{best['price_change']:.1f}% (early stage)")
+                logging.warning(f"   Volume: {best['volume_ratio']:.1f}x liquidity")
+                logging.warning(f"   Liquidity: ${best['liquidity']:,.0f}")
+                
+                # Execute trade on best candidate
+                self.execute_trade(
+                    best['token'],
+                    'PRE_PUMP_PATTERN',
+                    0.04,
+                    get_token_price(best['token']),
+                    source_wallet='PATTERN_DETECT'
+                )
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logging.error(f"Error in pre-pump detection: {e}")
+            return False
+
+    def auto_discover_profitable_wallets(self):
+        """Automatically find and add profitable wallets to follow"""
+        try:
+            logging.info("🤖 Auto-discovering profitable wallets...")
+            
+            # Method 1: Find wallets from recent pumps
+            pump_wallets = self.find_winning_wallets_from_recent_pumps()
+            
+            # Method 2: Find wallets from your profitable trades
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''
+                        SELECT DISTINCT wallet_address, wallet_name,
+                               SUM(profit_sol) as total_profit,
+                               COUNT(*) as trades,
+                               SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins
+                        FROM copy_trades
+                        WHERE status = 'closed'
+                        AND created_at > NOW() - INTERVAL '7 days'
+                        GROUP BY wallet_address, wallet_name
+                        HAVING SUM(profit_sol) > 0.5
+                        AND COUNT(*) >= 5
+                        ORDER BY total_profit DESC
+                        LIMIT 10
+                    ''')
+                    profitable_db_wallets = cursor.fetchall()
+            
+            # Add newly discovered wallets
+            new_wallets_added = 0
+            
+            # Add pump wallets
+            for wallet in pump_wallets:
+                if not any(w['address'] == wallet for w in self.alpha_wallets):
+                    self.add_alpha_wallet(wallet, f"AutoPump{new_wallets_added+1}", style='SCALPER')
+                    logging.info(f"✅ Added winning wallet: {wallet[:8]}...")
+                    new_wallets_added += 1
+            
+            # Add profitable wallets from database
+            for wallet in profitable_db_wallets:
+                if not any(w['address'] == wallet['wallet_address'] for w in self.alpha_wallets):
+                    win_rate = (wallet['wins'] / wallet['trades']) * 100
+                    self.add_alpha_wallet(
+                        wallet['wallet_address'], 
+                        f"Proven{new_wallets_added+1}",
+                        style='SCALPER'
+                    )
+                    logging.info(f"✅ Added proven wallet: {wallet['wallet_name']} ({win_rate:.0f}% WR)")
+                    new_wallets_added += 1
+            
+            logging.info(f"🎉 Added {new_wallets_added} new profitable wallets!")
+            
+            # Disable bad wallets
+            for wallet in self.alpha_wallets:
+                if hasattr(self, 'db_manager'):
+                    stats = self.db_manager.get_wallet_stats(wallet['address'])
+                    if stats and stats['total_trades'] > 20:
+                        win_rate = (stats['wins'] / stats['total_trades']) * 100
+                        if win_rate < 30:
+                            wallet['active'] = False
+                            logging.warning(f"❌ Disabled poor wallet: {wallet['name']} ({win_rate:.0f}% WR)")
+            
+            return new_wallets_added
+            
+        except Exception as e:
+            logging.error(f"Error in auto-discovery: {e}")
+            return 0
+
+    def enhanced_independent_hunting(self):
+        """Enhanced hunting that combines all strategies"""
+        try:
+            # Strategy 1: Detect momentum explosions
+            if self.detect_momentum_explosion():
+                return  # Found and traded
+                
+            # Strategy 2: Find pre-pump patterns
+            if self.find_pre_pump_patterns():
+                return  # Found and traded
+                
+            # Strategy 3: Use learned data
+            self.find_opportunities_using_learned_data()
+            
+            # Strategy 4: ML pattern matching
+            self.use_ml_for_independent_hunting()
+            
+        except Exception as e:
+            logging.error(f"Error in enhanced hunting: {e}")
+
+    def track_volume_acceleration(self, token):
+        """Track volume changes to catch surges early"""
+        if not hasattr(self, 'volume_history'):
+            self.volume_history = {}
+            
+        current_volume = get_24h_volume(token)
+        
+        if token not in self.volume_history:
+            self.volume_history[token] = []
+            
+        self.volume_history[token].append({
+            'time': time.time(),
+            'volume': current_volume
+        })
+        
+        # Keep only last 30 minutes
+        cutoff = time.time() - 1800
+        self.volume_history[token] = [v for v in self.volume_history[token] if v['time'] > cutoff]
+        
+        # Detect acceleration
+        if len(self.volume_history[token]) >= 3:
+            recent_vol = self.volume_history[token][-1]['volume']
+            older_vol = self.volume_history[token][-3]['volume']
+            
+            if older_vol > 0:
+                vol_increase = (recent_vol - older_vol) / older_vol
+                if vol_increase > 3:  # 300% volume increase
+                    return True
+        return False
+
+    def detect_whale_accumulation(self, token):
+        """Detect when whales are accumulating"""
+        try:
+            # Get recent large transactions
+            large_buys = 0
+            large_sells = 0
+            
+            # This would need implementation with Helius API
+            # For now, use holder changes as proxy
+            holders_now = get_holder_count(token)
+            holders_10m_ago = get_holder_count_minutes_ago(token, 10)
+            
+            if holders_now and holders_10m_ago:
+                # Rapid holder increase = accumulation
+                holder_increase = holders_now - holders_10m_ago
+                if holder_increase > 20:  # 20+ new holders in 10 minutes
+                    return True
+                    
+        except:
+            pass
+        return False
+
+    def detect_breakout_pattern(self, token):
+        """Detect technical breakout patterns"""
+        try:
+            # Get price history
+            prices = []
+            for minutes_ago in [0, 5, 10, 15, 20, 25, 30]:
+                price = get_price_minutes_ago(token, minutes_ago)
+                if price:
+                    prices.append(price)
+                    
+            if len(prices) < 5:
+                return False
+                
+            # Detect consolidation then breakout
+            recent_prices = prices[:3]  # Last 15 minutes
+            older_prices = prices[3:]   # 15-30 minutes ago
+            
+            # Check if was consolidating
+            old_range = max(older_prices) - min(older_prices)
+            old_avg = sum(older_prices) / len(older_prices)
+            
+            # Check if breaking out
+            current_price = prices[0]
+            
+            if old_avg > 0 and old_range / old_avg < 0.1:  # Was consolidating (10% range)
+                if current_price > max(older_prices) * 1.15:  # Breaking out 15%+
+                    return True
+                    
+        except:
+            pass
+        return False
+
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
@@ -3988,6 +4342,7 @@ def run_adaptive_ai_system():
     last_performance_check = 0
     last_conversion_check = 0
     last_midnight_check = 0
+    last_momentum_check = 0
     iteration = 0
     session_count = 1
     
@@ -4034,7 +4389,7 @@ def run_adaptive_ai_system():
                     logging.warning(f"⚠️ LOW BALANCE MODE ACTIVATED: {current_balance:.3f} SOL")
                     logging.warning("   Position sizes: 0.02-0.05 SOL")
                     logging.warning("   Daily limit: 10 trades")
-                    logging.warning("   ML confidence: 80% minimum")
+                    logging.warning(f"   ML confidence: {trader.min_ml_confidence:.0%} minimum")
                     trader.low_balance_warned = True
                 
             # Check session losses
@@ -4061,6 +4416,36 @@ def run_adaptive_ai_system():
             if current_time - last_hunt_time > 30:
                 last_hunt_time = current_time
                 trader.find_opportunities_independently()
+            
+            # 2.5 AGGRESSIVE MOMENTUM CHECK - Every 15 seconds!
+            if current_time - last_momentum_check > 15:
+                last_momentum_check = current_time
+                # Quick momentum scan for explosive moves
+                trader.detect_momentum_explosion()
+            
+            # ULTRA AGGRESSIVE MODE - Check every 10 seconds for MORI-like setups
+            if os.getenv('AGGRESSIVE_MODE', 'false').lower() == 'true':
+                if iteration % 2 == 0:  # Every 10 seconds
+                    # Quick scan top 20 newest tokens
+                    newest = enhanced_find_newest_tokens_with_free_apis()[:20]
+                    for token in newest:
+                        try:
+                            # All signals must align
+                            if (trader.track_volume_acceleration(token) and 
+                                trader.detect_whale_accumulation(token) and
+                                trader.detect_breakout_pattern(token)):
+                                
+                                logging.error(f"🚨🚨🚨 MORI-LIKE SETUP DETECTED: {token[:8]}")
+                                trader.execute_trade(
+                                    token,
+                                    'MORI_SETUP',
+                                    0.1,  # Bigger position for high confidence
+                                    get_token_price(token),
+                                    source_wallet='MORI_PATTERN'
+                                )
+                                break
+                        except:
+                            continue
             
             # 3. Analyze monitored tokens for opportunities
             if trader.monitoring:
@@ -4108,6 +4493,11 @@ def run_adaptive_ai_system():
                 last_performance_check = current_time
                 trader.analyze_real_wallet_performance()
                 
+                # Auto-discover new profitable wallets
+                new_wallets = trader.auto_discover_profitable_wallets()
+                if new_wallets > 0:
+                    logging.info(f"🎉 Found and added {new_wallets} new profitable wallets!")
+                
                 # Disable poor performers
                 for alpha_wallet in trader.alpha_wallets:
                     if hasattr(trader, 'db_manager'):
@@ -4138,6 +4528,9 @@ def run_adaptive_ai_system():
                 logging.info(f"   Position Size: {CONFIG.get('BASE_POSITION_SIZE', '0.05')} SOL")
                 logging.info(f"   Profit Target: {CONFIG.get('PROFIT_TARGET_PERCENT', '15')}%")
                 logging.info(f"   Stop Loss: {CONFIG.get('STOP_LOSS_PERCENT', '6')}%")
+                logging.info(f"   Pattern Detection: Active")
+                logging.info(f"   Momentum Scan: Every 15 seconds")
+                logging.info(f"   Auto-Discovery: Every hour")
                 
                 # Show session info
                 logging.info(f"   Session: #{session_count} today")
@@ -4165,7 +4558,7 @@ def run_adaptive_ai_system():
                             logging.info(f"   {wallet_name}: {tracked_wr:.0f}% WR from {data['tracked_trades']} tracked trades")
                 
                 # Count sources
-                alpha_tokens = sum(1 for t in trader.monitoring.values() if t['alpha_wallet'] != 'SELF_DISCOVERED')
+                alpha_tokens = sum(1 for t in trader.monitoring.values() if t.get('alpha_wallet', 'SELF_DISCOVERED') != 'SELF_DISCOVERED')
                 hunt_tokens = len(trader.monitoring) - alpha_tokens
                 
                 logging.info(f"   Sources: {alpha_tokens} from alphas, {hunt_tokens} self-discovered")
@@ -4173,7 +4566,7 @@ def run_adaptive_ai_system():
                 logging.info(f"   Session Trades: {stats['trades']} ({stats['wins']} wins)")
                 
                 # Show progress toward target
-                daily_pnl_sol = stats['pnl_sol']
+                daily_pnl_sol = stats.get('pnl_sol', 0)
                 daily_pnl_usd = daily_pnl_sol * 240
                 daily_target = float(CONFIG.get('TARGET_DAILY_PROFIT', 500))
                 progress_pct = (daily_pnl_usd / daily_target) * 100 if daily_target > 0 else 0
@@ -4283,7 +4676,6 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
-
 
 # Global rate limiter for Jupiter
 class RateLimiter:
