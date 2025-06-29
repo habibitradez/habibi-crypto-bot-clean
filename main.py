@@ -1160,6 +1160,7 @@ class AdaptiveAlphaTrader:
     
     def __init__(self, wallet_instance):
         self.daily_trades = 0
+        self.wallet_trade_tracking = {}
         self.daily_trade_limit = 20
         self.last_trade_date = datetime.now().date()
         self.min_ml_confidence = 0.75
@@ -1284,11 +1285,34 @@ class AdaptiveAlphaTrader:
                         if not self.ml_brain or not self.ml_brain.is_trained:
                             logging.warning("⚠️ ML not trained - attempting to train")
                             self.force_ml_training()
+
+                        # Debug wallet stats
+                        logging.debug(f"Wallet stats for {alpha['name']}: {wallet_stats}")
+                        
+                        # TRACK ALL TRADES FOR LEARNING
+                        if not wallet_stats or wallet_stats['total_trades'] < 5:
+                            logging.warning(f"❌ No/few stats for {alpha['name']} - tracking outcome for learning")
+                            self.track_wallet_trade_outcome(alpha['address'], buy['token'])
+                            
+                            # For unknown wallets, be extra cautious
+                            if token_data.get('liquidity', 0) < 10000:
+                                logging.info(f"❌ Unknown wallet + low liquidity - skipping but tracking")
+                                continue
+                            if token_data.get('holders', 0) < 100:
+                                logging.info(f"❌ Unknown wallet + few holders - skipping but tracking")
+                                continue
+                                
+                            # Use conservative stats for ML
+                            wallet_stats = {
+                                'win_rate': 30,  # Assume bad until proven
+                                'total_trades': 1,
+                                'avg_profit_per_trade': -0.01
+                            }
                         
                         # ML FILTERING - THIS IS CRITICAL!
                         if hasattr(self, 'ml_brain') and self.ml_brain and self.ml_brain.is_trained and wallet_stats:
                             action, confidence = self.ml_brain.predict_trade(
-                                wallet_stats or {'win_rate': 50, 'total_trades': 0}, 
+                                wallet_stats, 
                                 token_data
                             )
                             
@@ -1299,6 +1323,8 @@ class AdaptiveAlphaTrader:
                             # ONLY TAKE HIGH CONFIDENCE TRADES
                             if action not in ['STRONG_BUY', 'BUY'] or confidence < self.min_ml_confidence:
                                 logging.info(f"❌ ML REJECTED: {alpha['name']} trade - {confidence:.1%} confidence < {self.min_ml_confidence:.1%} required")
+                                # Still track for learning!
+                                self.track_wallet_trade_outcome(alpha['address'], buy['token'])
                                 continue
                             else:
                                 logging.info(f"✅ ML APPROVED: {alpha['name']} trade - {confidence:.1%} confidence")
@@ -1306,6 +1332,7 @@ class AdaptiveAlphaTrader:
                             # If ML not ready, be extra cautious
                             if not (token_data.get('liquidity', 0) > 10000 and token_data.get('holders', 0) > 100):
                                 logging.warning(f"⚠️ No ML available - skipping low quality token")
+                                self.track_wallet_trade_outcome(alpha['address'], buy['token'])
                                 continue
                         
                         # Check liquidity
@@ -1314,6 +1341,7 @@ class AdaptiveAlphaTrader:
                         
                         if token_data.get('liquidity', 0) < min_liquidity:
                             logging.warning(f"⚠️ Skipping {buy['token'][:8]} - low liquidity ${token_data.get('liquidity', 0)} < ${min_liquidity}")
+                            self.track_wallet_trade_outcome(alpha['address'], buy['token'])
                             continue
                         
                         # ULTRA-CONSERVATIVE POSITION SIZING
@@ -3417,6 +3445,136 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.debug(f"No saved wallet status (first run?): {e}")
 
+    def track_skipped_trade(self, wallet_address, token_address, reason):
+        """Track trades we didn't take to learn from them"""
+        try:
+            # Monitor what happens to tokens we skipped
+            if not hasattr(self, 'skipped_trades'):
+                self.skipped_trades = {}
+            
+            self.skipped_trades[token_address] = {
+                'wallet': wallet_address,
+                'skip_time': time.time(),
+                'skip_reason': reason,
+                'entry_price': get_token_price(token_address)
+            }
+        
+            # Check skipped trades after 30 minutes
+            threading.Timer(1800, self.analyze_skipped_trades).start()
+        
+        except Exception as e:
+            logging.error(f"Error tracking skipped trade: {e}")
+
+    def analyze_skipped_trades(self):
+        """See if we made the right decision skipping trades"""
+        for token, data in list(self.skipped_trades.items()):
+            if time.time() - data['skip_time'] > 1800:  # 30 minutes old
+                current_price = get_token_price(token)
+                if current_price and data['entry_price']:
+                    profit_pct = ((current_price - data['entry_price']) / data['entry_price']) * 100
+                
+                    if profit_pct > 20:
+                        logging.warning(f"😭 MISSED PROFIT: Skipped {token[:8]} - would have made {profit_pct:.1f}%")
+                    elif profit_pct < -10:
+                        logging.info(f"✅ GOOD SKIP: Avoided {token[:8]} - would have lost {abs(profit_pct):.1f}%")
+                    
+                del self.skipped_trades[token]
+
+    def track_wallet_trade_outcome(self, wallet_address, token_address):
+        """Track what happens to tokens wallets buy, even if we don't copy"""
+        try:
+            entry_price = get_token_price(token_address)
+            if not entry_price:
+                return
+                
+            # Store for monitoring
+            tracking_key = f"{wallet_address}_{token_address}"
+            self.wallet_trade_tracking[tracking_key] = {
+                'wallet_address': wallet_address,
+                'token_address': token_address,
+                'entry_price': entry_price,
+                'entry_time': time.time()
+            }
+            
+            # Check outcome after 30 minutes
+            threading.Timer(1800, self.check_wallet_trade_outcome, args=[tracking_key]).start()
+            
+        except Exception as e:
+            logging.error(f"Error tracking wallet trade: {e}")
+
+    def check_wallet_trade_outcome(self, tracking_key):
+        """Check if wallet's trade was profitable"""
+        try:
+            trade = self.wallet_trade_tracking.get(tracking_key)
+            if not trade:
+                return
+                
+            current_price = get_token_price(trade['token_address'])
+            if current_price:
+                profit_pct = ((current_price - trade['entry_price']) / trade['entry_price']) * 100
+                
+                # Log the outcome
+                wallet_name = next((w['name'] for w in self.alpha_wallets if w['address'] == trade['wallet_address']), trade['wallet_address'][:8])
+                
+                if profit_pct > 10:
+                    logging.info(f"📊 TRACKED: {wallet_name} made {profit_pct:.1f}% on {trade['token_address'][:8]} (we skipped)")
+                else:
+                    logging.info(f"📊 TRACKED: {wallet_name} lost {profit_pct:.1f}% on {trade['token_address'][:8]} (we skipped)")
+                
+                # Update wallet learning data
+                if not hasattr(self, 'wallet_learning_data'):
+                    self.wallet_learning_data = {}
+                    
+                if trade['wallet_address'] not in self.wallet_learning_data:
+                    self.wallet_learning_data[trade['wallet_address']] = {
+                        'tracked_trades': 0,
+                        'tracked_wins': 0,
+                        'tracked_profit': 0
+                    }
+                
+                self.wallet_learning_data[trade['wallet_address']]['tracked_trades'] += 1
+                if profit_pct > 0:
+                    self.wallet_learning_data[trade['wallet_address']]['tracked_wins'] += 1
+                self.wallet_learning_data[trade['wallet_address']]['tracked_profit'] += profit_pct
+                    
+            del self.wallet_trade_tracking[tracking_key]
+            
+        except Exception as e:
+            logging.error(f"Error checking trade outcome: {e}")
+
+    def get_24h_profitable_wallets(self):
+        """Query which wallets have been profitable in last 24 hours"""
+        try:
+            with self.db_manager.get_connection() as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute('''
+                        SELECT 
+                            wallet_address,
+                            wallet_name,
+                            COUNT(*) as trades_24h,
+                            SUM(CASE WHEN profit_sol > 0 THEN 1 ELSE 0 END) as wins_24h,
+                            SUM(profit_sol) as profit_24h,
+                            AVG(profit_pct) as avg_profit_pct
+                        FROM copy_trades
+                        WHERE status = 'closed'
+                        AND created_at > NOW() - INTERVAL '24 hours'
+                        GROUP BY wallet_address, wallet_name
+                        HAVING COUNT(*) >= 3
+                        ORDER BY profit_24h DESC
+                    ''')
+                    results = cursor.fetchall()
+                    
+            logging.info("\n🔥 HOT WALLETS (Last 24 Hours):")
+            for wallet in results[:5]:
+                win_rate = (wallet['wins_24h'] / wallet['trades_24h']) * 100
+                logging.info(f"   {wallet['wallet_name']}: {win_rate:.0f}% WR, {wallet['profit_24h']:.3f} SOL profit, {wallet['trades_24h']} trades")
+                
+            return results
+            
+        except Exception as e:
+            logging.error(f"Error getting 24h profitable wallets: {e}")
+            return []
+
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
@@ -3808,6 +3966,18 @@ def run_adaptive_ai_system():
                 
                 logging.info(f"   Alpha Wallets: {active_wallets} active, {disabled_wallets} disabled")
                 logging.info(f"   Monitoring: {len(trader.monitoring)} tokens")
+                
+                # Show hot wallets from last 24 hours
+                trader.get_24h_profitable_wallets()
+
+                # Show tracked wallet learning data
+                if hasattr(trader, 'wallet_learning_data'):
+                    logging.info("\n📚 WALLET LEARNING DATA (Tracked Trades):")
+                    for wallet_addr, data in list(trader.wallet_learning_data.items())[:5]:
+                        if data['tracked_trades'] > 0:
+                            tracked_wr = (data['tracked_wins'] / data['tracked_trades']) * 100
+                            wallet_name = next((w['name'] for w in trader.alpha_wallets if w['address'] == wallet_addr), wallet_addr[:8])
+                            logging.info(f"   {wallet_name}: {tracked_wr:.0f}% WR from {data['tracked_trades']} tracked trades")
                 
                 # Count sources
                 alpha_tokens = sum(1 for t in trader.monitoring.values() if t['alpha_wallet'] != 'SELF_DISCOVERED')
