@@ -4028,7 +4028,7 @@ def run_adaptive_ai_system():
                 CONFIG['BASE_POSITION_SIZE'] = '0.02'
                 CONFIG['MAX_POSITION_SIZE'] = '0.05'
                 trader.daily_trade_limit = 10
-                trader.min_ml_confidence = 0.80  # Higher confidence required
+                trader.min_ml_confidence = float(os.getenv('ML_CONFIDENCE_OVERRIDE', '0.65'))
                 
                 if not hasattr(trader, 'low_balance_warned'):
                     logging.warning(f"⚠️ LOW BALANCE MODE ACTIVATED: {current_balance:.3f} SOL")
