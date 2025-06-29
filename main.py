@@ -3821,13 +3821,15 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         """Find tokens with explosive momentum like MORI"""
+        logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+            tokens_checked = 0
             
             for token in tokens:
                 try:
+                    tokens_checked += 1
                     # Get price now and 5 minutes ago
                     current_price = get_token_price(token)
                     price_5m_ago = get_price_minutes_ago(token, 5)
@@ -3835,8 +3837,14 @@ class AdaptiveAlphaTrader:
                     if current_price and price_5m_ago and price_5m_ago > 0:
                         price_change_5m = ((current_price - price_5m_ago) / price_5m_ago) * 100
                         
-                        # Look for 10%+ move in 5 minutes
-                        if price_change_5m > 10:
+                        # ADD DETAILED LOGGING HERE:
+                        if price_change_5m > 5:  # Log anything moving 5%+
+                            volume = get_24h_volume(token)
+                            liquidity = get_token_liquidity(token)
+                            logging.info(f"📈 Token {token[:8]} moved {price_change_5m:.1f}% in 5min, Liq: ${liquidity:,.0f}, Vol: ${volume:,.0f}")
+                        
+                        # LOWERED THRESHOLD FOR TESTING:
+                        if price_change_5m > 5:  # Changed from 10% to 5%
                             volume = get_24h_volume(token)
                             liquidity = get_token_liquidity(token)
                             
@@ -3854,10 +3862,15 @@ class AdaptiveAlphaTrader:
                                     source_wallet='MOMENTUM_DETECT'
                                 )
                                 return True
+                            else:
+                                # Log why it's being skipped
+                                if liquidity:
+                                    logging.info(f"   ❌ Skipped {token[:8]}: Volume/Liq ratio only {volume/liquidity:.1f} (need 2.0+)")
                                 
                 except Exception as e:
                     continue
                     
+            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens, no trades taken")
             return False
             
         except Exception as e:
