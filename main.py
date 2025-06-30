@@ -3826,6 +3826,10 @@ class AdaptiveAlphaTrader:
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
             tokens_checked = 0
+
+            logging.info(f"🔍 Checking {len(tokens)} tokens")
+            if tokens:
+                logging.info(f"   Sample tokens: {tokens[0][:8]}, {tokens[1][:8]}, {tokens[2][:8]}")
             
             for token in tokens:
                 try:
@@ -4127,6 +4131,31 @@ class AdaptiveAlphaTrader:
         return False
 
 
+    def debug_check_hot_tokens(self):
+        """Check specific tokens that are pumping"""
+        hot_tokens = [
+            # Add some token addresses from DEXScreener that are pumping
+            # You can get these by clicking on the tokens
+        ]
+    
+        for token in hot_tokens:
+            try:
+                price = get_token_price(token)
+                liquidity = get_token_liquidity(token)
+                volume = get_24h_volume(token)
+            
+                logging.warning(f"🔥 HOT TOKEN CHECK: {token[:8]}")
+                logging.warning(f"   Price: {price}, Liq: ${liquidity:,.0f}, Vol: ${volume:,.0f}")
+            
+                # Check if any alpha wallet bought it
+                for alpha in self.alpha_wallets[:5]:
+                    buys = get_wallet_recent_buys_helius(alpha['address'])
+                    if buys and any(buy['token'] == token for buy in buys):
+                        logging.warning(f"   ✅ {alpha['name']} bought this!")
+                    
+            except Exception as e:
+                logging.error(f"Error checking {token}: {e}")
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -4388,6 +4417,45 @@ def run_adaptive_ai_system():
                 logging.error("🧪 FORCING MOMENTUM CHECK")
                 result = trader.detect_momentum_explosion()
                 logging.error(f"🧪 Result: {result}")
+
+            # Debug section 1 - Test worthless coin
+            if iteration % 20 == 0:  # Every 100 seconds
+                # Test worthless coin
+                test_token = "GEo9uMBTvagNAX6Paf4KEuZ94Wi5K1ZjYfvhoSfKpump"
+    
+                logging.error("🧪 TESTING WORTHLESS COIN")
+    
+                # Get current data
+                current_price = get_token_price(test_token)
+                price_5m_ago = get_price_minutes_ago(test_token, 5)
+                liquidity = get_token_liquidity(test_token)
+                volume = get_24h_volume(test_token)
+                age = get_token_age_minutes(test_token)
+    
+                logging.error(f"   Current Price: {current_price}")
+                logging.error(f"   Price 5m ago: {price_5m_ago}")
+                logging.error(f"   Liquidity: ${liquidity:,.0f if liquidity else 0}")
+                logging.error(f"   Volume: ${volume:,.0f if volume else 0}")
+                logging.error(f"   Age: {age} minutes")
+     
+                if current_price and price_5m_ago:
+                    change = ((current_price - price_5m_ago) / price_5m_ago) * 100
+                    logging.error(f"   5min change: {change:.1f}%")
+        
+                # Check if any alpha bought it
+                for alpha in trader.alpha_wallets[:3]:
+                    buys = get_wallet_recent_buys_helius(alpha['address'])
+                    if buys:
+                        for buy in buys:
+                            if buy['token'] == test_token:
+                                logging.error(f"   ✅ {alpha['name']} BOUGHT THIS!")
+    
+                 # Check if it's in token discovery
+                 tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+                 if test_token in tokens:
+                     logging.error("   ✅ Token IS in discovery list")
+                 else:
+                      logging.error("   ❌ Token NOT in discovery list")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
