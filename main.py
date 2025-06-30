@@ -4315,7 +4315,7 @@ class AdaptiveAlphaTrader:
         # Start with base adjustments
         if strategy == 'MOMENTUM_EXPLOSION':
             # Check signal strength
-            volume_ratio = token_data.get('volume', 0) / max(token_data.get('liquidity', 1), 1)
+            volume_ratio = token_data.get('volume_ratio', token_data.get('volume', 0) / max(token_data.get('liquidity', 1), 1))
             
             if volume_ratio > 5 and ml_confidence > 0.75:
                 # SUPER strong signal - bet bigger
@@ -4331,23 +4331,20 @@ class AdaptiveAlphaTrader:
             # Non-momentum trades stay smaller
             position_size = 0.03
         
-        # Apply Kelly Criterion for optimal sizing
-        if ml_confidence > 0.5:
-            win_rate = self.brain.get_strategy_stats(strategy).get('win_rate', 0.41)
-            avg_win = self.brain.get_strategy_stats(strategy).get('avg_win', 0.5)
-            avg_loss = abs(self.brain.get_strategy_stats(strategy).get('avg_loss', 0.15))
-            
-            # Kelly formula: f = (p*b - q) / b
-            # where p = win rate, q = loss rate, b = win/loss ratio
-            if avg_loss > 0:
-                b = avg_win / avg_loss
-                p = win_rate
-                q = 1 - p
-                kelly_fraction = (p * b - q) / b
+        # Apply Kelly Criterion for optimal sizing (if we have stats)
+        if ml_confidence > 0.5 and hasattr(self.brain, 'strategy_performance'):
+            strategy_data = self.brain.strategy_performance.get(strategy, {})
+            if strategy_data:
+                wins = len([t for t in strategy_data.get('trades', []) if t.get('pnl_percent', 0) > 0])
+                total = len(strategy_data.get('trades', []))
                 
-                # Use 25% of Kelly (conservative)
-                kelly_adjustment = max(0.5, min(2.0, kelly_fraction * 0.25))
-                position_size *= kelly_adjustment
+                if total > 0:
+                    win_rate = wins / total
+                    # Simple Kelly adjustment without complex calculations
+                    if win_rate > 0.5:
+                        position_size *= 1.2  # Increase size for winning strategies
+                    elif win_rate < 0.3:
+                        position_size *= 0.8  # Decrease size for losing strategies
         
         # Never risk more than 3% of balance
         max_position = self.wallet.get_balance() * 0.03
