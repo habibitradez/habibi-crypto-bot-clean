@@ -3821,55 +3821,50 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """Find tokens with explosive momentum like MORI"""
+        """Find tokens with explosive momentum using volume/liquidity ratio"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
             tokens_checked = 0
-
-            logging.info(f"🔍 Checking {len(tokens)} tokens")
-            if tokens:
-                logging.info(f"   Sample tokens: {tokens[0][:8]}, {tokens[1][:8]}, {tokens[2][:8]}")
             
             for token in tokens:
                 try:
                     tokens_checked += 1
-                    # Get price now and 5 minutes ago
+                    # Get current data
                     current_price = get_token_price(token)
-                    price_5m_ago = get_price_minutes_ago(token, 5)
+                    liquidity = get_token_liquidity(token)
+                    volume = get_24h_volume(token)
+                    holders = get_holder_count(token)
+                    age = get_token_age_minutes(token)
                     
-                    if current_price and price_5m_ago and price_5m_ago > 0:
-                        price_change_5m = ((current_price - price_5m_ago) / price_5m_ago) * 100
+                    if current_price and liquidity and volume:
+                        volume_liq_ratio = volume / liquidity
                         
-                        # ADD DETAILED LOGGING HERE:
-                        if price_change_5m > 5:  # Log anything moving 5%+
-                            volume = get_24h_volume(token)
-                            liquidity = get_token_liquidity(token)
-                            logging.info(f"📈 Token {token[:8]} moved {price_change_5m:.1f}% in 5min, Liq: ${liquidity:,.0f}, Vol: ${volume:,.0f}")
+                        # Log tokens with decent activity
+                        if volume_liq_ratio > 1:
+                            logging.info(f"📊 Active token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m")
                         
-                        # LOWERED THRESHOLD FOR TESTING:
-                        if price_change_5m > 5:  # Changed from 10% to 5%
-                            volume = get_24h_volume(token)
-                            liquidity = get_token_liquidity(token)
+                        # Momentum = high volume relative to liquidity + new token
+                        if volume_liq_ratio > 2 and age and age < 360:  # 6 hours old max
+                            logging.warning(f"🚀 HIGH MOMENTUM DETECTED: {token[:8]}")
+                            logging.warning(f"   Volume/Liq ratio: {volume_liq_ratio:.1f}")
+                            logging.warning(f"   Liquidity: ${liquidity:,.0f}")
+                            logging.warning(f"   Holders: {holders}")
+                            logging.warning(f"   Age: {age} minutes")
                             
-                            if liquidity and volume > liquidity * 2:
-                                logging.warning(f"🚀 EXPLOSIVE MOMENTUM: {token[:8]}")
-                                logging.warning(f"   5min change: {price_change_5m:.1f}%")
-                                logging.warning(f"   Volume/Liq ratio: {volume/liquidity:.1f}")
-                                
+                            # Check if liquidity meets minimum
+                            if liquidity >= float(CONFIG.get('MIN_LIQUIDITY_USD', 2000)):
                                 # Take position immediately
                                 self.execute_trade(
                                     token,
                                     'MOMENTUM_EXPLOSION',
-                                    0.05,  # Bigger position for momentum
+                                    0.05,
                                     current_price,
                                     source_wallet='MOMENTUM_DETECT'
                                 )
                                 return True
                             else:
-                                # Log why it's being skipped
-                                if liquidity:
-                                    logging.info(f"   ❌ Skipped {token[:8]}: Volume/Liq ratio only {volume/liquidity:.1f} (need 2.0+)")
+                                logging.info(f"   ❌ Skipped: Liquidity ${liquidity:.0f} below minimum")
                                 
                 except Exception as e:
                     continue
@@ -4412,50 +4407,6 @@ def run_adaptive_ai_system():
         try:
             current_time = time.time()
             iteration += 1
-
-            if iteration == 20:  # After 100 seconds
-                logging.error("🧪 FORCING MOMENTUM CHECK")
-                result = trader.detect_momentum_explosion()
-                logging.error(f"🧪 Result: {result}")
-
-            # Debug section 1 - Test worthless coin
-            if iteration % 20 == 0:  # Every 100 seconds
-                # Test worthless coin
-                test_token = "GEo9uMBTvagNAX6Paf4KEuZ94Wi5K1ZjYfvhoSfKpump"
-    
-                logging.error("🧪 TESTING WORTHLESS COIN")
-    
-                # Get current data
-                current_price = get_token_price(test_token)
-                price_5m_ago = get_price_minutes_ago(test_token, 5)
-                liquidity = get_token_liquidity(test_token)
-                volume = get_24h_volume(test_token)
-                age = get_token_age_minutes(test_token)
-    
-                logging.error(f"   Current Price: {current_price}")
-                logging.error(f"   Price 5m ago: {price_5m_ago}")
-                logging.error(f"   Liquidity: ${liquidity:,.0f if liquidity else 0}")
-                logging.error(f"   Volume: ${volume:,.0f if volume else 0}")
-                logging.error(f"   Age: {age} minutes")
-    
-                if current_price and price_5m_ago:
-                    change = ((current_price - price_5m_ago) / price_5m_ago) * 100
-                    logging.error(f"   5min change: {change:.1f}%")
-        
-                # Check if any alpha bought it
-                for alpha in trader.alpha_wallets[:3]:
-                    buys = get_wallet_recent_buys_helius(alpha['address'])
-                    if buys:
-                        for buy in buys:
-                            if buy['token'] == test_token:
-                                logging.error(f"   ✅ {alpha['name']} BOUGHT THIS!")
-    
-                # Check if it's in token discovery - UNINDENTED TO BE OUTSIDE THE LOOPS
-                tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
-                if test_token in tokens:
-                    logging.error("   ✅ Token IS in discovery list")
-                else:
-                     logging.error("   ❌ Token NOT in discovery list")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
@@ -4764,6 +4715,7 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
+
 
 # Global rate limiter for Jupiter
 class RateLimiter:
