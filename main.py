@@ -3854,7 +3854,6 @@ class AdaptiveAlphaTrader:
                             
                             # Check if liquidity meets minimum
                             if liquidity >= float(CONFIG.get('MIN_LIQUIDITY_USD', 2000)):
-                                
                                 logging.warning(f"   Attempting to execute trade...")
                                 
                                 # Take position immediately
@@ -3868,11 +3867,10 @@ class AdaptiveAlphaTrader:
                                 return True
                             else:
                                 logging.info(f"   ❌ Skipped: Liquidity ${liquidity:.0f} below minimum")
-                                
                                 logging.info(f"📊 SKIPPED TOKEN TRACKER: {token[:8]} at ${current_price:.6f} - Volume/Liq: {volume_liq_ratio:.1f}")
-                                
-                                elif volume_liq_ratio > 1:  # Decent activity but not enough for auto-buy
-                                    logging.info(f"📊 SKIPPED TOKEN TRACKER: {token[:8]} at ${current_price:.6f} - Volume/Liq: {volume_liq_ratio:.1f} (needs 2.0+)")
+                        
+                        elif volume_liq_ratio > 1:  # Decent activity but not enough for auto-buy
+                            logging.info(f"📊 SKIPPED TOKEN TRACKER: {token[:8]} at ${current_price:.6f} - Volume/Liq: {volume_liq_ratio:.1f} (needs 2.0+)")
                                 
                 except Exception as e:
                     continue
