@@ -163,14 +163,14 @@ CONFIG = {
     'ML_CONFIDENCE_THRESHOLD': float(os.getenv('ML_CONFIDENCE_THRESHOLD', '0.6')),
     
     # Pattern Detection (NEW)
-    'FRESH_LAUNCH_MIN_LIQ': float(os.getenv('FRESH_LAUNCH_MIN_LIQ', '15000')),
-    'FRESH_LAUNCH_MIN_HOLDERS': int(os.getenv('FRESH_LAUNCH_MIN_HOLDERS', '30')),
-    'VOLUME_SPIKE_MIN_VOLUME': float(os.getenv('VOLUME_SPIKE_MIN_VOLUME', '30000')),
+    'FRESH_LAUNCH_MIN_LIQ': float(os.getenv('FRESH_LAUNCH_MIN_LIQ', '3000')),
+    'FRESH_LAUNCH_MIN_HOLDERS': int(os.getenv('FRESH_LAUNCH_MIN_HOLDERS', '20')),
+    'VOLUME_SPIKE_MIN_VOLUME': float(os.getenv('VOLUME_SPIKE_MIN_VOLUME', '10000')),
     'DIP_PATTERN_MIN_DUMP': float(os.getenv('DIP_PATTERN_MIN_DUMP', '-25')),
     'DIP_PATTERN_MAX_DUMP': float(os.getenv('DIP_PATTERN_MAX_DUMP', '-60')),
     
     # Position Management (UPDATED)
-    'BASE_POSITION_SIZE': float(os.getenv('BASE_POSITION_SIZE', '0.05')),
+    'BASE_POSITION_SIZE': float(os.getenv('BASE_POSITION_SIZE', '0.03')),
     'MIN_POSITION_SIZE': float(os.getenv('MIN_POSITION_SIZE', '0.03')),
     'MAX_POSITION_SIZE': float(os.getenv('MAX_POSITION_SIZE', '0.15')),
     'MAX_CONCURRENT_POSITIONS': int(os.getenv('MAX_CONCURRENT_POSITIONS', '5')),
@@ -181,7 +181,7 @@ CONFIG = {
     
     # Risk Management (NEW)
     'DAILY_LOSS_LIMIT': float(os.getenv('DAILY_LOSS_LIMIT', '1.0')),
-    'MIN_WALLET_BALANCE': float(os.getenv('MIN_WALLET_BALANCE', '2.0')),
+    'MIN_WALLET_BALANCE': float(os.getenv('MIN_WALLET_BALANCE', '1.0')),
     'STOP_TRADING_BALANCE': float(os.getenv('STOP_TRADING_BALANCE', '3.0')),
     
     # Trading parameters (UPDATED for AI)
@@ -203,7 +203,7 @@ CONFIG = {
     'JUPITER_RATE_LIMIT_PER_MIN': int(os.environ.get('JUPITER_RATE_LIMIT_PER_MIN', '50')),
     'TOKENS_PER_DAY': int(os.environ.get('TOKENS_PER_DAY', '30')),  # Increased
     'PROFIT_PER_TOKEN': int(os.environ.get('PROFIT_PER_TOKEN', '30')),  # Reduced
-    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '12')),  # Reduced from 30
+    'MIN_PROFIT_PCT': int(os.environ.get('MIN_PROFIT_PCT', '5')),  # Reduced from 30
     'MAX_HOLD_TIME_SECONDS': int(os.environ.get('MAX_HOLD_TIME_SECONDS', '1800')),
     'USE_PUMP_FUN_API': os.environ.get('USE_PUMP_FUN_API', 'true').lower() == 'true',
     'MAX_TOKEN_AGE_MINUTES': int(os.environ.get('MAX_TOKEN_AGE_MINUTES', '60')),
