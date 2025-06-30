@@ -4437,7 +4437,7 @@ def run_adaptive_ai_system():
                 logging.error(f"   Liquidity: ${liquidity:,.0f if liquidity else 0}")
                 logging.error(f"   Volume: ${volume:,.0f if volume else 0}")
                 logging.error(f"   Age: {age} minutes")
-     
+    
                 if current_price and price_5m_ago:
                     change = ((current_price - price_5m_ago) / price_5m_ago) * 100
                     logging.error(f"   5min change: {change:.1f}%")
@@ -4450,12 +4450,12 @@ def run_adaptive_ai_system():
                             if buy['token'] == test_token:
                                 logging.error(f"   ✅ {alpha['name']} BOUGHT THIS!")
     
-                 # Check if it's in token discovery
-                 tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
-                 if test_token in tokens:
-                     logging.error("   ✅ Token IS in discovery list")
-                 else:
-                      logging.error("   ❌ Token NOT in discovery list")
+                # Check if it's in token discovery - UNINDENTED TO BE OUTSIDE THE LOOPS
+                tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+                if test_token in tokens:
+                    logging.error("   ✅ Token IS in discovery list")
+                else:
+                     logging.error("   ❌ Token NOT in discovery list")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
