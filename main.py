@@ -2776,6 +2776,11 @@ class AdaptiveAlphaTrader:
                         # Estimate exit price if we can't get current price
                         estimated_exit = position['entry_price'] * 0.95  # Assume 5% loss if no price
                         self.record_trade_result(token, position, estimated_exit, reason)
+                    
+                    # ENSURE position is removed even if record_trade_result had an error
+                    if token in self.positions:
+                        del self.positions[token]
+                        logging.info(f"✅ Ensured {token[:8]} removed from position tracking")
                 
                     return True
                 
@@ -2796,6 +2801,7 @@ class AdaptiveAlphaTrader:
                     # Remove from positions
                     if token in self.positions:
                         del self.positions[token]
+                        logging.info(f"✅ Removed {token[:8]} from tracking (no tokens)")
                     return True
                 
             except Exception as e:
@@ -2821,6 +2827,7 @@ class AdaptiveAlphaTrader:
         # Still remove from tracking to avoid getting stuck
         if token in self.positions:
             del self.positions[token]
+            logging.error(f"⚠️ Force removed {token[:8]} from tracking after failed sale")
         return False
 
     def initialize_enhanced_systems(self):
@@ -4185,7 +4192,8 @@ class AdaptiveAlphaTrader:
 
     def monitor_momentum_position(self, token, position):
         """Special exit logic for momentum trades - ignore alpha wallets"""
-        if position['strategy'] != 'MOMENTUM_EXPLOSION':
+        # Check ALL momentum strategies, not just MOMENTUM_EXPLOSION
+        if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
             
         hold_time = time.time() - position['entry_time']
@@ -4232,6 +4240,7 @@ class AdaptiveAlphaTrader:
         # Log status every 5 minutes
         if int(hold_time) % 300 == 0:
             logging.info(f"📊 MOMENTUM STATUS: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
+
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
