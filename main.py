@@ -3854,6 +3854,9 @@ class AdaptiveAlphaTrader:
                             
                             # Check if liquidity meets minimum
                             if liquidity >= float(CONFIG.get('MIN_LIQUIDITY_USD', 2000)):
+                                
+                                logging.warning(f"   Attempting to execute trade...")
+                                
                                 # Take position immediately
                                 self.execute_trade(
                                     token,
@@ -3865,6 +3868,11 @@ class AdaptiveAlphaTrader:
                                 return True
                             else:
                                 logging.info(f"   ❌ Skipped: Liquidity ${liquidity:.0f} below minimum")
+                                
+                                logging.info(f"📊 SKIPPED TOKEN TRACKER: {token[:8]} at ${current_price:.6f} - Volume/Liq: {volume_liq_ratio:.1f}")
+                                
+                                elif volume_liq_ratio > 1:  # Decent activity but not enough for auto-buy
+                                    logging.info(f"📊 SKIPPED TOKEN TRACKER: {token[:8]} at ${current_price:.6f} - Volume/Liq: {volume_liq_ratio:.1f} (needs 2.0+)")
                                 
                 except Exception as e:
                     continue
@@ -4421,7 +4429,7 @@ def run_adaptive_ai_system():
                 # Override configs for safety
                 CONFIG['BASE_POSITION_SIZE'] = '0.02'
                 CONFIG['MAX_POSITION_SIZE'] = '0.05'
-                trader.daily_trade_limit = 10
+                trader.daily_trade_limit = 20
                 trader.min_ml_confidence = float(os.getenv('ML_CONFIDENCE_OVERRIDE', '0.65'))
                 
                 if not hasattr(trader, 'low_balance_warned'):
