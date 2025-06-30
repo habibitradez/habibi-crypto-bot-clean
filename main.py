@@ -4204,13 +4204,13 @@ class AdaptiveAlphaTrader:
         # 1. Take profit at 50%+ (these can run 100-500%)
         if price_change > 50:
             logging.warning(f"🎯 MOMENTUM TAKE PROFIT: {price_change:.1f}%")
-            self.sell_token(token, "MOMENTUM_PROFIT")
+            self.ensure_position_sold(token, position, "MOMENTUM_PROFIT")
             return
             
         # 2. Stop loss at -15% (wider than normal)
         if price_change < -15:
             logging.warning(f"🛑 MOMENTUM STOP LOSS: {price_change:.1f}%")
-            self.sell_token(token, "MOMENTUM_STOP")
+            self.ensure_position_sold(token, position, "MOMENTUM_STOP")
             return
             
         # 3. Volume death - if volume drops below liquidity
@@ -4220,13 +4220,13 @@ class AdaptiveAlphaTrader:
         if current_volume and current_liquidity:
             if current_volume < current_liquidity:
                 logging.warning(f"📉 MOMENTUM FADING: Volume dropped below liquidity")
-                self.sell_token(token, "MOMENTUM_FADE")
+                self.ensure_position_sold(token, position, "MOMENTUM_FADE")
                 return
                 
         # 4. Time-based exit - if held too long without profit
         if hold_time > 1800 and price_change < 10:  # 30 minutes with < 10% gain
             logging.warning(f"⏰ MOMENTUM TIMEOUT: No significant move after 30 minutes")
-            self.sell_token(token, "MOMENTUM_TIMEOUT")
+            self.ensure_position_sold(token, position, "MOMENTUM_TIMEOUT")
             return
             
         # Log status every 5 minutes
