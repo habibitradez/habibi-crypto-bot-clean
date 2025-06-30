@@ -1422,6 +1422,10 @@ class AdaptiveAlphaTrader:
                 if not alpha_wallet or alpha_wallet == 'SELF_DISCOVERED':
                     continue
                 
+                # Skip momentum trades - they have their own exit logic
+                if strategy in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
+                    continue
+                
                 try:
                     # Get alpha wallet info for better logging
                     alpha_info = next((w for w in self.alpha_wallets if w['address'] == alpha_wallet), None)
@@ -2045,12 +2049,17 @@ class AdaptiveAlphaTrader:
             return False
             
     def monitor_positions(self):
-        """Enhanced position monitoring with wallet-specific parameters and PERFECT_BOT handling"""
+        """Monitor all positions with strategy-specific logic"""
         try:
             current_time = time.time()
             
             for token, position in list(self.positions.items()):
                 try:
+                    # Special handling for momentum trades
+                    if position.get('strategy') in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
+                        self.monitor_momentum_position(token, position)
+                        continue  # Skip regular monitoring for momentum trades
+                    
                     # Get current price
                     current_price = get_token_price(token)
                     if not current_price:
@@ -3842,7 +3851,23 @@ class AdaptiveAlphaTrader:
                         
                         # Log tokens with decent activity
                         if volume_liq_ratio > 1:
-                            logging.info(f"📊 Active token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m")
+                            logging.info(f"📊 Active token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
+                        
+                        # Check if too many holders (might be too late)
+                        if holders and holders > 500:
+                            logging.info(f"   ⚠️ Token {token[:8]} has {holders} holders - might be too late")
+                            continue
+                        
+                        # Adjust minimum holders based on token age
+                        if age and age < 30:  # Very new token (under 30 minutes)
+                            min_holders = 30  # Lower threshold for brand new tokens
+                        else:
+                            min_holders = 50  # Normal threshold
+                        
+                        # Skip if too few holders
+                        if holders and holders < min_holders:
+                            logging.debug(f"   ⚠️ Token {token[:8]} has only {holders} holders (need {min_holders}+)")
+                            continue
                         
                         # Momentum = high volume relative to liquidity + new token
                         if volume_liq_ratio > 2 and age and age < 360:  # 6 hours old max
@@ -3882,6 +3907,7 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error in momentum detection: {e}")
             return False
 
+    
     def find_pre_pump_patterns(self):
         """Find tokens showing pre-pump patterns like MORI before it pumped"""
         try:
@@ -4156,6 +4182,56 @@ class AdaptiveAlphaTrader:
                     
             except Exception as e:
                 logging.error(f"Error checking {token}: {e}")
+
+    def monitor_momentum_position(self, token, position):
+        """Special exit logic for momentum trades - ignore alpha wallets"""
+        if position['strategy'] != 'MOMENTUM_EXPLOSION':
+            return
+            
+        hold_time = time.time() - position['entry_time']
+        
+        # NEVER exit in first 5 minutes - let momentum build
+        if hold_time < 300:  # 5 minutes
+            return
+            
+        current_price = get_token_price(token)
+        if not current_price:
+            return
+            
+        price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
+        
+        # Momentum-specific exits:
+        # 1. Take profit at 50%+ (these can run 100-500%)
+        if price_change > 50:
+            logging.warning(f"🎯 MOMENTUM TAKE PROFIT: {price_change:.1f}%")
+            self.sell_token(token, "MOMENTUM_PROFIT")
+            return
+            
+        # 2. Stop loss at -15% (wider than normal)
+        if price_change < -15:
+            logging.warning(f"🛑 MOMENTUM STOP LOSS: {price_change:.1f}%")
+            self.sell_token(token, "MOMENTUM_STOP")
+            return
+            
+        # 3. Volume death - if volume drops below liquidity
+        current_volume = get_24h_volume(token)
+        current_liquidity = get_token_liquidity(token)
+        
+        if current_volume and current_liquidity:
+            if current_volume < current_liquidity:
+                logging.warning(f"📉 MOMENTUM FADING: Volume dropped below liquidity")
+                self.sell_token(token, "MOMENTUM_FADE")
+                return
+                
+        # 4. Time-based exit - if held too long without profit
+        if hold_time > 1800 and price_change < 10:  # 30 minutes with < 10% gain
+            logging.warning(f"⏰ MOMENTUM TIMEOUT: No significant move after 30 minutes")
+            self.sell_token(token, "MOMENTUM_TIMEOUT")
+            return
+            
+        # Log status every 5 minutes
+        if int(hold_time) % 300 == 0:
+            logging.info(f"📊 MOMENTUM STATUS: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
