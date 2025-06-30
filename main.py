@@ -90,7 +90,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
 ]
 
 daily_stats = {
@@ -4295,6 +4295,14 @@ def check_wallet_health():
         return True
     except Exception as e:
         logging.error(f"❌ Wallet health check failed: {e}")
+        return False
+
+
+def is_valid_wallet_address(address):
+    """Check if address is valid Solana wallet"""
+    try:
+        return len(address) == 44 and address.isalnum()
+    except:
         return False
 
 
