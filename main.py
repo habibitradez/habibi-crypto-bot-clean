@@ -3416,29 +3416,25 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error in daily reset: {e}")
 
-    
-    def adjust_overnight_settings(self):
-        """Optimize settings for overnight trading"""
-        current_hour = datetime.now().hour
-        
-        # Overnight hours (11 PM - 7 AM)
-        if current_hour >= 23 or current_hour < 7:
-            # INCREASE limits for overnight
-            self.daily_trade_limit = 50  # Was 20
-            self.min_ml_confidence = 0.65  # Slightly lower (was 0.70)
-            
-            # Asian session (11 PM - 4 AM) - Often best for new launches
-            if current_hour >= 23 or current_hour < 4:
-                logging.info("🌏 ASIAN SESSION ACTIVE - Prime time for moonshots!")
-                
-            # European session (2 AM - 8 AM) - Good volume
-            elif 2 <= current_hour < 8:
-                logging.info("🌍 EUROPEAN SESSION ACTIVE - High volume expected!")
-        
-        else:
-            # Normal day settings
-            self.daily_trade_limit = 20
 
+    def should_trade_overnight(self, opportunity):
+        """Only take HIGH quality trades overnight"""
+        current_hour = datetime.now().hour
+    
+        if 23 <= current_hour or current_hour < 7:
+            # Overnight - be VERY selective
+            if opportunity.get('score', 0) < 80:  # Only 80+ scores
+                return False
+            
+            if opportunity.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MORI_SETUP']:
+                return False  # Only proven strategies
+            
+            # Check liquidity is higher overnight
+            if opportunity.get('liquidity', 0) < 5000:
+                return False
+            
+        return True
+    
     def reset_session_limits(self):
         """Reset limits every 6 hours for continuous trading"""
         if not hasattr(self, 'last_session_reset'):
@@ -5109,7 +5105,7 @@ def run_adaptive_ai_system():
                 check_wallet_health()
             
             # 1. Check all alpha wallets for new buys
-            trader.check_alpha_wallets()
+           # trader.check_alpha_wallets()
             
             # 2. Hunt for opportunities independently every 30 seconds
             if current_time - last_hunt_time > 30:
