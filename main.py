@@ -8857,88 +8857,234 @@ def reset_daily_stats():
         'start_time': time.time()
     }
 
-def calculate_recent_success_rate(hours: int = 4) -> float:
+def calculate_recent_success_rate(hours=4):
     """Calculate success rate over recent hours"""
-    # Implement based on your trade history
-    # Return percentage (0-100)
-    return 75.0  # Placeholder
-    
-def get_market_volatility_index() -> float:
-    """Get current market volatility (0-1 scale)"""
-    # Implement based on recent price movements
-    # Return 0.0 (calm) to 1.0 (extreme volatility)
-    return 0.5  # Placeholder
-
-def get_recent_trade_history(hours: int = 2) -> List[dict]:
-    """Get recent trade history"""
-    # Implement based on your trade tracking
-    return []  # Placeholder
-
-def get_token_age_minutes(token_address):
-    """Get token age in minutes since creation"""
     try:
-        # This would integrate with your existing token discovery
-        # For now, simulate based on your Helius data
-        return 45  # Placeholder - implement with real data
-    except:
-        return 999  # Fail safe - too old
-        
-
-def get_token_liquidity(token_address):
-    """Get token liquidity from pool"""
-    try:
-        # Get the token's pool address (usually from Raydium)
-        pool_address = get_pool_address_for_token(token_address)
-        
-        if not pool_address:
-            logging.debug(f"No pool found for {token_address[:8]}")
-            return 0
+        # Use your bot's trade history from brain
+        if hasattr(trader, 'brain') and hasattr(trader.brain, 'trade_history'):
+            recent_trades = []
+            current_time = time.time()
+            cutoff_time = current_time - (hours * 3600)
             
-        # Get pool info
-        headers = {"Content-Type": "application/json"}
+            # Get trades from last N hours
+            for trade in trader.brain.trade_history:
+                if trade.get('timestamp', 0) > cutoff_time:
+                    recent_trades.append(trade)
+            
+            if len(recent_trades) > 0:
+                wins = sum(1 for t in recent_trades if t.get('pnl_percent', 0) > 0)
+                success_rate = (wins / len(recent_trades)) * 100
+                return success_rate
         
-        # Get pool token accounts
+        # Alternative: Use session stats if available
+        if hasattr(trader, 'brain') and hasattr(trader.brain, 'daily_stats'):
+            stats = trader.brain.daily_stats
+            total_trades = stats.get('trades', 0)
+            wins = stats.get('wins', 0)
+            
+            if total_trades > 0:
+                return (wins / total_trades) * 100
+        
+        # Fallback: Check database if available
+        if hasattr(trader, 'db_manager'):
+            # This would need a method to query recent trades from DB
+            pass
+        
+        return None  # Return None if no data available
+        
+    except Exception as e:
+        logging.debug(f"Error calculating success rate: {e}")
+        return None
+    
+def get_market_volatility_index():
+    """Get current market volatility (0-1 scale)"""
+    try:
+        # Use SOL price volatility as market proxy
+        sol_address = "So11111111111111111111111111111111111111112"  # Wrapped SOL
+        
+        # Get recent SOL trades to measure volatility
+        trades = get_recent_trade_history(sol_address, hours=1)
+        
+        if len(trades) > 10:
+            # High transaction frequency = high volatility
+            trades_per_minute = len(trades) / 60
+            
+            if trades_per_minute > 5:
+                return 0.8  # High volatility
+            elif trades_per_minute > 2:
+                return 0.5  # Medium volatility
+            else:
+                return 0.3  # Low volatility
+        
+        # Alternative: Check major token movements
+        url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        
+        # Get recent blocks to check network activity
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "getTokenAccountsByOwner",
+            "method": "getBlockHeight"
+        }
+        
+        response = requests.post(url, json=payload, timeout=3)
+        if response.status_code == 200:
+            # If we can get block height, network is stable
+            return 0.4  # Default medium-low volatility
+            
+        return 0.5  # Default medium volatility
+        
+    except Exception as e:
+        logging.debug(f"Error getting market volatility: {e}")
+        return 0.5  # Default to medium
+
+
+def get_recent_trade_history(token_address, hours=2):
+    """Get recent trade history for a token"""
+    try:
+        url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        
+        # Get recent transactions
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
             "params": [
-                pool_address,
-                {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
-                {"encoding": "jsonParsed"}
+                token_address,
+                {"limit": 100}  # Last 100 transactions
             ]
         }
         
-        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=3)
-        
+        response = requests.post(url, json=payload, timeout=5)
         if response.status_code == 200:
-            accounts = response.json().get('result', {}).get('value', [])
-            
-            total_liquidity_usd = 0
-            
-            for account in accounts:
-                mint = account['account']['data']['parsed']['info']['mint']
-                amount = float(account['account']['data']['parsed']['info']['tokenAmount']['uiAmount'])
+            data = response.json()
+            if 'result' in data:
+                trades = []
+                current_time = int(time.time())
+                cutoff_time = current_time - (hours * 3600)
                 
-                # Get USD value
-                if mint == "So11111111111111111111111111111111111111112":  # SOL
-                    total_liquidity_usd += amount * 240  # SOL price
-                elif mint == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":  # USDC
-                    total_liquidity_usd += amount
+                for tx in data['result']:
+                    block_time = tx.get('blockTime', 0)
+                    if block_time > cutoff_time:
+                        # This is within our time window
+                        trades.append({
+                            'signature': tx.get('signature'),
+                            'timestamp': block_time,
+                            'success': not tx.get('err'),
+                            'slot': tx.get('slot')
+                        })
+                    else:
+                        break  # Transactions are ordered by time
+                
+                return trades
+        
+        return []
+        
+    except Exception as e:
+        logging.debug(f"Error getting trade history: {e}")
+        return []
+
+def get_token_age_minutes(token_address):
+    """Get actual token age in minutes using Helius"""
+    try:
+        url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        
+        # Get all transactions for this token
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [
+                token_address,
+                {"limit": 1000}  # Get max transactions
+            ]
+        }
+        
+        response = requests.post(url, json=payload, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'result' in data and len(data['result']) > 0:
+                # The last transaction is the oldest (mint transaction)
+                oldest_tx = data['result'][-1]
+                block_time = oldest_tx.get('blockTime')
+                
+                if block_time:
+                    current_time = int(time.time())
+                    age_seconds = current_time - block_time
+                    age_minutes = int(age_seconds / 60)
                     
-            # If we found liquidity, return it
-            if total_liquidity_usd > 0:
-                logging.debug(f"Token {token_address[:8]} liquidity: ${total_liquidity_usd:.2f}")
-                return total_liquidity_usd
-                
-        # If no pool or error, try a simpler approach
-        # For new tokens, estimate based on typical values
-        logging.debug(f"Could not get exact liquidity for {token_address[:8]}, using estimate")
-        return 5000  # Return $5k as estimate for new tokens instead of 1
+                    # Sanity check
+                    if 0 < age_minutes < 100000:  # Less than ~69 days
+                        return age_minutes
+        
+        # Fallback: estimate from holder count
+        holders = get_holder_count(token_address)
+        if holders and holders > 0:
+            # New tokens get 1-3 holders per minute typically
+            estimated_age = int(holders / 2)
+            return min(estimated_age, 1440)  # Cap at 24 hours
+            
+        return None
+        
+    except Exception as e:
+        logging.debug(f"Error getting token age: {e}")
+        return None
+        
+
+def get_token_liquidity(token_address):
+    """Get token liquidity from Raydium/Orca pools"""
+    try:
+        # First try Jupiter API which aggregates liquidity data
+        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+        
+        response = requests.get(jupiter_url, timeout=3)
+        if response.status_code == 200:
+            data = response.json()
+            if 'data' in data and token_address in data['data']:
+                token_info = data['data'][token_address]
+                # Jupiter provides liquidity in some cases
+                if 'liquidity' in token_info:
+                    return float(token_info['liquidity'])
+        
+        # Use Helius to find the token's LP pair
+        url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+        
+        # Get token accounts to find LP pairs
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTokenLargestAccounts",
+            "params": [token_address]
+        }
+        
+        response = requests.post(url, json=payload, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            if 'result' in data and 'value' in data['result']:
+                # Look for Raydium/Orca pool addresses in largest holders
+                for account in data['result']['value']:
+                    account_pubkey = account.get('address')
+                    
+                    # Check if this is a known DEX pool
+                    # Raydium pools often have large concentrated holdings
+                    amount = float(account.get('amount', 0)) / (10 ** account.get('decimals', 9))
+                    
+                    # If one account holds 40-60% of supply, likely a LP
+                    if amount > 0:
+                        # Get token price to calculate liquidity
+                        token_price = get_token_price(token_address)
+                        if token_price and token_price > 0:
+                            # Liquidity = 2x the value in the pool (for token + SOL sides)
+                            estimated_liquidity = amount * token_price * 2
+                            if estimated_liquidity > 1000:  # Reasonable liquidity
+                                return estimated_liquidity
+        
+        # Fallback: Check Raydium directly
+        # Note: This requires additional setup for Raydium SDK
+        return None  # Return None if we can't get real liquidity
         
     except Exception as e:
         logging.debug(f"Error getting liquidity: {e}")
-        return 5000  # Return $5k estimate instead of 1
+        return None
 
 def verify_wallet_setup():
     """Verify wallet is properly configured for real transactions"""
