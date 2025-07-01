@@ -5222,9 +5222,9 @@ def run_adaptive_ai_system():
                 trader.find_opportunities_independently()
             
             # 2.5 AGGRESSIVE MOMENTUM CHECK - Every 15 seconds!
-            if current_time - last_momentum_check > 15:
+            momentum_interval = int(os.getenv('MOMENTUM_SCAN_INTERVAL', '15'))
+            if current_time - last_momentum_check > momentum_interval:
                 last_momentum_check = current_time
-                # Quick momentum scan for explosive moves
                 trader.detect_momentum_explosion()
             
             # ULTRA AGGRESSIVE MODE - Check every 10 seconds for MORI-like setups
