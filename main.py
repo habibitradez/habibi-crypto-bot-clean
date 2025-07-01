@@ -5046,23 +5046,23 @@ def run_adaptive_ai_system():
            # trader.adjust_overnight_settings()
             
             # Show session info if changed
-            if not hasattr(trader, 'last_logged_session') or trader.session_number != trader.last_logged_session:
-                trader.last_logged_session = trader.session_number
-                logging.info(f"📊 Trading Session #{trader.session_number}")
-                logging.info(f"   Trade Limit: {trader.daily_trade_limit}")
-                logging.info(f"   Current Hour: {datetime.now().hour}:00")
+           # if not hasattr(trader, 'last_logged_session') or trader.session_number != trader.last_logged_session:
+               # trader.last_logged_session = trader.session_number
+               # logging.info(f"📊 Trading Session #{trader.session_number}")
+               # logging.info(f"   Trade Limit: {trader.daily_trade_limit}")
+               # logging.info(f"   Current Hour: {datetime.now().hour}:00")
                 
-                market_session = "US"
-                if 23 <= datetime.now().hour or datetime.now().hour < 4:
-                    market_session = "ASIA"
-                elif 4 <= datetime.now().hour < 8:
-                    market_session = "ASIA/EU"
-                elif 8 <= datetime.now().hour < 13:
-                    market_session = "EUROPE"
-                elif 13 <= datetime.now().hour < 16:
-                    market_session = "EU/US"
+               # market_session = "US"
+               # if 23 <= datetime.now().hour or datetime.now().hour < 4:
+                   # market_session = "ASIA"
+               # elif 4 <= datetime.now().hour < 8:
+                   # market_session = "ASIA/EU"
+               # elif 8 <= datetime.now().hour < 13:
+                   # market_session = "EUROPE"
+               # elif 13 <= datetime.now().hour < 16:
+                   # market_session = "EU/US"
                 
-                logging.info(f"   Market: {market_session} session")
+               # logging.info(f"   Market: {market_session} session")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
