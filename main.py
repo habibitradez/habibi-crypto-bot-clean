@@ -92,7 +92,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
 ]
 
 daily_stats = {
@@ -1163,7 +1163,7 @@ class AdaptiveAlphaTrader:
     def __init__(self, wallet_instance):
         self.daily_trades = 0
         self.wallet_trade_tracking = {}
-        self.daily_trade_limit = 20
+        self.daily_trade_limit = int(os.getenv('DAILY_TRADE_LIMIT', '70'))
         self.last_trade_date = datetime.now().date()
         self.min_ml_confidence = 0.60
         self.wallet = wallet_instance
