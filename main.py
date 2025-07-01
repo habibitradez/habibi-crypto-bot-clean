@@ -42,6 +42,8 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from concurrent.futures import ThreadPoolExecutor
 
+logging.getLogger().setLevel(logging.DEBUG)
+
 # Configure logging with both file and console output
 current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
 logging.basicConfig(
@@ -3857,6 +3859,14 @@ class AdaptiveAlphaTrader:
                     
                     if not all([current_price, liquidity, volume]):
                         continue
+                    
+                    # ADD DEBUG LINES HERE - RIGHT AFTER GETTING DATA
+                    logging.debug(f"DEBUG - Token: {token[:8]}")
+                    logging.debug(f"  Price: ${current_price} (real: {current_price not in [0.00001, 1.0, 0.001]})")
+                    logging.debug(f"  Liquidity: ${liquidity} (real: {liquidity != 5000})")
+                    logging.debug(f"  Volume: ${volume} (real: {volume not in [10000, 25000]})")
+                    logging.debug(f"  Holders: {holders} (real: {holders not in [150, 100, 75]})")
+                    logging.debug(f"  Age: {age}m (real: {age not in [45, 60]})")
                     
                     # Calculate momentum score
                     momentum_score = 0
