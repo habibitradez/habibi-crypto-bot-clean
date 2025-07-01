@@ -1961,13 +1961,8 @@ class AdaptiveAlphaTrader:
             self.last_trade_date = current_date
             
         if self.daily_trades >= self.daily_trade_limit:
-            # Try to reset for new session
-            self.reset_session_limits()
-            
-            # If still over limit after reset check
-            if self.daily_trades >= self.daily_trade_limit:
-                logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
-                return False
+            logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
+            return False
         
         # HONEYPOT CHECK - CRITICAL!
         is_honeypot, score, reasons = self.is_honeypot(token_address)
@@ -1975,6 +1970,11 @@ class AdaptiveAlphaTrader:
         if is_honeypot:
             logging.error(f"🚨 BLOCKED HONEYPOT TRADE: {token_address[:8]}")
             logging.error(f"   Score: {score}, Reasons: {', '.join(reasons)}")
+            return False
+        
+        # ADDITIONAL SELL ROUTE VERIFICATION (double-check for all trades)
+        if not self.verify_sell_route_exists(token_address):
+            logging.error(f"🚨 BLOCKED: No sell route exists for {token_address[:8]}")
             return False
         
         # Additional sell simulation for high-value trades
@@ -4629,7 +4629,13 @@ class AdaptiveAlphaTrader:
             honeypot_score = 0
             reasons = []
             
-            # 1. Check top holder concentration
+            # 1. CRITICAL - Check if we can sell (most important check)
+            if not self.verify_sell_route_exists(token_address):
+                honeypot_score += 100  # Instant fail
+                reasons.append("NO SELL ROUTE EXISTS")
+                return True, honeypot_score, reasons
+            
+            # 2. Check top holder concentration
             url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
             payload = {
                 "jsonrpc": "2.0",
@@ -4657,7 +4663,7 @@ class AdaptiveAlphaTrader:
                             honeypot_score += 30
                             reasons.append(f"High concentration: {concentration:.0f}%")
             
-            # 2. Check sell transactions
+            # 3. Check sell transactions
             trades = get_recent_trade_history(token_address, hours=1)
             if len(trades) > 10:
                 # Look for failed transactions (often sells being blocked)
@@ -4668,7 +4674,7 @@ class AdaptiveAlphaTrader:
                     honeypot_score += 40
                     reasons.append(f"High fail rate: {fail_rate:.0%}")
             
-            # 3. Liquidity red flags
+            # 4. Liquidity red flags
             if liquidity:
                 # Check if liquidity is too low
                 if liquidity < 1000:
@@ -4682,7 +4688,7 @@ class AdaptiveAlphaTrader:
                         honeypot_score += 20
                         reasons.append(f"Low liq/holder: ${liq_per_holder:.1f}")
             
-            # 4. Holder pattern red flags
+            # 5. Holder pattern red flags
             if holders:
                 # Too many holders too fast (bot buyers)
                 if age and age < 10 and holders > 500:
@@ -4694,8 +4700,7 @@ class AdaptiveAlphaTrader:
                     honeypot_score += 20
                     reasons.append(f"No growth: only {holders} holders after {age}m")
             
-            # 5. Check contract verification and metadata
-            # Many honeypots have no metadata or unverified contracts
+            # 6. Check contract verification and metadata
             payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -4716,13 +4721,6 @@ class AdaptiveAlphaTrader:
                         if not parsed:
                             honeypot_score += 20
                             reasons.append("No token metadata")
-            
-            # 6. Name/Symbol checks (many scams use famous names)
-            scam_keywords = ['ELON', 'MUSK', 'DOGE', 'SHIB', 'PEPE', 'MOON', 'SAFE', 
-                           'BABY', 'INU', 'FLOKI', 'TESLA', 'TRUMP', 'BIDEN']
-            
-            # Would need to get token name/symbol here
-            # Add 20 points if name contains scam keywords
             
             # DECISION
             is_honeypot = honeypot_score >= 50
@@ -4774,6 +4772,48 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error simulating sell: {e}")
             return None
 
+    def verify_sell_route_exists(self, token_address, amount_lamports=1000000):
+        """Check if we can actually sell this token"""
+        try:
+            # Use Jupiter Quote API to verify sell route
+            quote_url = "https://quote-api.jup.ag/v6/quote"
+        
+            params = {
+                'inputMint': token_address,
+                'outputMint': 'So11111111111111111111111111111111111111112',  # SOL
+                'amount': str(amount_lamports),  # Small amount
+                'slippageBps': '1000',  # 10% slippage
+            }
+        
+            response = requests.get(quote_url, params=params, timeout=5)
+        
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('routePlan') and len(data.get('routePlan', [])) > 0:
+                    logging.info(f"✅ Sell route verified for {token_address[:8]}")
+                    return True
+                else:
+                    logging.error(f"🚨 NO SELL ROUTE for {token_address[:8]} - HONEYPOT!")
+                    return False
+                
+            return False  # No route = honeypot
+        
+        except Exception as e:
+            logging.error(f"Error checking sell route: {e}")
+            return False  # Assume honeypot if can't verify
+
+    def check_stuck_positions(self):
+        """Identify positions that can't be sold"""
+        stuck_positions = []
+    
+        for token, position in self.positions.items():
+            if not self.verify_sell_route_exists(token):
+                stuck_positions.append(token)
+                logging.error(f"🚨 STUCK POSITION: {token[:8]} - Cannot sell!")
+    
+        if stuck_positions:
+            logging.error(f"⚠️ {len(stuck_positions)} positions cannot be sold!")
+            # Could attempt to sell through different DEXs or accept the loss
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
