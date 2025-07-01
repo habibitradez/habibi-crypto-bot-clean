@@ -573,9 +573,9 @@ class TradingBrain:
             confidence = 0.6  # Default confidence for new patterns
         else:
             confidence = stats['wins'] / total_trades
-            
+        
         # Adjust position size based on confidence and daily performance
-        base_size = CONFIG.get('BASE_POSITION_SIZE', 0.3)
+        base_size = float(CONFIG.get('BASE_POSITION_SIZE', '0.3'))  # Convert to float!
         
         if confidence > 0.7 and self.daily_stats['pnl_sol'] > 0:
             adjusted_size = base_size * 1.2  # Increase size when winning
@@ -583,7 +583,7 @@ class TradingBrain:
             adjusted_size = base_size * 0.7  # Decrease size when losing
         else:
             adjusted_size = base_size
-            
+        
         # Max position size with 4 SOL
         adjusted_size = min(adjusted_size, 0.2)  # Conservative with 4 SOL
         
@@ -4430,6 +4430,7 @@ class AdaptiveAlphaTrader:
             logging.info(f"   Position multiplier: {self.time_position_multiplier}")
         
         return True  # Always can trade, just with adjusted parameters
+
 
     def enhanced_monitoring(self):
         """Combine all optimizations and detection methods in main monitoring loop"""
