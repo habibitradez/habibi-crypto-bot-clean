@@ -5042,8 +5042,8 @@ def run_adaptive_ai_system():
             
             # === OVERNIGHT TRADING OPTIMIZATION ===
             # Check for session reset every iteration
-            trader.reset_session_limits()
-            trader.adjust_overnight_settings()
+           # trader.reset_session_limits()
+           # trader.adjust_overnight_settings()
             
             # Show session info if changed
             if not hasattr(trader, 'last_logged_session') or trader.session_number != trader.last_logged_session:
