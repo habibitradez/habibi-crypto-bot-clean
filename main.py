@@ -1961,8 +1961,13 @@ class AdaptiveAlphaTrader:
             self.last_trade_date = current_date
             
         if self.daily_trades >= self.daily_trade_limit:
-            logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
-            return False
+            # Try to reset for new session
+            self.reset_session_limits()
+            
+            # If still over limit after reset check
+            if self.daily_trades >= self.daily_trade_limit:
+                logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
+                return False
         
         # HONEYPOT CHECK - CRITICAL!
         is_honeypot, score, reasons = self.is_honeypot(token_address)
@@ -3223,31 +3228,56 @@ class AdaptiveAlphaTrader:
             return False
 
     def convert_profits_to_usdc(self, profit_amount_sol):
-        """Convert profits to USDC using existing function"""
+        """Convert profits to USDC with smart balance management"""
         try:
-            # Use your existing conversion function
-            result = convert_profits_to_usdc(profit_amount_sol)
-        
-            if result:
-                logging.info(f"💰 Successfully converted {profit_amount_sol:.3f} SOL to USDC")
+            # Get current balance
+            current_balance = self.wallet.get_balance()
             
-                # Record this conversion in database if available
+            # SMART CONVERSION RULES
+            MIN_TRADING_BALANCE = 2.0  # Always keep 2 SOL for tomorrow
+            MIN_CONVERT_AMOUNT = 0.5   # Don't convert tiny amounts
+            
+            # Calculate what we can actually convert
+            available_to_convert = current_balance - MIN_TRADING_BALANCE
+            
+            if available_to_convert < MIN_CONVERT_AMOUNT:
+                logging.info(f"📊 Balance: {current_balance:.2f} SOL - keeping all for trading")
+                return False
+            
+            # Convert only 70% of available excess (keep some SOL exposure)
+            convert_amount = min(profit_amount_sol, available_to_convert * 0.7)
+            
+            logging.info(f"💱 Converting {convert_amount:.2f} SOL to USDC")
+            logging.info(f"   Current balance: {current_balance:.2f} SOL")
+            logging.info(f"   Will keep: {current_balance - convert_amount:.2f} SOL for trading")
+            
+            # Use your existing conversion function
+            result = convert_profits_to_usdc(convert_amount)
+            
+            if result:
+                logging.info(f"✅ Successfully converted {convert_amount:.3f} SOL to USDC")
+                
+                # Record this conversion in database
                 if hasattr(self, 'db_manager'):
                     try:
+                        # Add session tracking
+                        if not hasattr(self, 'current_session_number'):
+                            self.current_session_number = 1
+                            
                         cursor = self.db_manager.conn.cursor()
                         cursor.execute('''
-                            INSERT INTO profit_conversions (amount_sol, amount_usdc, conversion_time)
-                            VALUES (?, ?, CURRENT_TIMESTAMP)
-                        ''', (profit_amount_sol, profit_amount_sol * 240))
+                            INSERT INTO profit_conversions (amount_sol, amount_usdc, conversion_time, session_number)
+                            VALUES (?, ?, CURRENT_TIMESTAMP, ?)
+                        ''', (convert_amount, convert_amount * 240, self.current_session_number))
                         self.db_manager.conn.commit()
-                    except:
-                        pass
-            
+                    except Exception as e:
+                        logging.error(f"DB error: {e}")
+                
                 return True
             else:
                 logging.error("Failed to convert profits to USDC")
                 return False
-            
+                
         except Exception as e:
             logging.error(f"Error converting to USDC: {e}")
             return False
@@ -3385,7 +3415,60 @@ class AdaptiveAlphaTrader:
                 
         except Exception as e:
             logging.error(f"Error in daily reset: {e}")
+
+    
+    def adjust_overnight_settings(self):
+        """Optimize settings for overnight trading"""
+        current_hour = datetime.now().hour
+        
+        # Overnight hours (11 PM - 7 AM)
+        if current_hour >= 23 or current_hour < 7:
+            # INCREASE limits for overnight
+            self.daily_trade_limit = 50  # Was 20
+            self.min_ml_confidence = 0.65  # Slightly lower (was 0.70)
             
+            # Asian session (11 PM - 4 AM) - Often best for new launches
+            if current_hour >= 23 or current_hour < 4:
+                logging.info("🌏 ASIAN SESSION ACTIVE - Prime time for moonshots!")
+                
+            # European session (2 AM - 8 AM) - Good volume
+            elif 2 <= current_hour < 8:
+                logging.info("🌍 EUROPEAN SESSION ACTIVE - High volume expected!")
+        
+        else:
+            # Normal day settings
+            self.daily_trade_limit = 20
+
+    def reset_session_limits(self):
+        """Reset limits every 6 hours for continuous trading"""
+        if not hasattr(self, 'last_session_reset'):
+            self.last_session_reset = time.time()
+            self.session_number = 1
+        
+        # Reset every 6 hours
+        if time.time() - self.last_session_reset > 21600:  # 6 hours
+            logging.warning(f"🔄 NEW TRADING SESSION #{self.session_number + 1}")
+            
+            # Reset counters
+            self.daily_trades = 0
+            self.session_number += 1
+            self.last_session_reset = time.time()
+
+    def get_market_session(self):
+        """Identify current market session"""
+        hour = datetime.now().hour
+        
+        if 23 <= hour or hour < 4:
+            return "ASIA"
+        elif 4 <= hour < 8:
+            return "ASIA_EU_OVERLAP"
+        elif 8 <= hour < 13:
+            return "EUROPE"
+        elif 13 <= hour < 16:
+            return "EU_US_OVERLAP"
+        elif 16 <= hour < 23:
+            return "US"
+    
     def initialize_ml_system(self):
         """Initialize ML system on bot startup"""
     
@@ -4961,6 +5044,30 @@ def run_adaptive_ai_system():
             current_time = time.time()
             iteration += 1
             
+            # === OVERNIGHT TRADING OPTIMIZATION ===
+            # Check for session reset every iteration
+            trader.reset_session_limits()
+            trader.adjust_overnight_settings()
+            
+            # Show session info if changed
+            if not hasattr(trader, 'last_logged_session') or trader.session_number != trader.last_logged_session:
+                trader.last_logged_session = trader.session_number
+                logging.info(f"📊 Trading Session #{trader.session_number}")
+                logging.info(f"   Trade Limit: {trader.daily_trade_limit}")
+                logging.info(f"   Current Hour: {datetime.now().hour}:00")
+                
+                market_session = "US"
+                if 23 <= datetime.now().hour or datetime.now().hour < 4:
+                    market_session = "ASIA"
+                elif 4 <= datetime.now().hour < 8:
+                    market_session = "ASIA/EU"
+                elif 8 <= datetime.now().hour < 13:
+                    market_session = "EUROPE"
+                elif 13 <= datetime.now().hour < 16:
+                    market_session = "EU/US"
+                
+                logging.info(f"   Market: {market_session} session")
+            
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
             if current_balance < float(CONFIG.get('MIN_WALLET_BALANCE', 1.0)):
@@ -5268,7 +5375,6 @@ def run_adaptive_ai_system():
             logging.error(f"Error in main loop: {e}")
             logging.error(traceback.format_exc())
             time.sleep(30)
-
 
 # Global rate limiter for Jupiter
 class RateLimiter:
