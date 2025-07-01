@@ -135,6 +135,124 @@ function createPublicKey(address) {
   }
 }
 
+// ==================== SAFETY CHECKS ====================
+// These prevent buying tokens that can't be sold (honeypots)
+
+async function checkSellRoute(tokenAddress, connection) {
+    try {
+        console.log(`🔍 Checking if we can sell ${tokenAddress.slice(0,8)}...`);
+        
+        // Check if we can get a quote to sell this token
+        const quoteUrl = `https://quote-api.jup.ag/v6/quote`;
+        const quoteParams = {
+            inputMint: tokenAddress,
+            outputMint: 'So11111111111111111111111111111111111111112', // SOL
+            amount: '1000000', // Small amount
+            slippageBps: '1000' // 10% slippage
+        };
+        
+        const response = await axios.get(quoteUrl, { 
+            params: quoteParams,
+            timeout: 10000
+        });
+        
+        if (!response.data || !response.data.routePlan || response.data.routePlan.length === 0) {
+            console.error(`🚨 NO SELL ROUTE EXISTS for ${tokenAddress.slice(0,8)} - HONEYPOT!`);
+            return false;
+        }
+        
+        console.log(`✅ Sell route verified for ${tokenAddress.slice(0,8)}`);
+        return true;
+        
+    } catch (error) {
+        console.error(`❌ Error checking sell route: ${error.message}`);
+        return false; // Assume honeypot if can't verify
+    }
+}
+
+async function checkLiquidity(tokenAddress, connection) {
+    try {
+        // This would need to check the liquidity pool
+        // For now, we'll rely on Jupiter having routes as a proxy
+        console.log(`💧 Liquidity check passed (via route check)`);
+        return true;
+    } catch (error) {
+        console.error(`❌ Error checking liquidity: ${error.message}`);
+        return false;
+    }
+}
+
+async function performEnhancedSafetyChecks(tokenAddress, amountSol, connection) {
+    // For trades over 0.1 SOL, do extra checks
+    if (amountSol < 0.1) {
+        return true;
+    }
+    
+    console.log(`\n💎 ENHANCED CHECKS FOR HIGH-VALUE TRADE (${amountSol} SOL)...`);
+    
+    try {
+        // Try multiple sell amounts to ensure liquidity depth
+        const testAmounts = ['10000000', '100000000', '1000000000']; // 0.01, 0.1, 1 token
+        
+        for (const amount of testAmounts) {
+            const quoteUrl = `https://quote-api.jup.ag/v6/quote`;
+            const quoteParams = {
+                inputMint: tokenAddress,
+                outputMint: 'So11111111111111111111111111111111111111112',
+                amount: amount,
+                slippageBps: '1000'
+            };
+            
+            const response = await axios.get(quoteUrl, { 
+                params: quoteParams,
+                timeout: 10000
+            });
+            
+            if (!response.data || !response.data.routePlan || response.data.routePlan.length === 0) {
+                console.error(`❌ Cannot sell ${amount} tokens - insufficient liquidity!`);
+                return false;
+            }
+        }
+        
+        console.log(`✅ Enhanced liquidity depth check passed`);
+        return true;
+        
+    } catch (error) {
+        console.error(`❌ Enhanced safety check failed: ${error.message}`);
+        return false;
+    }
+}
+
+async function performSafetyChecks(tokenAddress, connection, isBuy) {
+    // Only check on buys - sells should always go through
+    if (!isBuy) {
+        console.log(`🔄 Sell operation - skipping safety checks`);
+        return true;
+    }
+    
+    console.log(`\n🛡️ PERFORMING SAFETY CHECKS FOR ${tokenAddress.slice(0,8)}...`);
+    
+    // Check 1: Can we sell this token?
+    const canSell = await checkSellRoute(tokenAddress, connection);
+    if (!canSell) {
+        console.error(`\n🚨🚨🚨 HONEYPOT DETECTED! 🚨🚨🚨`);
+        console.error(`Token ${tokenAddress.slice(0,8)} CANNOT BE SOLD!`);
+        console.error(`Blocking this trade to protect your funds.`);
+        return false;
+    }
+    
+    // Check 2: Liquidity check (basic via routes)
+    const hasLiquidity = await checkLiquidity(tokenAddress, connection);
+    if (!hasLiquidity) {
+        console.error(`\n⚠️ LIQUIDITY WARNING!`);
+        console.error(`Token ${tokenAddress.slice(0,8)} has liquidity issues!`);
+        return false;
+    }
+    
+    console.log(`✅ All safety checks passed!\n`);
+    return true;
+}
+
 // QuickNode rate limiting function
 async function quickNodeRateLimit() {
   if (!USE_QUICKNODE_METIS) return;
@@ -501,6 +619,31 @@ async function executeSwap() {
         'User-Agent': 'SolanaBot/2.0'
       }
     });
+    
+    // ==================== SAFETY CHECKS BEFORE TRADING ====================
+    // Run safety checks for buy operations
+    const safetyChecksPassed = await performSafetyChecks(TOKEN_ADDRESS, connection, !IS_SELL);
+
+    if (!safetyChecksPassed) {
+        console.error(`\n❌ TRADE BLOCKED BY SAFETY CHECKS`);
+        console.error(`This likely saved you from losing funds!`);
+        
+        // Exit with error code 2 to indicate safety check failure
+        // Your Python code can detect this and handle accordingly
+        process.exit(2);
+    }
+
+    // Run enhanced checks for high-value trades
+    if (safetyChecksPassed && !IS_SELL && AMOUNT_SOL >= 0.1) {
+        const enhancedChecksPassed = await performEnhancedSafetyChecks(TOKEN_ADDRESS, AMOUNT_SOL, connection);
+        if (!enhancedChecksPassed) {
+            console.error(`\n❌ ENHANCED SAFETY CHECKS FAILED`);
+            console.error(`High-value trade blocked due to liquidity concerns`);
+            process.exit(2);
+        }
+    }
+
+    console.log(`✅ Safety checks completed - proceeding with ${IS_SELL ? 'sell' : 'buy'}...\n`);
     
     // Create keypair from private key with better error handling
     let keypair;
