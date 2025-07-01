@@ -1964,6 +1964,21 @@ class AdaptiveAlphaTrader:
             logging.warning(f"🛑 Daily trade limit reached ({self.daily_trade_limit} trades)")
             return False
         
+        # HONEYPOT CHECK - CRITICAL!
+        is_honeypot, score, reasons = self.is_honeypot(token_address)
+        
+        if is_honeypot:
+            logging.error(f"🚨 BLOCKED HONEYPOT TRADE: {token_address[:8]}")
+            logging.error(f"   Score: {score}, Reasons: {', '.join(reasons)}")
+            return False
+        
+        # Additional sell simulation for high-value trades
+        if position_size > 0.1:  # For larger positions
+            can_sell = self.simulate_sell_transaction(token_address)
+            if can_sell is False:
+                logging.error(f"🚨 BLOCKED: Sell simulation failed for {token_address[:8]}")
+                return False
+        
         # SAFETY CHECK
         if not self.is_token_safe(token_address):
             logging.error(f"❌ REJECTED UNSAFE TOKEN: {token_address[:8]}")
@@ -1972,8 +1987,8 @@ class AdaptiveAlphaTrader:
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
     
         # Set targets based on strategy - UPDATED WITH REALISTIC TARGETS
-        if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE':
-            targets = {'take_profit': 1.25, 'stop_loss': 0.94, 'trailing': True}  # 20% profit, 8% loss
+        if strategy == 'MOMENTUM' or strategy == 'COPY_TRADE' or strategy == 'MOMENTUM_EXPLOSION':
+            targets = {'take_profit': 1.50, 'stop_loss': 0.85, 'trailing': True}  # 50% profit, 15% loss for momentum
         elif strategy == 'DIP_BUY' or strategy == 'DIP_RECOVERY':
             targets = {'take_profit': 1.30, 'stop_loss': 0.94, 'trailing': True}  # 25% profit, 10% loss
         elif strategy == 'SCALP' or strategy == 'LAUNCH_SCALP':
@@ -2045,6 +2060,7 @@ class AdaptiveAlphaTrader:
             logging.info(f"✅ {strategy} position opened: {position_size} SOL")
             logging.info(f"   Take Profit: {(targets['take_profit']-1)*100:.0f}%")
             logging.info(f"   Stop Loss: {(1-targets['stop_loss'])*100:.0f}%")
+            logging.info(f"✅ Token passed all safety checks")
             return True
         else:
             logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
@@ -4519,7 +4535,166 @@ class AdaptiveAlphaTrader:
         logging.info(f"📊 Position sizing: Base={base_position:.3f}, Final={final_position:.3f} SOL")
         
         return final_position
-        
+
+    def is_honeypot(self, token_address):
+        """Detect if token is a honeypot/scam"""
+        try:
+            logging.info(f"🔍 Checking honeypot status for {token_address[:8]}...")
+            
+            # Get token data
+            holders = get_holder_count(token_address)
+            liquidity = get_token_liquidity(token_address)
+            age = get_token_age_minutes(token_address)
+            
+            # RED FLAGS for honeypots
+            honeypot_score = 0
+            reasons = []
+            
+            # 1. Check top holder concentration
+            url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenLargestAccounts",
+                "params": [token_address]
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result']:
+                    top_holders = data['result']['value'][:5]  # Top 5 holders
+                    
+                    # Calculate concentration
+                    total_supply = sum(float(h.get('amount', 0)) for h in data['result']['value'])
+                    if total_supply > 0:
+                        top5_amount = sum(float(h.get('amount', 0)) for h in top_holders)
+                        concentration = (top5_amount / total_supply) * 100
+                        
+                        if concentration > 90:
+                            honeypot_score += 50
+                            reasons.append(f"Top 5 holders own {concentration:.0f}%")
+                        elif concentration > 70:
+                            honeypot_score += 30
+                            reasons.append(f"High concentration: {concentration:.0f}%")
+            
+            # 2. Check sell transactions
+            trades = get_recent_trade_history(token_address, hours=1)
+            if len(trades) > 10:
+                # Look for failed transactions (often sells being blocked)
+                failed_trades = [t for t in trades if not t.get('success', True)]
+                fail_rate = len(failed_trades) / len(trades)
+                
+                if fail_rate > 0.5:
+                    honeypot_score += 40
+                    reasons.append(f"High fail rate: {fail_rate:.0%}")
+            
+            # 3. Liquidity red flags
+            if liquidity:
+                # Check if liquidity is too low
+                if liquidity < 1000:
+                    honeypot_score += 20
+                    reasons.append(f"Low liquidity: ${liquidity:.0f}")
+                
+                # Check liquidity to holder ratio
+                if holders and holders > 0:
+                    liq_per_holder = liquidity / holders
+                    if liq_per_holder < 10:  # Less than $10 per holder
+                        honeypot_score += 20
+                        reasons.append(f"Low liq/holder: ${liq_per_holder:.1f}")
+            
+            # 4. Holder pattern red flags
+            if holders:
+                # Too many holders too fast (bot buyers)
+                if age and age < 10 and holders > 500:
+                    honeypot_score += 30
+                    reasons.append(f"Suspicious growth: {holders} holders in {age}m")
+                
+                # Stagnant holder count (no organic growth)
+                if age and age > 60 and holders < 50:
+                    honeypot_score += 20
+                    reasons.append(f"No growth: only {holders} holders after {age}m")
+            
+            # 5. Check contract verification and metadata
+            # Many honeypots have no metadata or unverified contracts
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getAccountInfo",
+                "params": [
+                    token_address,
+                    {"encoding": "jsonParsed"}
+                ]
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and data['result']:
+                    # Check if it's a proper SPL token
+                    if 'value' in data['result'] and 'data' in data['result']['value']:
+                        parsed = data['result']['value']['data'].get('parsed')
+                        if not parsed:
+                            honeypot_score += 20
+                            reasons.append("No token metadata")
+            
+            # 6. Name/Symbol checks (many scams use famous names)
+            scam_keywords = ['ELON', 'MUSK', 'DOGE', 'SHIB', 'PEPE', 'MOON', 'SAFE', 
+                           'BABY', 'INU', 'FLOKI', 'TESLA', 'TRUMP', 'BIDEN']
+            
+            # Would need to get token name/symbol here
+            # Add 20 points if name contains scam keywords
+            
+            # DECISION
+            is_honeypot = honeypot_score >= 50
+            
+            if is_honeypot:
+                logging.warning(f"🚨 HONEYPOT DETECTED! Score: {honeypot_score}")
+                for reason in reasons:
+                    logging.warning(f"   - {reason}")
+            else:
+                logging.info(f"✅ Token appears safe. Score: {honeypot_score}")
+                
+            return is_honeypot, honeypot_score, reasons
+            
+        except Exception as e:
+            logging.error(f"Error checking honeypot: {e}")
+            # Be conservative - assume it's risky if we can't check
+            return True, 100, ["Failed to verify safety"]
+
+    def simulate_sell_transaction(self, token_address):
+        """Simulate a sell to check if it would succeed"""
+        try:
+            # Use Jupiter API to simulate a small sell
+            quote_url = "https://quote-api.jup.ag/v6/quote"
+            
+            # Simulate selling a tiny amount
+            params = {
+                'inputMint': token_address,
+                'outputMint': 'So11111111111111111111111111111111111111112',  # SOL
+                'amount': '1000000',  # Small amount
+                'slippageBps': '1000',  # 10% slippage
+                'onlyDirectRoutes': 'false'
+            }
+            
+            response = requests.get(quote_url, params=params, timeout=3)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data and len(data['data']) > 0:
+                    # If we get routes, selling is possible
+                    return True
+                else:
+                    # No routes = can't sell = honeypot
+                    logging.warning("🚨 NO SELL ROUTES FOUND - HONEYPOT!")
+                    return False
+            
+            return None  # Uncertain
+            
+        except Exception as e:
+            logging.error(f"Error simulating sell: {e}")
+            return None
+
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
