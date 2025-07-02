@@ -1995,18 +1995,27 @@ class AdaptiveAlphaTrader:
             logging.error(f"❌ REJECTED UNSAFE TOKEN: {token_address[:8]}")
             return False
         
-        # FINAL MOMENTUM-SPECIFIC CHECK
+        # FINAL MOMENTUM-SPECIFIC CHECK - MORE FLEXIBLE NOW
         if strategy in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT']:
-            # Extra strict for momentum trades
+            # Get token data
             liquidity = get_token_liquidity(token_address)
             holders = get_holder_count(token_address)
             
-            if not liquidity or liquidity < 5000:  # Higher minimum for momentum
-                logging.error(f"❌ MOMENTUM BLOCKED: Liquidity ${liquidity} too low")
-                return False
-                
-            if not holders or holders < 50:  # Need decent holder base
-                logging.error(f"❌ MOMENTUM BLOCKED: Only {holders} holders")
+            # More flexible liquidity requirements
+            if liquidity is None:
+                logging.warning(f"⚠️ No liquidity data for {token_address[:8]} - proceeding with caution")
+                liquidity = 0  # Allow it through, other checks will protect us
+            
+            # LOWERED REQUIREMENTS FOR EARLY CATCHES
+            if liquidity < 1000:  # Lowered from 5000!
+                logging.warning(f"⚠️ Low liquidity ${liquidity} for momentum trade")
+                # Only block if REALLY low
+                if liquidity < 500:
+                    logging.error(f"❌ MOMENTUM BLOCKED: Liquidity ${liquidity} too low (need $500+)")
+                    return False
+                    
+            if not holders or holders < 30:  # Lowered from 50!
+                logging.error(f"❌ MOMENTUM BLOCKED: Only {holders} holders (need 30+)")
                 return False
         
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
@@ -2040,7 +2049,8 @@ class AdaptiveAlphaTrader:
                 'peak_price': entry_price,
                 'signature': signature,
                 'source_wallet': source_wallet,  # Track which alpha we're following
-                'partial_sold': False  # Track partial profit taking
+                'partial_sold': False,  # Track partial profit taking
+                'initial_vol_liq_ratio': get_24h_volume(token_address) / max(liquidity, 1) if liquidity else None
             }
         
             # Update brain stats
@@ -3972,11 +3982,12 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """Find tokens with explosive momentum using stricter criteria and scoring"""
+        """Find tokens with explosive momentum using more flexible criteria"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
         try:
-            tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+            # Check MORE tokens for better coverage
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:200]  # Increased from 100
             tokens_checked = 0
             momentum_candidates = []
             
@@ -3990,82 +4001,84 @@ class AdaptiveAlphaTrader:
                     holders = get_holder_count(token)
                     age = get_token_age_minutes(token)
                     
-                    if not all([current_price, liquidity, volume]):
+                    # Skip if missing critical data (don't use placeholders!)
+                    if not current_price or current_price <= 0:
+                        continue
+                    if liquidity is None:  # Allow 0 liquidity for very new tokens
+                        continue
+                    if not volume or volume <= 0:
                         continue
                     
-                    # ADD DEBUG LINES HERE - RIGHT AFTER GETTING DATA
-                    logging.debug(f"DEBUG - Token: {token[:8]}")
-                    logging.debug(f"  Price: ${current_price} (real: {current_price not in [0.00001, 1.0, 0.001]})")
-                    logging.debug(f"  Liquidity: ${liquidity} (real: {liquidity != 5000})")
-                    logging.debug(f"  Volume: ${volume} (real: {volume not in [10000, 25000]})")
-                    logging.debug(f"  Holders: {holders} (real: {holders not in [150, 100, 75]})")
-                    logging.debug(f"  Age: {age}m (real: {age not in [45, 60]})")
-                    
+                    # ADJUSTED CRITERIA FOR MORE OPPORTUNITIES
+                    # Lower minimum liquidity for catching early gems
+                    if liquidity < 1000:  # Lowered from 2000
+                        continue
+                        
                     # Calculate momentum score
                     momentum_score = 0
-                    volume_liq_ratio = volume / liquidity
+                    volume_liq_ratio = volume / max(liquidity, 1)  # Avoid division by zero
                     
-                    # Log tokens with decent activity
-                    if volume_liq_ratio > 1:
-                        logging.info(f"📊 Active token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
+                    # Log potential candidates
+                    if volume_liq_ratio > 2:  # Log anything with decent volume
+                        logging.info(f"📊 Momentum candidate {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
                     
                     # 1. Volume/Liquidity Ratio (most important - 40 points max)
                     if volume_liq_ratio > 5:
                         momentum_score += 40
                     elif volume_liq_ratio > 3:
-                        momentum_score += 25
+                        momentum_score += 30  # Increased from 25
                     elif volume_liq_ratio > 2:
-                        momentum_score += 10
+                        momentum_score += 20  # Increased from 10
+                    elif volume_liq_ratio > 1.5:
+                        momentum_score += 10  # NEW: Even lower threshold
                     else:
-                        continue  # Skip low momentum
+                        continue
                     
-                    # 2. Optimal Age (20 points max)
-                    if age:
-                        if 45 <= age <= 120:  # Sweet spot
+                    # 2. Age scoring - adjusted for newer tokens
+                    if age is not None:
+                        if 30 <= age <= 120:  # Expanded sweet spot
                             momentum_score += 20
-                        elif 30 <= age < 45:
+                        elif 15 <= age < 30:  # Very new but not too new
                             momentum_score += 15
-                        elif age < 30:
-                            momentum_score += 10  # Might be too early
-                        elif age > 360:  # 6 hours
-                            continue  # Too old
-                        else:
-                            momentum_score += 5
-                    
-                    # 3. Holder Count (20 points max)
-                    if holders:
-                        if holders > 500:
-                            logging.info(f"   ⚠️ Token {token[:8]} has {holders} holders - might be too late")
-                            continue
-                        elif 80 <= holders <= 300:  # Sweet spot
-                            momentum_score += 20
-                        elif 50 <= holders < 80:
-                            momentum_score += 15
-                        elif 30 <= holders < 50:
+                        elif 120 < age <= 360:  # Up to 6 hours
                             momentum_score += 10
-                        elif holders < 30:
-                            continue  # Too early
-                        else:  # 300-500
-                            momentum_score += 5
+                        elif age < 15:
+                            momentum_score += 5  # Still consider very new
+                        else:
+                            continue  # Too old
                     
-                    # 4. Holder Growth Rate (10 points max)
+                    # 3. Holder Count - more flexible
+                    if holders:
+                        if 50 <= holders <= 300:  # Lowered from 80
+                            momentum_score += 20
+                        elif 30 <= holders < 50:  # New range
+                            momentum_score += 15
+                        elif 300 < holders <= 500:
+                            momentum_score += 10
+                        elif 20 <= holders < 30:  # Very early
+                            momentum_score += 5
+                        else:
+                            continue
+                    
+                    # 4. Holder Growth Rate
                     if age and age > 0 and holders:
                         holders_per_minute = holders / age
-                        if holders_per_minute > 2:  # Rapid adoption
+                        if holders_per_minute > 2:
                             momentum_score += 10
                         elif holders_per_minute > 1:
                             momentum_score += 5
+                        elif holders_per_minute > 0.5:  # NEW: Lower threshold
+                            momentum_score += 3
                     
-                    # 5. Liquidity Quality (10 points max)
-                    if liquidity >= 5000:
+                    # 5. Liquidity Quality - adjusted
+                    if liquidity >= 3000:  # Lowered from 5000
                         momentum_score += 10
-                    elif liquidity >= 3000:
+                    elif liquidity >= 1500:
                         momentum_score += 5
-                    elif liquidity < 2000:
-                        momentum_score -= 10  # Penalty for low liquidity
+                    # No penalty for low liquidity anymore
                     
-                    # Add to candidates if score is high enough
-                    if momentum_score >= 50:  # Minimum score to consider
+                    # Add to candidates with LOWER threshold
+                    if momentum_score >= 40:  # Lowered from 50
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
@@ -4074,7 +4087,7 @@ class AdaptiveAlphaTrader:
                             'holders': holders,
                             'liquidity': liquidity,
                             'price': current_price,
-                            'holders_per_minute': holders / age if age > 0 else 0
+                            'holders_per_minute': holders / age if age and age > 0 else 0
                         })
                 
                 except Exception as e:
@@ -4086,25 +4099,26 @@ class AdaptiveAlphaTrader:
             if momentum_candidates:
                 logging.warning(f"📊 Found {len(momentum_candidates)} momentum candidates")
                 
-                # Log top 3 candidates
-                for i, candidate in enumerate(momentum_candidates[:3]):
-                    logging.info(f"#{i+1} Score {candidate['score']}: {candidate['token'][:8]} - {candidate['volume_ratio']:.1f}x vol, {candidate['holders']} holders, {candidate['age']}m old")
+                # Log top 5 candidates (not just 3)
+                for i, candidate in enumerate(momentum_candidates[:5]):
+                    logging.info(f"#{i+1} Score {candidate['score']}: {candidate['token'][:8]} - {candidate['volume_ratio']:.1f}x vol, ${candidate['liquidity']:,.0f} liq, {candidate['holders']} holders, {candidate['age']}m old")
                 
                 # Trade the best one if score is high enough
                 best = momentum_candidates[0]
-                if best['score'] >= 70:  # High quality threshold
+                
+                # LOWER THRESHOLD for trading
+                if best['score'] >= 60:  # Lowered from 70
                     logging.warning(f"🚀 BEST MOMENTUM: {best['token'][:8]}")
                     logging.warning(f"   Score: {best['score']}/100")
                     logging.warning(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
                     logging.warning(f"   Age: {best['age']}m, Holders: {best['holders']}")
-                    logging.warning(f"   Holder velocity: {best['holders_per_minute']:.1f}/min")
+                    logging.warning(f"   Liquidity: ${best['liquidity']:,.0f}")
                     
-                    # Use dynamic position sizing if available
-                    position_size = 0.05  # Default
-                    if hasattr(self, 'calculate_position_size'):
-                        position_size = self.calculate_position_size('MOMENTUM_EXPLOSION', 0.8, best)
+                    # Execute trade (safety checks will protect us)
+                    position_size = 0.05  # Start with standard size
+                    if best['score'] >= 80:  # Premium signal
+                        position_size = 0.08
                     
-                    # Execute trade
                     self.execute_trade(
                         best['token'],
                         'MOMENTUM_EXPLOSION',
@@ -4114,15 +4128,22 @@ class AdaptiveAlphaTrader:
                     )
                     return True
                 else:
-                    logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
+                    logging.info(f"Best score {best['score']} below 60 threshold - waiting")
+                    # Log why it's not good enough
+                    if best['liquidity'] < 2000:
+                        logging.info("   Issue: Low liquidity")
+                    if best['volume_ratio'] < 3:
+                        logging.info("   Issue: Low volume ratio")
+                    if best['holders'] < 50:
+                        logging.info("   Issue: Too few holders")
             
-            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens, no trades taken")
+            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens")
             return False
             
         except Exception as e:
             logging.error(f"Error in momentum detection: {e}")
             return False
-
+            
     
     def find_pre_pump_patterns(self):
         """Find tokens showing pre-pump patterns like MORI before it pumped"""
@@ -4400,8 +4421,8 @@ class AdaptiveAlphaTrader:
                 logging.error(f"Error checking {token}: {e}")
                 
 
-    def monitor_momentum_position(self, token, position):
-        """Special exit logic for momentum trades with aggressive real-time monitoring"""
+def monitor_momentum_position(self, token, position):
+        """Aggressive real-time monitoring for momentum trades"""
         if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
             
@@ -4429,7 +4450,7 @@ class AdaptiveAlphaTrader:
         liquidity = get_token_liquidity(token)
         
         if volume and liquidity:
-            current_vol_liq_ratio = volume / liquidity
+            current_vol_liq_ratio = volume / max(liquidity, 1)
             
             # Store initial ratio if not set
             if 'initial_vol_liq_ratio' not in position:
@@ -9547,28 +9568,46 @@ def get_token_age_minutes(token_address):
         
 
 def get_token_liquidity(token_address):
-    """Get token liquidity from Raydium/Orca pools"""
+    """Get token liquidity using multiple methods"""
     try:
-        # First try Jupiter API which aggregates liquidity data
-        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+        # Method 1: Use Jupiter Price API v6
+        jupiter_url = f"https://price.jup.ag/v6/price?ids={token_address}"
         
         response = requests.get(jupiter_url, timeout=3)
         if response.status_code == 200:
             data = response.json()
             if 'data' in data and token_address in data['data']:
                 token_info = data['data'][token_address]
-                # Jupiter provides liquidity in some cases
+                # Check for liquidity or infer from price/volume
                 if 'liquidity' in token_info:
                     return float(token_info['liquidity'])
+                    
+                # If no liquidity but has price, estimate from market cap
+                if 'price' in token_info and 'marketCap' in token_info:
+                    # Rough estimate: liquidity is often 5-10% of market cap for new tokens
+                    estimated_liq = float(token_info['marketCap']) * 0.07
+                    if estimated_liq > 0:
+                        logging.debug(f"Estimated liquidity from market cap: ${estimated_liq:,.0f}")
+                        return estimated_liq
         
-        # Use Helius to find the token's LP pair
+        # Method 2: Get from Birdeye (if you have API key)
+        if os.getenv('BIRDEYE_API_KEY'):
+            birdeye_url = f"https://public-api.birdeye.so/public/token_overview?address={token_address}"
+            headers = {'x-api-key': os.getenv('BIRDEYE_API_KEY')}
+            response = requests.get(birdeye_url, headers=headers, timeout=3)
+            if response.status_code == 200:
+                data = response.json()
+                if 'data' in data and 'liquidity' in data['data']:
+                    return float(data['data']['liquidity'])
+        
+        # Method 3: Calculate from Raydium pool data using Helius
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         
-        # Get token accounts to find LP pairs
+        # Get token supply first
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
-            "method": "getTokenLargestAccounts",
+            "method": "getTokenSupply",
             "params": [token_address]
         }
         
@@ -9576,27 +9615,39 @@ def get_token_liquidity(token_address):
         if response.status_code == 200:
             data = response.json()
             if 'result' in data and 'value' in data['result']:
-                # Look for Raydium/Orca pool addresses in largest holders
-                for account in data['result']['value']:
-                    account_pubkey = account.get('address')
-                    
-                    # Check if this is a known DEX pool
-                    # Raydium pools often have large concentrated holdings
-                    amount = float(account.get('amount', 0)) / (10 ** account.get('decimals', 9))
-                    
-                    # If one account holds 40-60% of supply, likely a LP
-                    if amount > 0:
-                        # Get token price to calculate liquidity
-                        token_price = get_token_price(token_address)
-                        if token_price and token_price > 0:
-                            # Liquidity = 2x the value in the pool (for token + SOL sides)
-                            estimated_liquidity = amount * token_price * 2
-                            if estimated_liquidity > 1000:  # Reasonable liquidity
-                                return estimated_liquidity
+                total_supply = float(data['result']['value']['amount']) / (10 ** data['result']['value']['decimals'])
+                
+                # Get largest accounts (pools usually hold significant %)
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenLargestAccounts",
+                    "params": [token_address]
+                }
+                
+                response = requests.post(url, json=payload, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'result' in data and 'value' in data['result']:
+                        # Look for pool-like holdings (30-60% of supply)
+                        for account in data['result']['value'][:5]:  # Check top 5
+                            amount = float(account.get('amount', 0))
+                            decimals = account.get('decimals', 9)
+                            tokens_held = amount / (10 ** decimals)
+                            percentage = (tokens_held / total_supply) * 100 if total_supply > 0 else 0
+                            
+                            if 30 <= percentage <= 60:  # Likely a pool
+                                # Get token price
+                                token_price = get_token_price(token_address)
+                                if token_price and token_price > 0:
+                                    # Liquidity = token value * 2 (for both sides of pool)
+                                    estimated_liquidity = tokens_held * token_price * 2
+                                    logging.debug(f"Found pool with {percentage:.1f}% supply, liquidity: ${estimated_liquidity:,.0f}")
+                                    return estimated_liquidity
         
-        # Fallback: Check Raydium directly
-        # Note: This requires additional setup for Raydium SDK
-        return None  # Return None if we can't get real liquidity
+        # If all methods fail, return None (not a placeholder!)
+        logging.debug(f"Could not determine liquidity for {token_address[:8]}")
+        return None
         
     except Exception as e:
         logging.debug(f"Error getting liquidity: {e}")
@@ -9778,18 +9829,26 @@ def get_recent_volume(token_address):
                 if tx_count > 0:
                     # Estimate volume based on transaction frequency
                     liquidity = get_token_liquidity(token_address)
-                    if liquidity:
+                    if liquidity and liquidity > 0:  # Check liquidity is valid
                         # Each transaction typically moves 0.5-2% of liquidity
                         avg_tx_size = liquidity * 0.01
                         return tx_count * avg_tx_size
+                    else:
+                        # No liquidity data - estimate based on tx count
+                        # Assume average $50 per transaction for new tokens
+                        return tx_count * 50
         
         # Fallback: use daily volume / 24
         daily_volume = get_24h_volume(token_address)
-        return daily_volume / 24 if daily_volume else 1000
+        if daily_volume and daily_volume > 0:
+            return daily_volume / 24
+        
+        # Final fallback - return None to indicate no data
+        return None  # Better than returning arbitrary 1000
         
     except Exception as e:
         logging.debug(f"Error getting recent volume: {e}")
-        return 1000
+        return None  # Return None on error, not 1000
         
 
 def has_locked_liquidity(token_address):
@@ -9841,33 +9900,16 @@ def has_locked_liquidity(token_address):
 def get_24h_volume(token_address):
     """Get 24-hour trading volume for a token using Helius"""
     try:
-        # Use Helius DAS API for token data
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         
-        # First, try to get token metadata which might include volume
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getAsset",
-            "params": [token_address]
-        }
-        
-        response = requests.post(url, json=payload, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            # Check if volume data exists in metadata
-            if 'result' in data:
-                # Volume might be in token_info or price_info
-                pass
-        
-        # If no direct volume data, calculate from recent transactions
+        # Get recent transactions to estimate volume
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
             "method": "getSignaturesForAddress",
             "params": [
                 token_address,
-                {"limit": 100}  # Get last 100 transactions
+                {"limit": 1000}  # Max allowed
             ]
         }
         
@@ -9875,32 +9917,51 @@ def get_24h_volume(token_address):
         if response.status_code == 200:
             data = response.json()
             if 'result' in data and len(data['result']) > 0:
-                # Estimate volume based on transaction count
-                tx_count = len(data['result'])
-                # Get average transaction size from liquidity
-                liquidity = get_token_liquidity(token_address)
-                if liquidity:
-                    # Rough estimate: each tx moves ~1% of liquidity
-                    estimated_volume = tx_count * (liquidity * 0.01) * 24
-                    return estimated_volume
+                # Count transactions in last 24 hours
+                current_time = int(time.time())
+                day_ago = current_time - 86400
+                
+                recent_txs = 0
+                for tx in data['result']:
+                    if tx.get('blockTime', 0) > day_ago:
+                        recent_txs += 1
+                    else:
+                        break  # Transactions are ordered by time
+                
+                # If we found transactions, estimate volume
+                if recent_txs > 0:
+                    # Estimate volume based on transaction count and liquidity
+                    liquidity = get_token_liquidity(token_address)
+                    if liquidity and liquidity > 0:
+                        # Each swap is typically 0.5-2% of liquidity
+                        avg_swap_size = liquidity * 0.01
+                        estimated_volume = recent_txs * avg_swap_size
+                        return estimated_volume
+                    else:
+                        # No liquidity data - estimate based on tx count alone
+                        # Assume average trade of $50 for new tokens
+                        return recent_txs * 50
+                else:
+                    # No transactions in 24h = no volume
+                    return 0
         
-        # Fallback to Jupiter for price/volume data
-        jupiter_url = f"https://price.jup.ag/v4/price?ids={token_address}"
+        # Fallback to Jupiter for additional data
+        jupiter_url = f"https://price.jup.ag/v6/price?ids={token_address}"
         response = requests.get(jupiter_url, timeout=3)
         if response.status_code == 200:
             data = response.json()
             if 'data' in data and token_address in data['data']:
                 token_info = data['data'][token_address]
+                # Check if Jupiter has volume data
                 if 'volume24h' in token_info:
                     return float(token_info['volume24h'])
         
-        # Default estimate based on liquidity
-        liquidity = get_token_liquidity(token_address)
-        return liquidity * 2 if liquidity else 25000
+        # No data available - return None instead of fake number
+        return None
         
     except Exception as e:
         logging.debug(f"Error getting 24h volume: {e}")
-        return 25000
+        return None  # Return None on error, not a fake number
 
 
 def calculate_safety_score(age_minutes, liquidity, holders):
@@ -15896,62 +15957,6 @@ def get_token_balance(wallet_address, token_address):
         logging.error(f"Error getting token balance for {token_address[:8]}: {e}")
         return 0
 
-
-def get_token_liquidity(token_address):
-    """Get token liquidity from pool"""
-    try:
-        # Get the token's pool address (usually from Raydium)
-        pool_address = get_pool_address_for_token(token_address)
-        
-        if not pool_address:
-            logging.debug(f"No pool found for {token_address[:8]}")
-            return 0
-            
-        # Get pool info
-        headers = {"Content-Type": "application/json"}
-        
-        # Get pool token accounts
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTokenAccountsByOwner",
-            "params": [
-                pool_address,
-                {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
-                {"encoding": "jsonParsed"}
-            ]
-        }
-        
-        response = requests.post(HELIUS_RPC_URL, json=payload, headers=headers, timeout=3)
-        
-        if response.status_code == 200:
-            accounts = response.json().get('result', {}).get('value', [])
-            
-            total_liquidity_usd = 0
-            
-            for account in accounts:
-                mint = account['account']['data']['parsed']['info']['mint']
-                amount = float(account['account']['data']['parsed']['info']['tokenAmount']['uiAmount'])
-                
-                # Get USD value
-                if mint == "So11111111111111111111111111111111111111112":  # SOL
-                    total_liquidity_usd += amount * 240  # SOL price
-                elif mint == "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v":  # USDC
-                    total_liquidity_usd += amount
-                    
-            # If we found liquidity, return it
-            if total_liquidity_usd > 0:
-                logging.debug(f"Token {token_address[:8]} liquidity: ${total_liquidity_usd:.2f}")
-                return total_liquidity_usd
-                
-        # If no pool or error, try a simpler approach
-        # For new tokens, estimate based on typical values
-        logging.debug(f"Could not get exact liquidity for {token_address[:8]}, using estimate")
-        return 5000  # Return $5k as estimate for new tokens instead of 1
-        
-    except Exception as e:
-        logging.debug(f"Error getting liquidity: {e}")
-        return 5000  # Return $5k estimate instead of 1
 
 def monitor_token_price_for_consistent_profits(token_address):
     """FIXED: Progressive profit taking for $500/day consistency"""
