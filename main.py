@@ -4380,10 +4380,10 @@ class AdaptiveAlphaTrader:
                     
             except Exception as e:
                 logging.error(f"Error checking {token}: {e}")
+                
 
     def monitor_momentum_position(self, token, position):
-        """Special exit logic for momentum trades - ignore alpha wallets"""
-        # Check ALL momentum strategies, not just MOMENTUM_EXPLOSION
+        """Special exit logic for momentum trades with partial profits"""
         if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
             
@@ -4399,38 +4399,92 @@ class AdaptiveAlphaTrader:
             
         price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
         
-        # Momentum-specific exits:
-        # 1. Take profit at 50%+ (these can run 100-500%)
-        if price_change > 50:
-            logging.warning(f"🎯 MOMENTUM TAKE PROFIT: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "MOMENTUM_PROFIT")
-            return
+        # NEW: PARTIAL PROFIT TAKING AT 15%
+        if price_change >= 15 and not position.get('partial_sold', False):
+            # Check if we haven't already taken partial profits
+            partial_size = position['size'] * 0.5  # Sell 50%
             
-        # 2. Stop loss at -15% (wider than normal)
-        if price_change < -15:
-            logging.warning(f"🛑 MOMENTUM STOP LOSS: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "MOMENTUM_STOP")
-            return
+            logging.warning(f"💰 PARTIAL PROFIT: {token[:8]} at {price_change:.1f}%")
+            logging.warning(f"   Selling 50% ({partial_size:.3f} SOL)")
+            logging.warning(f"   Keeping 50% for potential moonshot")
             
-        # 3. Volume death - if volume drops below liquidity
-        current_volume = get_24h_volume(token)
-        current_liquidity = get_token_liquidity(token)
-        
-        if current_volume and current_liquidity:
-            if current_volume < current_liquidity:
-                logging.warning(f"📉 MOMENTUM FADING: Volume dropped below liquidity")
-                self.ensure_position_sold(token, position, "MOMENTUM_FADE")
-                return
+            # Execute partial sell
+            result = execute_optimized_sell(token, partial_size)
+            
+            if result and result != "no-tokens":
+                # Update position
+                position['size'] = position['size'] * 0.5  # Remaining half
+                position['partial_sold'] = True
+                position['partial_price'] = current_price
                 
-        # 4. Time-based exit - if held too long without profit
-        if hold_time > 1800 and price_change < 10:  # 30 minutes with < 10% gain
-            logging.warning(f"⏰ MOMENTUM TIMEOUT: No significant move after 30 minutes")
-            self.ensure_position_sold(token, position, "MOMENTUM_TIMEOUT")
+                # Record the partial profit
+                partial_profit = partial_size * (price_change / 100)
+                logging.info(f"✅ Partial profit secured: +{partial_profit:.3f} SOL")
+                
+                # Update peak for trailing stop on remainder
+                position['peak_price'] = max(position.get('peak_price', entry_price), current_price)
+        
+        # MOONSHOT DETECTION - Take more at 50%
+        elif price_change >= 50 and position.get('partial_sold', False):
+            # We already took partial, now take another 50% of remainder
+            partial_size = position['size'] * 0.5
+            
+            logging.warning(f"🚀 MOONSHOT PROFIT: {token[:8]} at {price_change:.1f}%")
+            logging.warning(f"   Taking another 50% ({partial_size:.3f} SOL)")
+            logging.warning(f"   Keeping final 25% for mega pump")
+            
+            result = execute_optimized_sell(token, partial_size)
+            if result and result != "no-tokens":
+                position['size'] = position['size'] * 0.5
+                position['second_partial'] = True
+                position['moonshot_price'] = current_price
+        
+        # MEGA PUMP - Final exit at 100%+
+        elif price_change >= 100:
+            logging.warning(f"🎯 MEGA PUMP EXIT: {price_change:.1f}%")
+            self.ensure_position_sold(token, position, "MOONSHOT_FINAL")
+            return
+            
+        # TRAILING STOP for remainder (after partial profit)
+        if position.get('partial_sold', False) and price_change > 20:
+            # Update peak
+            if current_price > position.get('peak_price', position['entry_price']):
+                position['peak_price'] = current_price
+                logging.info(f"📈 New peak for {token[:8]}: +{price_change:.1f}%")
+                
+            # Check trailing stop (30% from peak)
+            peak = position.get('peak_price', position['entry_price'])
+            drop_from_peak = ((peak - current_price) / peak) * 100
+            
+            if drop_from_peak > 30:
+                logging.warning(f"🔴 TRAILING STOP: Dropped {drop_from_peak:.1f}% from peak")
+                self.ensure_position_sold(token, position, "TRAILING_STOP")
+                return
+        
+        # Original stop loss still applies (but wider after partial)
+        stop_loss_pct = -15 if not position.get('partial_sold') else -25
+        if price_change < stop_loss_pct:
+            logging.warning(f"🛑 STOP LOSS: {price_change:.1f}%")
+            self.ensure_position_sold(token, position, "STOP_LOSS")
+            return
+            
+        # Time-based exit modifications
+        if hold_time > 1800 and price_change < 10:  # 30 minutes
+            if position.get('partial_sold'):
+                # If we took partial profits, we can hold longer
+                if hold_time > 3600:  # 1 hour
+                    logging.warning(f"⏰ TIMEOUT: Held 1 hour with no movement")
+                    self.ensure_position_sold(token, position, "TIMEOUT")
+            else:
+                # No partial profits taken, exit after 30 min
+                logging.warning(f"⏰ MOMENTUM TIMEOUT: No move after 30 minutes")
+                self.ensure_position_sold(token, position, "MOMENTUM_TIMEOUT")
             return
             
         # Log status every 5 minutes
         if int(hold_time) % 300 == 0:
-            logging.info(f"📊 MOMENTUM STATUS: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
+            status = "PARTIAL SOLD" if position.get('partial_sold') else "FULL POSITION"
+            logging.info(f"📊 {status}: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
             
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
