@@ -2792,7 +2792,25 @@ class AdaptiveAlphaTrader:
     
     def ensure_position_sold(self, token, position, reason="auto_recovery"):
         """Ensures a position gets sold even if first attempt fails - with database tracking"""
-        global wallet  # Add this to access global wallet
+        global wallet
+        
+        # DEBUG: Log position state
+        logging.info(f"DEBUG ensure_position_sold called for {token[:8]}")
+        logging.info(f"DEBUG position data: {position}")
+        logging.info(f"DEBUG reason: {reason}")
+        
+        # Add safety check
+        if 'entry_price' not in position:
+            logging.error(f"❌ CRITICAL: Position missing entry_price!")
+            logging.error(f"   Token: {token[:8]}")
+            logging.error(f"   Position keys: {list(position.keys())}")
+            # Try to recover
+            if token in self.positions:
+                position = self.positions[token]
+                logging.info(f"   Recovered position from self.positions")
+            else:
+                logging.error(f"   Cannot recover - no position in self.positions")
+                return False
         
         # Ensure we have a valid wallet before attempting to sell
         if not wallet or not hasattr(wallet, 'public_key'):
