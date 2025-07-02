@@ -4422,7 +4422,7 @@ class AdaptiveAlphaTrader:
                 logging.info(f"✅ Partial profit secured: +{partial_profit:.3f} SOL")
                 
                 # Update peak for trailing stop on remainder
-                position['peak_price'] = max(position.get('peak_price', entry_price), current_price)
+                position['peak_price'] = max(position.get('peak_price', position['entry_price']), current_price)
         
         # MOONSHOT DETECTION - Take more at 50%
         elif price_change >= 50 and position.get('partial_sold', False):
