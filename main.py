@@ -2118,7 +2118,103 @@ class AdaptiveAlphaTrader:
             logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
             return False
             
+
+    def execute_bundled_trades(self, trade_opportunities):
+        """Execute multiple trades in a single Jito bundle using swap.js"""
+        try:
+            if not trade_opportunities:
+                return False
             
+            # Filter out scams first
+            valid_opportunities = []
+            for opp in trade_opportunities[:3]:  # Max 3 per bundle
+                # Check for Vortex scam
+                is_scam, score, reasons = self.detect_vortex_scam(opp['token'])
+                if not is_scam:
+                    # Also do basic safety checks
+                    if self.is_token_safe(opp['token']):
+                        valid_opportunities.append(opp)
+                        logging.info(f"✅ Added to bundle: {opp['token'][:8]} (score: {opp['score']})")
+                else:
+                    logging.warning(f"❌ Skipping scam: {opp['token'][:8]} - {reasons}")
+            
+            if not valid_opportunities:
+                logging.warning("No valid opportunities for bundle")
+                return False
+            
+            # Prepare trades for swap.js bundle
+            trades = []
+            for opp in valid_opportunities:
+                trades.append({
+                    'token': opp['token'],
+                    'amount': opp['position_size'],
+                    'slippage': 1000  # 10%
+                })
+            
+            # Call swap.js bundle function
+            logging.warning(f"🎯 EXECUTING BUNDLE: {len(trades)} trades")
+            
+            # Execute bundle via swap.js
+            try:
+                # Call your swap.js bundle function
+                result = subprocess.run([
+                    'node', 
+                    'swap.js', 
+                    '--bundle',
+                    '--trades', json.dumps(trades)
+                ], capture_output=True, text=True)
+                
+                if result.returncode == 0:
+                    # Parse the response to get signatures
+                    response = json.loads(result.stdout)
+                    
+                    if response.get('success'):
+                        logging.warning(f"✅ BUNDLE SUCCESS: {response.get('bundleId')}")
+                        
+                        # Track all positions
+                        for i, opp in enumerate(valid_opportunities):
+                            self.positions[opp['token']] = {
+                                'strategy': 'MOMENTUM_EXPLOSION',
+                                'entry_price': opp['price'],
+                                'size': opp['position_size'],
+                                'targets': {'take_profit': 1.50, 'stop_loss': 0.85, 'trailing': True},
+                                'entry_time': time.time(),
+                                'peak_price': opp['price'],
+                                'signature': response.get('signatures', [])[i] if i < len(response.get('signatures', [])) else 'bundle',
+                                'source_wallet': 'MOMENTUM_BUNDLE',
+                                'partial_sold': False,
+                                'bundle_id': response.get('bundleId')
+                            }
+                            
+                            # Update daily trades
+                            self.daily_trades += 1
+                            
+                            logging.info(f"📊 Position tracked: {opp['token'][:8]}")
+                        
+                        return True
+                    else:
+                        logging.error(f"❌ Bundle failed: {response.get('error')}")
+                else:
+                    logging.error(f"❌ swap.js error: {result.stderr}")
+                    
+            except Exception as e:
+                logging.error(f"Bundle execution error: {e}")
+                # Fall back to individual trades
+                for opp in valid_opportunities:
+                    self.execute_trade(
+                        opp['token'],
+                        'MOMENTUM_EXPLOSION',
+                        opp['position_size'],
+                        opp['price'],
+                        source_wallet='MOMENTUM_DETECT'
+                    )
+            
+            return False
+            
+        except Exception as e:
+            logging.error(f"Bundle error: {e}")
+            return False
+    
     def monitor_positions(self):
         """Monitor all positions with strategy-specific logic"""
         try:
@@ -5131,6 +5227,107 @@ class AdaptiveAlphaTrader:
             return 0
             
 
+    def collect_momentum_opportunities(self):
+        """Collect momentum opportunities without trading - uses SAME logic that made 2.2 SOL"""
+        opportunities = []
+        
+        try:
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:100]  # Same as working version
+            
+            for token in tokens:
+                try:
+                    # EXACT SAME LOGIC AS YOUR WORKING detect_momentum_explosion
+                    current_price = get_token_price(token)
+                    liquidity = get_token_liquidity(token)
+                    volume = get_24h_volume(token)
+                    holders = get_holder_count(token)
+                    age = get_token_age_minutes(token)
+                    
+                    if not current_price:
+                        continue
+                    
+                    # USE DEFAULTS LIKE WHEN YOU MADE 2.2 SOL
+                    if not liquidity or liquidity <= 0:
+                        liquidity = 5000  # Default like before
+                    if not volume or volume <= 0:
+                        volume = liquidity * 2  # Assume 2x like before
+                    
+                    momentum_score = 0
+                    volume_liq_ratio = volume / liquidity
+                    
+                    # EXACT SAME SCORING AS YOUR WORKING VERSION
+                    if volume_liq_ratio > 5:
+                        momentum_score += 40
+                    elif volume_liq_ratio > 3:
+                        momentum_score += 25
+                    elif volume_liq_ratio > 2:
+                        momentum_score += 10
+                    else:
+                        continue
+                    
+                    if age:
+                        if 45 <= age <= 120:
+                            momentum_score += 20
+                        elif 30 <= age < 45:
+                            momentum_score += 15
+                        elif age < 30:
+                            momentum_score += 10
+                        elif age > 360:
+                            continue
+                        else:
+                            momentum_score += 5
+                    
+                    if holders:
+                        if holders > 500:
+                            continue  # Too late
+                        elif 80 <= holders <= 300:
+                            momentum_score += 20
+                        elif 50 <= holders < 80:
+                            momentum_score += 15
+                        elif 30 <= holders < 50:
+                            momentum_score += 10
+                        elif holders < 30:
+                            continue
+                        else:
+                            momentum_score += 5
+                    
+                    if age and age > 0 and holders:
+                        holders_per_minute = holders / age
+                        if holders_per_minute > 2:
+                            momentum_score += 10
+                        elif holders_per_minute > 1:
+                            momentum_score += 5
+                    
+                    if liquidity >= 5000:
+                        momentum_score += 10
+                    elif liquidity >= 3000:
+                        momentum_score += 5
+                    elif liquidity < 2000:
+                        momentum_score -= 10
+                    
+                    # Collect if score is good (but don't trade yet)
+                    if momentum_score >= 50:
+                        opportunities.append({
+                            'token': token,
+                            'score': momentum_score,
+                            'volume_ratio': volume_liq_ratio,
+                            'age': age,
+                            'holders': holders,
+                            'liquidity': liquidity,
+                            'price': current_price,
+                            'position_size': 0.05,
+                            'timestamp': time.time()
+                        })
+                
+                except Exception:
+                    continue
+            
+            return opportunities
+            
+        except Exception as e:
+            logging.error(f"Error collecting momentum: {e}")
+            return []
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -5440,6 +5637,8 @@ def run_adaptive_ai_system():
     last_performance_check = 0
     last_conversion_check = 0
     last_midnight_check = 0
+    last_bundle_time = 0 
+    momentum_opportunities = []  # ADD THIS
     last_momentum_check = 0
     iteration = 0
     session_count = 1
@@ -5543,7 +5742,29 @@ def run_adaptive_ai_system():
             momentum_interval = int(os.getenv('MOMENTUM_SCAN_INTERVAL', '15'))
             if current_time - last_momentum_check > momentum_interval:
                 last_momentum_check = current_time
-                trader.detect_momentum_explosion()
+                
+                # KEEP YOUR ORIGINAL WORKING METHOD
+                found_trade = trader.detect_momentum_explosion()
+                
+                # ALSO collect opportunities for potential bundling
+                if not found_trade:  # Only collect if we didn't trade
+                    new_opportunities = trader.collect_momentum_opportunities()
+                    if new_opportunities:
+                        momentum_opportunities.extend(new_opportunities)
+                        momentum_opportunities.sort(key=lambda x: x['score'], reverse=True)
+                        momentum_opportunities = momentum_opportunities[:10]
+                        
+                        # Remove old opportunities
+                        momentum_opportunities = [
+                            opp for opp in momentum_opportunities 
+                            if current_time - opp.get('timestamp', 0) < 120
+                        ]
+            
+            # BUNDLE EXECUTION - Only if we have 3+ opportunities
+            if current_time - last_bundle_time > 30 and len(momentum_opportunities) >= 3:
+                trader.execute_bundled_trades(momentum_opportunities[:3])
+                momentum_opportunities = momentum_opportunities[3:]
+                last_bundle_time = current_time
             
             # ULTRA AGGRESSIVE MODE - Check every 10 seconds for MORI-like setups
             if os.getenv('AGGRESSIVE_MODE', 'false').lower() == 'true':
