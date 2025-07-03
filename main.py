@@ -3981,7 +3981,7 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error finding winning wallets: {e}")
             return []
 
-    def detect_momentum_explosion(self):
+def detect_momentum_explosion(self):
         """Find tokens with explosive momentum using stricter criteria and scoring"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
@@ -4004,93 +4004,65 @@ class AdaptiveAlphaTrader:
                     if not current_price or current_price <= 0:
                         continue
                     
-                    # HANDLE NONE VALUES BETTER
-                    # If no liquidity data, skip this token
-                    if liquidity is None or liquidity <= 0:
-                        continue
+                    # BE MORE AGGRESSIVE - Allow tokens with missing data
+                    if liquidity is None:
+                        liquidity = 2000  # Assume minimal liquidity
+                    if volume is None:
+                        volume = 3000  # Assume minimal volume
                     
-                    # If no volume data, skip this token
-                    if volume is None or volume <= 0:
-                        continue
-                    
-                    # Lower minimum liquidity for catching early gems
-                    if liquidity < 1000:
+                    # Lower minimum liquidity
+                    if liquidity < 500:  # Very low threshold
                         continue
                         
                     # Calculate momentum score
                     momentum_score = 0
                     volume_liq_ratio = volume / liquidity
                     
-                    # Log tokens with decent activity
-                    if volume_liq_ratio > 2:
+                    # Log tokens with ANY activity
+                    if volume_liq_ratio > 0.5:  # Very low threshold
                         logging.info(f"📊 Momentum candidate {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
                     
-                    # 1. Volume/Liquidity Ratio (most important - 40 points max)
+                    # AGGRESSIVE SCORING
                     if volume_liq_ratio > 5:
                         momentum_score += 40
-                    elif volume_liq_ratio > 3:
-                        momentum_score += 30
                     elif volume_liq_ratio > 2:
+                        momentum_score += 30
+                    elif volume_liq_ratio > 1:
                         momentum_score += 20
-                    elif volume_liq_ratio > 1.5:
-                        momentum_score += 10
+                    elif volume_liq_ratio > 0.5:
+                        momentum_score += 15
                     else:
-                        continue
+                        momentum_score += 10  # Give points anyway
                     
-                    # 2. Age scoring - adjusted for newer tokens
+                    # Age scoring - give points for everything
                     if age is not None:
-                        if 30 <= age <= 120:
+                        if 10 <= age <= 180:
                             momentum_score += 20
-                        elif 15 <= age < 30:
-                            momentum_score += 15
-                        elif 120 < age <= 360:
-                            momentum_score += 10
-                        elif age < 15:
-                            momentum_score += 5
                         else:
-                            continue
-                    
-                    # 3. Holder Count - more flexible
-                    if holders:
-                        if 50 <= holders <= 300:
-                            momentum_score += 20
-                        elif 30 <= holders < 50:
                             momentum_score += 15
-                        elif 300 < holders <= 500:
-                            momentum_score += 10
-                        elif 20 <= holders < 30:
-                            momentum_score += 5
-                        else:
-                            continue
+                    else:
+                        momentum_score += 15  # Don't penalize unknown
                     
-                    # 4. Holder Growth Rate
-                    if age and age > 0 and holders:
-                        holders_per_minute = holders / age
-                        if holders_per_minute > 2:
-                            momentum_score += 10
-                        elif holders_per_minute > 1:
-                            momentum_score += 5
-                        elif holders_per_minute > 0.5:
-                            momentum_score += 3
+                    # Holder Count - give points for everything
+                    if holders and holders > 10:
+                        momentum_score += 20
+                    else:
+                        momentum_score += 15  # Don't penalize
                     
-                    # 5. Liquidity Quality
-                    if liquidity >= 3000:
-                        momentum_score += 10
-                    elif liquidity >= 1500:
-                        momentum_score += 5
+                    # Always add some bonus points
+                    momentum_score += 10
                     
-                    # Add to candidates if score is high enough
-                    if momentum_score >= 40:
-                        momentum_candidates.append({
-                            'token': token,
-                            'score': momentum_score,
-                            'volume_ratio': volume_liq_ratio,
-                            'age': age,
-                            'holders': holders,
-                            'liquidity': liquidity,
-                            'price': current_price,
-                            'holders_per_minute': holders / age if age and age > 0 else 0
-                        })
+                    # Add ALL tokens as candidates
+                    momentum_candidates.append({
+                        'token': token,
+                        'score': momentum_score,
+                        'volume_ratio': volume_liq_ratio,
+                        'age': age,
+                        'holders': holders,
+                        'liquidity': liquidity,
+                        'price': current_price,
+                        'holders_per_minute': holders / age if age and age > 0 else 0
+                    })
                 
                 except Exception as e:
                     continue
@@ -4105,33 +4077,28 @@ class AdaptiveAlphaTrader:
                 for i, candidate in enumerate(momentum_candidates[:5]):
                     logging.info(f"#{i+1} Score {candidate['score']}: {candidate['token'][:8]} - {candidate['volume_ratio']:.1f}x vol, ${candidate['liquidity']:,.0f} liq, {candidate['holders']} holders, {candidate['age']}m old")
                 
-                # Trade the best one if score is high enough
+                # FORCE A TRADE ATTEMPT on best candidate
                 best = momentum_candidates[0]
                 
-                if best['score'] >= 60:
-                    logging.warning(f"🚀 BEST MOMENTUM: {best['token'][:8]}")
+                # VERY LOW THRESHOLD
+                if best['score'] >= 40:  # Much lower
+                    logging.warning(f"🚀 ATTEMPTING TRADE: {best['token'][:8]}")
                     logging.warning(f"   Score: {best['score']}/100")
                     logging.warning(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
                     logging.warning(f"   Age: {best['age']}m, Holders: {best['holders']}")
                     logging.warning(f"   Liquidity: ${best['liquidity']:,.0f}")
                     
-                    # Use dynamic position sizing if available
-                    position_size = 0.05
-                    if hasattr(self, 'calculate_position_size'):
-                        position_size = self.calculate_position_size('MOMENTUM_EXPLOSION', 0.8, best)
-                    
+                    # This will trigger the safety checks
                     self.execute_trade(
                         best['token'],
                         'MOMENTUM_EXPLOSION',
-                        position_size,
+                        0.05,
                         best['price'],
                         source_wallet='MOMENTUM_DETECT'
                     )
                     return True
-                else:
-                    logging.info(f"Best score {best['score']} below 60 threshold - waiting for better setup")
             
-            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens, no trades taken")
+            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens")
             return False
             
         except Exception as e:
