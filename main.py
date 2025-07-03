@@ -3981,7 +3981,7 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error finding winning wallets: {e}")
             return []
 
-def detect_momentum_explosion(self):
+    def detect_momentum_explosion(self):
         """Find tokens with explosive momentum using stricter criteria and scoring"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
