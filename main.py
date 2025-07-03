@@ -35,6 +35,9 @@ from psycopg2.extras import RealDictCursor
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey as PublicKey
+from solders.message import MessageV0
+from solders.instruction import Instruction
+from solana.rpc.commitment import Confirmed
 from solders.transaction import Transaction, VersionedTransaction
 from solders.system_program import transfer, TransferParams
 from base58 import b58decode, b58encode
@@ -1777,7 +1780,7 @@ class AdaptiveAlphaTrader:
             if trades_needed > 20 and self.brain.daily_stats['trades'] < 5:
                 logging.warning("⚡ AGGRESSIVE MODE: Need more trades to hit target")
                 self.min_ml_confidence = 0.65  # Lower threshold
-                self.daily_trade_limit = 30    # Allow more trades
+                self.daily_trade_limit = 40    # Allow more trades
                 
         return needed_sol
     
@@ -1971,6 +1974,13 @@ class AdaptiveAlphaTrader:
         if is_honeypot:
             logging.error(f"🚨 BLOCKED HONEYPOT TRADE: {token_address[:8]}")
             logging.error(f"   Score: {score}, Reasons: {', '.join(reasons)}")
+            return False
+        
+        # VORTEX SCAM CHECK - NEW!
+        is_vortex_scam, vortex_score, vortex_reasons = self.detect_vortex_scam(token_address)
+        if is_vortex_scam:
+            logging.error(f"🚨 BLOCKED VORTEX-STYLE SCAM: {token_address[:8]}")
+            logging.error(f"   Score: {vortex_score}, Reasons: {', '.join(vortex_reasons)}")
             return False
         
         # ADDITIONAL SELL ROUTE VERIFICATION (double-check for all trades)
@@ -3649,61 +3659,6 @@ class AdaptiveAlphaTrader:
             logging.error(f"Error checking token safety: {e}")
             return False  # Default to unsafe
 
-    def verify_ml_status(self):
-        """Debug method to check ML status"""
-        logging.info("🔍 === ML STATUS CHECK ===")
-        
-        # Check if ML brain exists
-        if not hasattr(self, 'ml_brain'):
-            logging.error("❌ ML Brain not initialized!")
-            return False
-            
-        # Check if trained
-        if not self.ml_brain or not self.ml_brain.is_trained:
-            logging.error("❌ ML Model not trained!")
-            
-            # Check how many trades we have
-            try:
-                with self.db_manager.get_connection() as conn:
-                    with conn.cursor() as cursor:
-                        cursor.execute("SELECT COUNT(*) FROM copy_trades WHERE status = 'closed'")
-                        result = cursor.fetchone()
-                        count = result[0] if result else 0
-                        
-                logging.info(f"📊 Total completed trades: {count}")
-                if count >= 100:
-                    logging.info("✅ Enough data - training ML now...")
-                    self.ml_brain.train_models()
-                else:
-                    logging.info(f"⏳ Need {100-count} more trades for ML training")
-            except Exception as e:
-                logging.error(f"Error checking trades: {e}")
-                
-            return False
-            
-        # ML is trained!
-        logging.info("✅ ML Model is TRAINED and READY!")
-        logging.info(f"🎯 Minimum confidence required: {self.min_ml_confidence:.1%}")
-        
-        # Test prediction
-        try:
-            test_wallet = {'win_rate': 50, 'total_trades': 100}
-            test_token = {
-                'liquidity': 10000,
-                'holders': 100,
-                'volume': 5000,
-                'age': 30,
-                'price': 0.001
-            }
-            
-            action, confidence = self.ml_brain.predict_trade(test_wallet, test_token)
-            logging.info(f"🧪 Test prediction: {action} with {confidence:.1%} confidence")
-            
-        except Exception as e:
-            logging.error(f"❌ ML prediction test failed: {e}")
-            return False
-            
-        return True
 
     def verify_ml_status(self):
         """Debug method to check ML status"""
@@ -3990,11 +3945,11 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """Find tokens like EMARS - focus on EARLY entry"""
+        """AGGRESSIVE momentum detection - catch everything early"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
         try:
-            tokens = enhanced_find_newest_tokens_with_free_apis()[:200]  # Check more tokens
+            tokens = enhanced_find_newest_tokens_with_free_apis()[:300]  # Check MORE tokens
             tokens_checked = 0
             momentum_candidates = []
             
@@ -4010,80 +3965,60 @@ class AdaptiveAlphaTrader:
                     if not current_price:
                         continue
                     
-                    # If we can't get real data, use reasonable estimates
+                    # AGGRESSIVE: Always assume some liquidity/volume
                     if not liquidity or liquidity <= 0:
-                        liquidity = 5000
+                        liquidity = 3000  # Lower default
                     if not volume or volume <= 0:
-                        volume = liquidity * 2  # Assume active trading
+                        volume = liquidity * 1.5  # Assume SOME activity
                     
-                    # Skip obvious fakes
-                    if liquidity > 10000000:  # $10M+ is suspicious
+                    # AGGRESSIVE: Only skip EXTREME cases
+                    if liquidity > 50000000:  # Only skip $50M+ (obvious fakes)
                         continue
                     
                     momentum_score = 0
-                    volume_liq_ratio = volume / liquidity
                     
-                    # Log any active token
-                    if volume_liq_ratio > 0.5 or (age and age < 60):
-                        logging.info(f"📊 Token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
-                    
-                    # PRIORITIZE NEW TOKENS (like EMARS when it started)
+                    # AGGRESSIVE: Prioritize AGE above everything
                     if age:
-                        if age < 30:  # SUPER EARLY
-                            momentum_score += 30  # Big bonus
-                        elif age < 60:  # Still early
-                            momentum_score += 25
-                        elif age < 120:  # Good window
+                        if age < 15:  # ULTRA EARLY
+                            momentum_score += 50  # HUGE bonus
+                        elif age < 30:
+                            momentum_score += 40
+                        elif age < 60:
+                            momentum_score += 30
+                        elif age < 120:
                             momentum_score += 20
-                        elif age < 240:  # Acceptable
-                            momentum_score += 10
                         else:
-                            continue  # Too old
+                            momentum_score += 10
                     else:
-                        momentum_score += 20  # Unknown age, take the risk
+                        momentum_score += 35  # Unknown = probably new
                     
-                    # Volume activity (any volume for new tokens is good)
-                    if volume_liq_ratio > 3:
-                        momentum_score += 30
-                    elif volume_liq_ratio > 1:
+                    # AGGRESSIVE: Any activity is good
+                    volume_liq_ratio = volume / liquidity
+                    if volume_liq_ratio > 1:
                         momentum_score += 20
                     elif volume_liq_ratio > 0.5:
-                        momentum_score += 10
-                    elif age and age < 30:
-                        momentum_score += 5  # New token, volume will come
+                        momentum_score += 15
                     else:
-                        continue
+                        momentum_score += 10  # Even low volume is OK for new tokens
                     
-                    # Holders check
+                    # AGGRESSIVE: Low holder requirements
                     if holders:
-                        if 20 <= holders <= 100 and age and age < 60:
-                            momentum_score += 20  # Perfect early entry
-                        elif 30 <= holders <= 300:
-                            momentum_score += 15
-                        elif holders < 20 and age and age < 30:
-                            momentum_score += 10  # VERY early
-                        elif holders > 500:
-                            continue  # Too late
-                        else:
-                            momentum_score += 5
+                        if holders >= 10:  # Just 10 holders!
+                            momentum_score += 20
+                        if holders < 10 and age and age < 15:
+                            momentum_score += 15  # VERY early is OK
+                    else:
+                        momentum_score += 10  # Unknown is OK
                     
-                    # Liquidity sweet spot
-                    if 2000 <= liquidity <= 50000:
-                        momentum_score += 10
-                    elif liquidity < 2000:
-                        momentum_score += 5  # Small but might grow
+                    # Log EVERYTHING that's new
+                    if age and age < 60:
+                        logging.info(f"🆕 NEW: {token[:8]} - Age: {age}m, Score: {momentum_score}")
                     
-                    # Holder velocity for new tokens
-                    if age and age > 0 and age < 60 and holders:
-                        holders_per_minute = holders / age
-                        if 0.5 <= holders_per_minute <= 3:
-                            momentum_score += 10  # Healthy growth
-                    
-                    if momentum_score >= 45:  # Lower threshold for more opportunities
+                    # AGGRESSIVE: Low threshold
+                    if momentum_score >= 40:  # Very low bar
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
-                            'volume_ratio': volume_liq_ratio,
                             'age': age,
                             'holders': holders,
                             'liquidity': liquidity,
@@ -4091,35 +4026,34 @@ class AdaptiveAlphaTrader:
                             'volume': volume
                         })
                 
-                except Exception as e:
+                except Exception:
                     continue
             
-            momentum_candidates.sort(key=lambda x: x['score'], reverse=True)
+            # Sort by AGE first, then score
+            momentum_candidates.sort(key=lambda x: (x['age'] if x['age'] else 999, -x['score']))
             
             if momentum_candidates:
-                logging.warning(f"📊 Found {len(momentum_candidates)} momentum candidates")
+                logging.warning(f"📊 Found {len(momentum_candidates)} candidates")
                 
-                for i, candidate in enumerate(momentum_candidates[:5]):
-                    logging.info(f"#{i+1} Score {candidate['score']}: {candidate['token'][:8]} - Age: {candidate['age']}m, Vol/Liq: {candidate['volume_ratio']:.1f}x, Holders: {candidate['holders']}")
-                
-                best = momentum_candidates[0]
-                
-                # Lower threshold but must be NEW
-                if best['score'] >= 60 and (not best['age'] or best['age'] < 180):
-                    logging.warning(f"🚀 EARLY ENTRY OPPORTUNITY: {best['token'][:8]}")
-                    logging.warning(f"   Score: {best['score']}")
-                    logging.warning(f"   Age: {best['age']}m ⏰ EARLY!")
-                    logging.warning(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
-                    logging.warning(f"   Holders: {best['holders']} 👥")
-                    
-                    self.execute_trade(
-                        best['token'],
-                        'MOMENTUM_EXPLOSION',
-                        0.05,
-                        best['price'],
-                        source_wallet='MOMENTUM_DETECT'
-                    )
-                    return True
+                # Trade the NEWEST token with decent score
+                for candidate in momentum_candidates[:10]:  # Check top 10
+                    if candidate['score'] >= 50:  # Low threshold
+                        logging.warning(f"🚀 AGGRESSIVE BUY: {candidate['token'][:8]}")
+                        logging.warning(f"   Age: {candidate['age']}m 🆕")
+                        logging.warning(f"   Score: {candidate['score']}")
+                        logging.warning(f"   Holders: {candidate['holders']}")
+                        
+                        # Bigger position for newer tokens
+                        position_size = 0.08 if candidate['age'] and candidate['age'] < 30 else 0.05
+                        
+                        self.execute_trade(
+                            candidate['token'],
+                            'MOMENTUM_EXPLOSION',
+                            position_size,
+                            candidate['price'],
+                            source_wallet='MOMENTUM_DETECT'
+                        )
+                        return True
             
             return False
             
@@ -4406,8 +4340,8 @@ class AdaptiveAlphaTrader:
                 
 
     def monitor_momentum_position(self, token, position):
-        """Monitor with smart exits - secure profits but keep moonbag"""
-        if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT']:
+        """AGGRESSIVE monitoring - quick profits, tight stops"""
+        if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
             
         hold_time = time.time() - position['entry_time']
@@ -4418,66 +4352,102 @@ class AdaptiveAlphaTrader:
             
         price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
         
-        # Update peak price
-        if current_price > position.get('peak_price', position['entry_price']):
-            position['peak_price'] = current_price
+        # Store last price for rapid movement detection
+        last_price = position.get('last_price', position['entry_price'])
+        price_move_1s = ((current_price - last_price) / last_price) * 100 if last_price else 0
+        position['last_price'] = current_price
         
-        # SMART PROFIT TAKING - Secure initial + profit, keep moonbag
-        if price_change >= 30 and not position.get('partial_sold', False):
-            # Calculate how much to sell to get initial + 30% profit
-            initial_investment = position['size'] * position['entry_price']
-            current_value = position['size'] * current_price
-            target_return = initial_investment * 1.30  # Initial + 30% profit
-            
-            sell_percentage = min(target_return / current_value, 0.8)  # Max 80% sell
-            
-            if sell_percentage > 0.2:  # Worth doing
-                sell_size = position['size'] * sell_percentage
-                keep_size = position['size'] * (1 - sell_percentage)
-                
-                logging.warning(f"💰 SMART PROFIT: {token[:8]} at +{price_change:.1f}%")
-                logging.warning(f"   Selling {sell_percentage:.0%} to secure initial + 30% profit")
-                logging.warning(f"   Keeping {(1-sell_percentage):.0%} for potential 1000x")
-                
-                result = execute_optimized_sell(token, sell_size)
-                if result and result != "no-tokens":
-                    position['size'] = keep_size
-                    position['partial_sold'] = True
-                    position['secured_profit'] = True
-        
-        # Additional exit at 100%+ 
-        elif price_change >= 100 and position.get('partial_sold', False):
-            # Sell half of remainder
-            sell_size = position['size'] * 0.5
-            logging.warning(f"🚀 MOONSHOT: {token[:8]} at +{price_change:.1f}% - taking more profit")
-            execute_optimized_sell(token, sell_size)
-            position['size'] *= 0.5
-        
-        # Quick stop loss ONLY if we haven't taken profits
-        elif price_change <= -15 and not position.get('partial_sold', False):
-            logging.warning(f"🛑 STOP LOSS: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "STOP_LOSS")
+        # RAPID DUMP DETECTION
+        if price_move_1s < -2:  # 2% drop in 1 second
+            logging.error(f"🚨 RAPID DUMP: {token[:8]} dropped {price_move_1s:.1f}% in 1 second!")
+            self.ensure_position_sold(token, position, "RAPID_DUMP")
             return
         
-        # Trailing stop after partial sale
-        elif position.get('partial_sold', False) and position.get('peak_price'):
-            drop_from_peak = ((position['peak_price'] - current_price) / position['peak_price']) * 100
-            if drop_from_peak > 30:  # 30% drop from peak
-                logging.warning(f"📉 TRAILING STOP: Dropped {drop_from_peak:.1f}% from peak")
+        # AGGRESSIVE PROFIT TAKING - Multiple levels
+        if price_change >= 15 and not position.get('profit_15'):
+            # First profit at 15%
+            sell_size = position['size'] * 0.3  # Sell 30%
+            logging.warning(f"💰 QUICK PROFIT 15%: {token[:8]} - selling 30%")
+            result = execute_optimized_sell(token, sell_size)
+            if result and result != "no-tokens":
+                position['size'] *= 0.7
+                position['profit_15'] = True
+                
+        elif price_change >= 25 and not position.get('profit_25'):
+            # Second profit at 25%
+            sell_size = position['size'] * 0.4  # Sell 40% of remainder
+            logging.warning(f"💰 PROFIT 25%: {token[:8]} - selling 40% more")
+            result = execute_optimized_sell(token, sell_size)
+            if result and result != "no-tokens":
+                position['size'] *= 0.6
+                position['profit_25'] = True
+                position['partial_sold'] = True
+                
+        elif price_change >= 50 and not position.get('profit_50'):
+            # Third profit at 50%
+            sell_size = position['size'] * 0.5  # Sell half of remainder
+            logging.warning(f"🚀 MOONSHOT 50%: {token[:8]} - selling 50% of remainder")
+            result = execute_optimized_sell(token, sell_size)
+            if result and result != "no-tokens":
+                position['size'] *= 0.5
+                position['profit_50'] = True
+                
+        elif price_change >= 100:
+            # Final exit at 100%
+            logging.warning(f"🎯 MEGA PUMP 100%+: {token[:8]} - FULL EXIT!")
+            self.ensure_position_sold(token, position, "MEGA_PUMP")
+            return
+        
+        # AGGRESSIVE STOP LOSS - Tighter for non-partial positions
+        if not position.get('partial_sold'):
+            if price_change <= -8:  # Just 8% loss
+                logging.warning(f"🛑 QUICK STOP: {token[:8]} down {price_change:.1f}%")
+                self.ensure_position_sold(token, position, "STOP_LOSS")
+                return
+        else:
+            # Wider stop after taking profits (it's house money)
+            if price_change <= -25:
+                logging.warning(f"🛑 TRAILING STOP: {token[:8]} down {price_change:.1f}%")
                 self.ensure_position_sold(token, position, "TRAILING_STOP")
                 return
         
-        # Time-based exit only if no profits taken and no movement
-        if hold_time > 1800 and price_change < 10 and not position.get('partial_sold', False):
-            logging.warning(f"⏰ TIMEOUT: No movement after 30 minutes")
+        # MOMENTUM HEALTH CHECK
+        volume = get_recent_volume(token)
+        liquidity = get_token_liquidity(token)
+        
+        if volume and liquidity and liquidity > 0:
+            current_vol_liq_ratio = volume / liquidity
+            
+            # Store initial ratio if not set
+            if 'initial_vol_liq_ratio' not in position:
+                position['initial_vol_liq_ratio'] = current_vol_liq_ratio
+                
+            # Exit if momentum dies
+            if current_vol_liq_ratio < position.get('initial_vol_liq_ratio', 1) * 0.3:
+                logging.warning(f"📉 MOMENTUM DIED: Vol/Liq dropped to {current_vol_liq_ratio:.1f}x")
+                self.ensure_position_sold(token, position, "MOMENTUM_FADE")
+                return
+        
+        # TIME-BASED EXITS - Aggressive timeouts
+        if hold_time > 600 and price_change < 5 and not position.get('partial_sold'):  # 10 minutes
+            logging.warning(f"⏰ QUICK TIMEOUT: No movement after 10 minutes")
+            self.ensure_position_sold(token, position, "QUICK_TIMEOUT")
+            return
+        elif hold_time > 1800 and price_change < 10:  # 30 minutes
+            logging.warning(f"⏰ FINAL TIMEOUT: Exiting after 30 minutes")
             self.ensure_position_sold(token, position, "TIMEOUT")
             return
         
-        # Status update
-        if int(hold_time) % 300 == 0:
-            status = "PARTIAL SOLD" if position.get('partial_sold') else "FULL POSITION"
-            logging.info(f"📊 {status}: {token[:8]} - {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
-
+        # Status logging every 2 minutes
+        if int(hold_time) % 120 == 0:
+            vol_status = f"Vol/Liq: {current_vol_liq_ratio:.1f}x" if 'current_vol_liq_ratio' in locals() else "No vol data"
+            profits_taken = []
+            if position.get('profit_15'): profits_taken.append("15%")
+            if position.get('profit_25'): profits_taken.append("25%")
+            if position.get('profit_50'): profits_taken.append("50%")
+            
+            status = f"Profits taken: {', '.join(profits_taken)}" if profits_taken else "No profits yet"
+            logging.info(f"📊 MOMENTUM: {token[:8]} - {hold_time/60:.0f}m, P&L: {price_change:+.1f}%, {status}, {vol_status}")
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
@@ -4956,6 +4926,106 @@ class AdaptiveAlphaTrader:
             return False  # If unsure, assume no spike
             
 
+    def detect_vortex_scam(self, token_address):
+        """Detect tokens using Vortex-style smart sell and bump bots"""
+        try:
+            scam_score = 0
+            reasons = []
+            
+            # 1. Check for micro transactions (bump bot pattern)
+            recent_txs = get_recent_trade_history(token_address, hours=1)
+            if len(recent_txs) > 50:  # High frequency
+                # Count micro transactions
+                micro_txs = 0
+                similar_amounts = {}
+                
+                for tx in recent_txs:
+                    # Get transaction details (you'd need to implement this)
+                    # Looking for repeated small amounts
+                    amount = tx.get('amount', 0)
+                    if amount < 0.01:  # Less than 0.01 SOL
+                        micro_txs += 1
+                    
+                    # Track similar amounts (bump bot signature)
+                    amount_key = round(amount, 4)
+                    similar_amounts[amount_key] = similar_amounts.get(amount_key, 0) + 1
+                
+                # If many micro transactions
+                if micro_txs > 20:
+                    scam_score += 30
+                    reasons.append(f"Bump bot detected: {micro_txs} micro txs")
+                
+                # If repeated amounts (automated)
+                max_similar = max(similar_amounts.values()) if similar_amounts else 0
+                if max_similar > 10:
+                    scam_score += 30
+                    reasons.append(f"Automated trading: {max_similar} identical amounts")
+            
+            # 2. Check for smart sell pattern (immediate dumps after buys)
+            if len(recent_txs) > 20:
+                dump_pattern = 0
+                for i in range(1, len(recent_txs)):
+                    # If a sell immediately follows a buy
+                    if recent_txs[i].get('type') == 'sell' and recent_txs[i-1].get('type') == 'buy':
+                        time_diff = recent_txs[i]['timestamp'] - recent_txs[i-1]['timestamp']
+                        if time_diff < 5:  # Within 5 seconds
+                            dump_pattern += 1
+                
+                if dump_pattern > 5:
+                    scam_score += 40
+                    reasons.append(f"Smart sell pattern: {dump_pattern} instant dumps")
+            
+            # 3. Check holder distribution (Vortex uses multiple wallets)
+            holders_data = get_token_holders_distribution(token_address)
+            if holders_data:
+                # Look for multiple wallets with similar balances
+                balances = [h['balance'] for h in holders_data[:20]]
+                similar_balances = 0
+                
+                for i in range(len(balances)-1):
+                    for j in range(i+1, len(balances)):
+                        if balances[i] > 0 and balances[j] > 0:
+                            ratio = balances[i] / balances[j]
+                            if 0.95 <= ratio <= 1.05:  # Within 5% of each other
+                                similar_balances += 1
+                
+                if similar_balances > 5:
+                    scam_score += 30
+                    reasons.append(f"Coordinated wallets: {similar_balances} similar balances")
+            
+            # 4. Check for pump.fun listing with suspicious activity
+            age = get_token_age_minutes(token_address)
+            if age and age < 60:  # New token
+                volume = get_24h_volume(token_address)
+                liquidity = get_token_liquidity(token_address)
+                
+                if volume and liquidity:
+                    # Suspicious if high volume but price not moving much
+                    price_history = get_price_history(token_address, minutes=30)
+                    if price_history and len(price_history) > 2:
+                        price_change = ((price_history[-1] - price_history[0]) / price_history[0]) * 100
+                        vol_liq_ratio = volume / liquidity
+                        
+                        # High volume but low price movement = wash trading
+                        if vol_liq_ratio > 5 and abs(price_change) < 10:
+                            scam_score += 30
+                            reasons.append(f"Wash trading: {vol_liq_ratio:.1f}x volume, {price_change:.1f}% price change")
+            
+            # Decision
+            is_vortex_scam = scam_score >= 60
+            
+            if is_vortex_scam:
+                logging.warning(f"🚨 VORTEX-STYLE SCAM DETECTED: {token_address[:8]}")
+                for reason in reasons:
+                    logging.warning(f"   - {reason}")
+            
+            return is_vortex_scam, scam_score, reasons
+            
+        except Exception as e:
+            logging.error(f"Error detecting Vortex scam: {e}")
+            return False, 0, []
+            
+    
     def detect_bot_activity(self, token_address, holders, age):
         """Detect bot activity based on holder patterns and transaction behavior"""
         try:
@@ -5209,6 +5279,77 @@ def is_valid_wallet_address(address):
     except:
         return False
 
+class JitoBundler:
+    def __init__(self, private_key, tip_amount=0.0001):
+        """Initialize Jito bundler with your private key"""
+        self.keypair = Keypair.from_base58_string(private_key)
+        self.tip_amount = tip_amount  # 0.0001 SOL tip to Jito
+        self.jito_url = "https://mainnet.block-engine.jito.wtf/api/v1/bundles"
+        self.jito_auth_keypair = self.keypair  # Use same keypair for auth
+        
+    def create_bundle(self, transactions):
+        """Create a bundle of transactions"""
+        try:
+            # Add tip transaction to Jito (required)
+            tip_accounts = [
+                "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",  # Jito tip account
+                "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+                "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+                "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+                "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh",
+                "ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt",
+                "DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL",
+                "3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT"
+            ]
+            
+            # Pick random tip account
+            import random
+            tip_account = random.choice(tip_accounts)
+            
+            # Create tip instruction
+            tip_ix = create_tip_instruction(
+                self.keypair.pubkey(),
+                tip_account,
+                int(self.tip_amount * 1e9)  # Convert to lamports
+            )
+            
+            # Add tip to first transaction
+            transactions[0].add_instruction(tip_ix)
+            
+            # Sign all transactions
+            signed_txs = []
+            for tx in transactions:
+                tx.sign([self.keypair])
+                signed_txs.append(base64.b64encode(bytes(tx)).decode('utf-8'))
+            
+            # Submit bundle
+            headers = {"Content-Type": "application/json"}
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sendBundle",
+                "params": [signed_txs]
+            }
+            
+            response = requests.post(self.jito_url, json=payload, headers=headers)
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'result' in result:
+                    logging.info(f"✅ Bundle submitted: {result['result']}")
+                    return result['result']
+                else:
+                    logging.error(f"❌ Bundle error: {result}")
+                    return None
+            else:
+                logging.error(f"❌ Bundle failed: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            logging.error(f"Bundle error: {e}")
+            return None
+
+
 
 def run_adaptive_ai_system():
     """Main function to run the complete system with automatic profit conversion for 24/7 trading"""
@@ -5363,8 +5504,8 @@ def run_adaptive_ai_system():
                 # Override configs for safety
                 CONFIG['BASE_POSITION_SIZE'] = '0.02'
                 CONFIG['MAX_POSITION_SIZE'] = '0.05'
-                trader.daily_trade_limit = 20
-                trader.min_ml_confidence = float(os.getenv('ML_CONFIDENCE_OVERRIDE', '0.65'))
+                trader.daily_trade_limit = 70
+                trader.min_ml_confidence = float(os.getenv('ML_CONFIDENCE_OVERRIDE', '0.60'))
                 
                 if not hasattr(trader, 'low_balance_warned'):
                     logging.warning(f"⚠️ LOW BALANCE MODE ACTIVATED: {current_balance:.3f} SOL")
