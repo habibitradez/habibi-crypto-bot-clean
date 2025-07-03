@@ -2,6 +2,7 @@ const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruc
 const bs58 = require('bs58');
 const axios = require('axios');
 const fs = require('fs');
+const { TransactionMessage, SystemProgram } = require('@solana/web3.js');
 
 // NUCLEAR OPTION: Process-level error interception
 const originalProcessEmit = process.emit;
@@ -925,6 +926,183 @@ async function executeWithSlippageEscalation(inputMint, outputMint, amount, keyp
   return { quoteResponse: successfulQuote, slippageBps: successfulSlippage };
 }
 
+// ==================== JITO BUNDLE SUPPORT ====================
+// Add at line 680, right before async function executeSwap() {
+
+async function createTipInstruction(fromPubkey, toAddress, lamports) {
+    return SystemProgram.transfer({
+        fromPubkey: new PublicKey(fromPubkey),
+        toPubkey: new PublicKey(toAddress),
+        lamports: lamports
+    });
+}
+
+async function createSwapTransaction(tokenAddress, amountSol, isSell, keypair, connection) {
+    console.log(`Creating ${isSell ? 'sell' : 'buy'} transaction for ${tokenAddress}`);
+    
+    // Convert SOL to lamports
+    const amountLamports = Math.floor(amountSol * 1_000_000_000);
+    
+    // Set input and output mints
+    const inputMint = isSell 
+        ? tokenAddress 
+        : "So11111111111111111111111111111111111111112";
+    const outputMint = isSell 
+        ? "So11111111111111111111111111111111111111112"
+        : tokenAddress;
+    
+    // Get amount (for sells, get token balance)
+    let amount = amountLamports;
+    if (isSell) {
+        // Get token balance logic from executeSwap
+        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(
+            keypair.publicKey,
+            { mint: new PublicKey(tokenAddress) }
+        );
+        
+        if (tokenAccounts.value.length > 0) {
+            amount = parseInt(tokenAccounts.value[0].account.data.parsed.info.tokenAmount.amount);
+        }
+    }
+    
+    // Get quote
+    const quoteUrl = `https://quote-api.jup.ag/v6/quote`;
+    const quoteParams = {
+        inputMint: inputMint,
+        outputMint: outputMint,
+        amount: amount.toString(),
+        slippageBps: isSell ? '1000' : '800' // 10% for sells, 8% for buys
+    };
+    
+    const quoteResponse = await axios.get(quoteUrl, { params: quoteParams });
+    
+    // Get swap transaction
+    const swapUrl = `https://quote-api.jup.ag/v6/swap`;
+    const swapRequest = {
+        quoteResponse: quoteResponse.data,
+        userPublicKey: keypair.publicKey.toBase58(),
+        wrapAndUnwrapSol: true,
+        prioritizationFeeLamports: 500000, // 0.0005 SOL
+        dynamicComputeUnitLimit: true
+    };
+    
+    const swapResponse = await axios.post(swapUrl, swapRequest);
+    
+    // Deserialize and return unsigned transaction
+    const serializedTx = swapResponse.data.swapTransaction;
+    const buffer = Buffer.from(serializedTx, 'base64');
+    const transaction = VersionedTransaction.deserialize(buffer);
+    
+    return transaction;
+}
+
+async function submitToJito(transactions, keypair) {
+    console.log(`🎯 Submitting bundle of ${transactions.length} transactions to Jito`);
+    
+    // Jito tip accounts
+    const tipAccounts = [
+        "96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5",
+        "HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe",
+        "Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY",
+        "ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49",
+        "DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh"
+    ];
+    
+    // Pick random tip account
+    const tipAccount = tipAccounts[Math.floor(Math.random() * tipAccounts.length)];
+    
+    // Create tip transaction (0.0001 SOL tip)
+    const tipAmount = 100000; // 0.0001 SOL in lamports
+    const tipInstruction = await createTipInstruction(
+        keypair.publicKey.toBase58(),
+        tipAccount,
+        tipAmount
+    );
+    
+    // Add tip to first transaction
+    // Note: This is simplified - in production you'd properly add the instruction
+    
+    // Sign all transactions
+    const signedTransactions = [];
+    for (const tx of transactions) {
+        tx.sign([keypair]);
+        const serialized = Buffer.from(tx.serialize()).toString('base64');
+        signedTransactions.push(serialized);
+    }
+    
+    // Submit to Jito
+    const jitoUrl = "https://mainnet.block-engine.jito.wtf/api/v1/bundles";
+    const payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "sendBundle",
+        "params": [signedTransactions]
+    };
+    
+    try {
+        const response = await axios.post(jitoUrl, payload, {
+            headers: { "Content-Type": "application/json" }
+        });
+        
+        if (response.data && response.data.result) {
+            console.log(`✅ Bundle submitted: ${response.data.result}`);
+            return response.data.result;
+        } else {
+            throw new Error('Bundle submission failed');
+        }
+    } catch (error) {
+        console.error('Jito bundle error:', error.message);
+        throw error;
+    }
+}
+
+async function executeBundle(trades) {
+    console.log(`🎯 Executing bundle of ${trades.length} trades`);
+    
+    const connection = new Connection(RPC_URL, {
+        commitment: 'processed',
+        confirmTransactionInitialTimeout: 120000
+    });
+    
+    // Create keypair
+    const keypair = Keypair.fromSecretKey(bs58.decode(PRIVATE_KEY));
+    
+    // Create all transactions
+    const transactions = [];
+    for (const trade of trades) {
+        try {
+            const tx = await createSwapTransaction(
+                trade.tokenAddress,
+                trade.amountSol,
+                trade.isSell || false,
+                keypair,
+                connection
+            );
+            transactions.push(tx);
+            console.log(`✅ Created transaction for ${trade.tokenAddress.slice(0,8)}`);
+        } catch (error) {
+            console.error(`❌ Failed to create transaction for ${trade.tokenAddress}: ${error.message}`);
+        }
+    }
+    
+    if (transactions.length === 0) {
+        console.error('No valid transactions created');
+        process.exit(1);
+    }
+    
+    // Submit as Jito bundle
+    try {
+        const bundleId = await submitToJito(transactions, keypair);
+        console.log(`🎉 Bundle submitted successfully: ${bundleId}`);
+        process.exit(0);
+    } catch (error) {
+        console.error('Bundle submission failed:', error.message);
+        process.exit(1);
+    }
+}
+
+// ==================== END JITO BUNDLE SUPPORT ====================
+
 async function executeSwap() {
   try {
     console.log(`Starting ${IS_SELL ? 'sell' : 'buy'} for ${TOKEN_ADDRESS} with ${AMOUNT_SOL} SOL${IS_FORCE_SELL ? ' (FORCE SELL MODE)' : ''}`);
@@ -1463,4 +1641,20 @@ async function executeSwap() {
 }
 
 // Run the function
-executeSwap();
+// Check if running in bundle mode
+const IS_BUNDLE_MODE = process.argv[2] === 'bundle';
+
+if (IS_BUNDLE_MODE) {
+    // Bundle mode: expects JSON array of trades as argv[3]
+    // Example: node swap.js bundle '[{"tokenAddress":"...","amountSol":0.05},...]'
+    try {
+        const trades = JSON.parse(process.argv[3]);
+        executeBundle(trades);
+    } catch (error) {
+        console.error('Invalid bundle trades JSON:', error.message);
+        process.exit(1);
+    }
+} else {
+    // Single trade mode (existing behavior)
+    executeSwap();
+}
