@@ -4184,6 +4184,7 @@ def detect_momentum_explosion(self):
             logging.error(f"Error in pre-pump detection: {e}")
             return False
 
+
     def auto_discover_profitable_wallets(self):
         """Automatically find and add profitable wallets to follow"""
         try:
