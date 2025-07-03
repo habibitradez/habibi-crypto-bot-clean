@@ -5030,82 +5030,81 @@ class AdaptiveAlphaTrader:
             
             # 1. Check for micro transactions (bump bot pattern)
             recent_txs = get_recent_trade_history(token_address, hours=1)
-            if len(recent_txs) > 50:  # High frequency
+            if recent_txs and len(recent_txs) > 50:  # High frequency
                 # Count micro transactions
                 micro_txs = 0
-                similar_amounts = {}
-                
                 for tx in recent_txs:
-                    # Get transaction details (you'd need to implement this)
-                    # Looking for repeated small amounts
-                    amount = tx.get('amount', 0)
-                    if amount < 0.01:  # Less than 0.01 SOL
-                        micro_txs += 1
-                    
-                    # Track similar amounts (bump bot signature)
-                    amount_key = round(amount, 4)
-                    similar_amounts[amount_key] = similar_amounts.get(amount_key, 0) + 1
+                    # Very small transactions are suspicious
+                    micro_txs += 1
                 
-                # If many micro transactions
-                if micro_txs > 20:
+                # If many transactions in short time
+                if micro_txs > 30:
                     scam_score += 30
-                    reasons.append(f"Bump bot detected: {micro_txs} micro txs")
-                
-                # If repeated amounts (automated)
-                max_similar = max(similar_amounts.values()) if similar_amounts else 0
-                if max_similar > 10:
-                    scam_score += 30
-                    reasons.append(f"Automated trading: {max_similar} identical amounts")
+                    reasons.append(f"High frequency trading: {micro_txs} txs/hour")
             
-            # 2. Check for smart sell pattern (immediate dumps after buys)
-            if len(recent_txs) > 20:
-                dump_pattern = 0
-                for i in range(1, len(recent_txs)):
-                    # If a sell immediately follows a buy
-                    if recent_txs[i].get('type') == 'sell' and recent_txs[i-1].get('type') == 'buy':
-                        time_diff = recent_txs[i]['timestamp'] - recent_txs[i-1]['timestamp']
-                        if time_diff < 5:  # Within 5 seconds
-                            dump_pattern += 1
-                
-                if dump_pattern > 5:
-                    scam_score += 40
-                    reasons.append(f"Smart sell pattern: {dump_pattern} instant dumps")
-            
-            # 3. Check holder distribution (Vortex uses multiple wallets)
-            holders_data = get_token_holders_distribution(token_address)
-            if holders_data:
-                # Look for multiple wallets with similar balances
-                balances = [h['balance'] for h in holders_data[:20]]
-                similar_balances = 0
-                
-                for i in range(len(balances)-1):
-                    for j in range(i+1, len(balances)):
-                        if balances[i] > 0 and balances[j] > 0:
-                            ratio = balances[i] / balances[j]
-                            if 0.95 <= ratio <= 1.05:  # Within 5% of each other
-                                similar_balances += 1
-                
-                if similar_balances > 5:
-                    scam_score += 30
-                    reasons.append(f"Coordinated wallets: {similar_balances} similar balances")
-            
-            # 4. Check for pump.fun listing with suspicious activity
+            # 2. Check holder distribution using existing function
+            holders = get_holder_count(token_address)
             age = get_token_age_minutes(token_address)
-            if age and age < 60:  # New token
-                volume = get_24h_volume(token_address)
-                liquidity = get_token_liquidity(token_address)
+            
+            if holders and age:
+                # Suspicious holder patterns
+                if age < 30 and holders > 200:  # Too many holders too fast
+                    scam_score += 40
+                    reasons.append(f"Bot buyers: {holders} holders in {age}m")
                 
-                if volume and liquidity:
-                    # Suspicious if high volume but price not moving much
-                    price_history = get_price_history(token_address, minutes=30)
-                    if price_history and len(price_history) > 2:
-                        price_change = ((price_history[-1] - price_history[0]) / price_history[0]) * 100
-                        vol_liq_ratio = volume / liquidity
+                holders_per_minute = holders / age
+                if holders_per_minute > 10:  # Growing too fast
+                    scam_score += 30
+                    reasons.append(f"Unnatural growth: {holders_per_minute:.1f} holders/min")
+            
+            # 3. Check liquidity patterns
+            liquidity = get_token_liquidity(token_address)
+            volume = get_24h_volume(token_address)
+            
+            if liquidity and volume:
+                # High volume but stable price = wash trading
+                if volume > liquidity * 10:  # 10x volume vs liquidity
+                    scam_score += 30
+                    reasons.append(f"Possible wash trading: {volume/liquidity:.1f}x vol/liq")
+            
+            # 4. Check for coordinated wallets using Helius
+            try:
+                url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+                payload = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "getTokenLargestAccounts",
+                    "params": [token_address]
+                }
+                
+                response = requests.post(url, json=payload, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'result' in data and 'value' in data['result']:
+                        top_holders = data['result']['value'][:10]
                         
-                        # High volume but low price movement = wash trading
-                        if vol_liq_ratio > 5 and abs(price_change) < 10:
-                            scam_score += 30
-                            reasons.append(f"Wash trading: {vol_liq_ratio:.1f}x volume, {price_change:.1f}% price change")
+                        if len(top_holders) >= 5:
+                            # Check for similar balances (coordinated wallets)
+                            amounts = []
+                            for holder in top_holders:
+                                if holder.get('amount'):
+                                    amounts.append(float(holder['amount']))
+                            
+                            if amounts:
+                                # Check if many have similar amounts
+                                similar_count = 0
+                                for i in range(len(amounts)-1):
+                                    for j in range(i+1, len(amounts)):
+                                        if amounts[i] > 0 and amounts[j] > 0:
+                                            ratio = amounts[i] / amounts[j]
+                                            if 0.95 <= ratio <= 1.05:  # Within 5%
+                                                similar_count += 1
+                                
+                                if similar_count >= 3:
+                                    scam_score += 25
+                                    reasons.append(f"Coordinated wallets: {similar_count} similar balances")
+            except:
+                pass  # Don't fail on API errors
             
             # Decision
             is_vortex_scam = scam_score >= 60
@@ -5709,7 +5708,7 @@ def run_adaptive_ai_system():
                 if not hasattr(trader, 'low_balance_warned'):
                     logging.warning(f"⚠️ LOW BALANCE MODE ACTIVATED: {current_balance:.3f} SOL")
                     logging.warning("   Position sizes: 0.02-0.05 SOL")
-                    logging.warning("   Daily limit: 10 trades")
+                    logging.warning("   Daily limit: 30 trades")
                     logging.warning(f"   ML confidence: {trader.min_ml_confidence:.0%} minimum")
                     trader.low_balance_warned = True
                 
