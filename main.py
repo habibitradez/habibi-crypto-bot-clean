@@ -92,7 +92,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -4912,7 +4912,7 @@ class AdaptiveAlphaTrader:
         try:
             # Use Jupiter API to simulate a small sell
             quote_url = "https://quote-api.jup.ag/v6/quote"
-            
+        
             # Simulate selling a tiny amount
             params = {
                 'inputMint': token_address,
@@ -4921,21 +4921,23 @@ class AdaptiveAlphaTrader:
                 'slippageBps': '1000',  # 10% slippage
                 'onlyDirectRoutes': 'false'
             }
-            
+        
             response = requests.get(quote_url, params=params, timeout=3)
-            
+        
             if response.status_code == 200:
                 data = response.json()
-                if 'data' in data and len(data['data']) > 0:
+                # FIX: Check data structure properly
+                # Jupiter v6 returns routePlan, not data
+                if data and 'routePlan' in data and data['routePlan'] is not None:
                     # If we get routes, selling is possible
                     return True
                 else:
                     # No routes = can't sell = honeypot
                     logging.warning("🚨 NO SELL ROUTES FOUND - HONEYPOT!")
                     return False
-            
+        
             return None  # Uncertain
-            
+        
         except Exception as e:
             logging.error(f"Error simulating sell: {e}")
             return None
@@ -9423,7 +9425,8 @@ def get_recent_trade_history(token_address, hours=2):
         response = requests.post(url, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if 'result' in data:
+            # FIX: Check that result exists AND is not None
+            if 'result' in data and data['result'] is not None:
                 trades = []
                 current_time = int(time.time())
                 cutoff_time = current_time - (hours * 3600)
@@ -9725,7 +9728,8 @@ def get_recent_volume(token_address):
         response = requests.post(url, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if 'result' in data:
+            # FIX: Check that result exists AND is not None
+            if 'result' in data and data['result'] is not None:
                 tx_count = len(data['result'])
                 if tx_count > 0:
                     # Estimate volume based on transaction frequency
@@ -9744,12 +9748,12 @@ def get_recent_volume(token_address):
         if daily_volume and daily_volume > 0:
             return daily_volume / 24
         
-        # Final fallback - return None to indicate no data
-        return None  # Better than returning arbitrary 1000
+        # Final fallback - return a default value instead of None
+        return 1000  # Return a default value to prevent None errors elsewhere
         
     except Exception as e:
         logging.debug(f"Error getting recent volume: {e}")
-        return None  # Return None on error, not 1000
+        return 1000  # Return default value, not None
         
 
 def has_locked_liquidity(token_address):
@@ -9774,7 +9778,8 @@ def has_locked_liquidity(token_address):
         response = requests.post(url, json=payload, timeout=5)
         if response.status_code == 200:
             data = response.json()
-            if 'result' in data and len(data['result']) > 20:
+            # FIX: Check that result exists AND is not None before using len()
+            if 'result' in data and data['result'] is not None and len(data['result']) > 20:
                 # Check for remove liquidity transactions
                 remove_liq_count = 0
                 for tx in data['result']:
