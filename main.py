@@ -9497,9 +9497,9 @@ def get_token_age_minutes(token_address):
         
 
 def get_token_liquidity(token_address):
-    """Get token liquidity using Birdeye API (most reliable)"""
+    """Get token liquidity using multiple methods"""
     try:
-        # Method 1: Use Birdeye API - BEST option
+        # Method 1: Use Birdeye API if available
         birdeye_api_key = os.getenv('BIRDEYE_API_KEY')
         if birdeye_api_key:
             birdeye_url = f"https://public-api.birdeye.so/defi/token/overview?address={token_address}"
@@ -9508,39 +9508,50 @@ def get_token_liquidity(token_address):
                 'x-api-key': birdeye_api_key
             }
             
-            response = requests.get(birdeye_url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and 'data' in data:
-                    liquidity = data['data'].get('liquidity', 0)
-                    if liquidity > 0:
-                        logging.debug(f"✅ Birdeye liquidity for {token_address[:8]}: ${liquidity:,.0f}")
-                        return float(liquidity)
+            try:
+                response = requests.get(birdeye_url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and isinstance(data, dict) and 'data' in data:
+                        token_data = data.get('data', {})
+                        if isinstance(token_data, dict):
+                            liquidity = token_data.get('liquidity', 0)
+                            if liquidity and liquidity > 0:
+                                logging.debug(f"✅ Birdeye liquidity for {token_address[:8]}: ${liquidity:,.0f}")
+                                return float(liquidity)
+            except Exception as e:
+                logging.debug(f"Birdeye API error: {e}")
         
         # Method 2: Try DexScreener as backup (free, no API key needed)
-        dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
-        response = requests.get(dexscreener_url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'pairs' in data and len(data['pairs']) > 0:
-                max_liquidity = 0
-                for pair in data['pairs']:
-                    if 'liquidity' in pair and 'usd' in pair['liquidity']:
-                        liq = float(pair['liquidity']['usd'])
-                        if liq > max_liquidity:
-                            max_liquidity = liq
-                
-                if max_liquidity > 0:
-                    logging.debug(f"✅ DexScreener liquidity for {token_address[:8]}: ${max_liquidity:,.0f}")
-                    return max_liquidity
+        try:
+            dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+            response = requests.get(dexscreener_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data and isinstance(data, dict) and 'pairs' in data:
+                    pairs = data.get('pairs', [])
+                    if isinstance(pairs, list) and len(pairs) > 0:
+                        max_liquidity = 0
+                        for pair in pairs:
+                            if isinstance(pair, dict) and 'liquidity' in pair:
+                                liq_data = pair.get('liquidity', {})
+                                if isinstance(liq_data, dict) and 'usd' in liq_data:
+                                    liq = float(liq_data.get('usd', 0))
+                                    if liq > max_liquidity:
+                                        max_liquidity = liq
+                        
+                        if max_liquidity > 0:
+                            logging.debug(f"✅ DexScreener liquidity for {token_address[:8]}: ${max_liquidity:,.0f}")
+                            return max_liquidity
+        except Exception as e:
+            logging.debug(f"DexScreener API error: {e}")
         
-        # Method 3: Fallback to estimates based on the data we have
-        # Return a reasonable estimate for new tokens
-        return 3000  # Default estimate for new tokens
+        # Return default estimate
+        return 3000
         
     except Exception as e:
         logging.error(f"Error getting liquidity: {e}")
-        return 3000  # Return estimate instead of None
+        return 3000
 
 
 def verify_wallet_setup():
@@ -9788,9 +9799,9 @@ def has_locked_liquidity(token_address):
         return False
         
 def get_24h_volume(token_address):
-    """Get 24-hour trading volume using Birdeye API"""
+    """Get 24-hour trading volume using multiple methods"""
     try:
-        # Method 1: Use Birdeye API
+        # Method 1: Use Birdeye API if available
         birdeye_api_key = os.getenv('BIRDEYE_API_KEY')
         if birdeye_api_key:
             birdeye_url = f"https://public-api.birdeye.so/defi/token/overview?address={token_address}"
@@ -9799,38 +9810,49 @@ def get_24h_volume(token_address):
                 'x-api-key': birdeye_api_key
             }
             
-            response = requests.get(birdeye_url, headers=headers, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                if data and 'data' in data:
-                    volume_24h = data['data'].get('v24hUSD', 0)
-                    if volume_24h > 0:
-                        logging.debug(f"✅ Birdeye 24h volume for {token_address[:8]}: ${volume_24h:,.0f}")
-                        return float(volume_24h)
+            try:
+                response = requests.get(birdeye_url, headers=headers, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if data and isinstance(data, dict) and 'data' in data:
+                        token_data = data.get('data', {})
+                        if isinstance(token_data, dict):
+                            volume_24h = token_data.get('v24hUSD', 0)
+                            if volume_24h and volume_24h > 0:
+                                logging.debug(f"✅ Birdeye 24h volume for {token_address[:8]}: ${volume_24h:,.0f}")
+                                return float(volume_24h)
+            except Exception as e:
+                logging.debug(f"Birdeye API error: {e}")
         
         # Method 2: Try DexScreener as backup
-        dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
-        response = requests.get(dexscreener_url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if data and 'pairs' in data and len(data['pairs']) > 0:
-                total_volume = 0
-                for pair in data['pairs']:
-                    if 'volume' in pair and 'h24' in pair['volume']:
-                        vol = float(pair['volume']['h24'])
-                        total_volume += vol
-                
-                if total_volume > 0:
-                    logging.debug(f"✅ DexScreener 24h volume for {token_address[:8]}: ${total_volume:,.0f}")
-                    return total_volume
+        try:
+            dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
+            response = requests.get(dexscreener_url, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if data and isinstance(data, dict) and 'pairs' in data:
+                    pairs = data.get('pairs', [])
+                    if isinstance(pairs, list) and len(pairs) > 0:
+                        total_volume = 0
+                        for pair in pairs:
+                            if isinstance(pair, dict) and 'volume' in pair:
+                                vol_data = pair.get('volume', {})
+                                if isinstance(vol_data, dict) and 'h24' in vol_data:
+                                    vol = float(vol_data.get('h24', 0))
+                                    total_volume += vol
+                        
+                        if total_volume > 0:
+                            logging.debug(f"✅ DexScreener 24h volume for {token_address[:8]}: ${total_volume:,.0f}")
+                            return total_volume
+        except Exception as e:
+            logging.debug(f"DexScreener API error: {e}")
         
-        # Fallback: estimate based on transaction count
-        return 5000  # Default estimate
+        # Return default estimate
+        return 5000
         
     except Exception as e:
         logging.error(f"Error getting 24h volume: {e}")
-        return 5000  # Default fallback
-
+        return 5000
 
 def calculate_safety_score(age_minutes, liquidity, holders):
     """Calculate overall safety score for token"""
