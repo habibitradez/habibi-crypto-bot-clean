@@ -1,8 +1,7 @@
-const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruction, TransactionMessage, AddressLookupTableAccount, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const { Connection, Keypair, PublicKey, VersionedTransaction, TransactionInstruction, TransactionMessage, AddressLookupTableAccount, LAMPORTS_PER_SOL, SystemProgram } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
 const fs = require('fs');
-const { TransactionMessage, SystemProgram } = require('@solana/web3.js');
 
 // NUCLEAR OPTION: Process-level error interception
 const originalProcessEmit = process.emit;
