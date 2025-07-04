@@ -4436,114 +4436,52 @@ class AdaptiveAlphaTrader:
                 
 
     def monitor_momentum_position(self, token, position):
-        """AGGRESSIVE monitoring - quick profits, tight stops"""
+        """Special exit logic for momentum trades - ORIGINAL VERSION THAT WORKED"""
         if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
-            
-        hold_time = time.time() - position['entry_time']
         
+        hold_time = time.time() - position['entry_time']
+    
+        # WAIT 5 MINUTES - This is KEY!
+        if hold_time < 300:
+            return
+    
         current_price = get_token_price(token)
         if not current_price:
             return
-            
+    
         price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
-        
-        # Store last price for rapid movement detection
-        last_price = position.get('last_price', position['entry_price'])
-        price_move_1s = ((current_price - last_price) / last_price) * 100 if last_price else 0
-        position['last_price'] = current_price
-        
-        # RAPID DUMP DETECTION
-        if price_move_1s < -2:  # 2% drop in 1 second
-            logging.error(f"🚨 RAPID DUMP: {token[:8]} dropped {price_move_1s:.1f}% in 1 second!")
-            self.ensure_position_sold(token, position, "RAPID_DUMP")
+    
+        # 50% TAKE PROFIT - Let winners run!
+        if price_change > 50:
+            logging.warning(f"🎯 MOMENTUM TAKE PROFIT: {price_change:.1f}%")
+            self.ensure_position_sold(token, position, "MOMENTUM_PROFIT")
+            return
+    
+        # -15% STOP LOSS - Give it room
+        if price_change < -15:
+            logging.warning(f"🛑 MOMENTUM STOP LOSS: {price_change:.1f}%")
+            self.ensure_position_sold(token, position, "MOMENTUM_STOP")
             return
         
-        # AGGRESSIVE PROFIT TAKING - Multiple levels
-        if price_change >= 15 and not position.get('profit_15'):
-            # First profit at 15%
-            sell_size = position['size'] * 0.3  # Sell 30%
-            logging.warning(f"💰 QUICK PROFIT 15%: {token[:8]} - selling 30%")
-            result = execute_optimized_sell(token, sell_size)
-            if result and result != "no-tokens":
-                position['size'] *= 0.7
-                position['profit_15'] = True
-                
-        elif price_change >= 25 and not position.get('profit_25'):
-            # Second profit at 25%
-            sell_size = position['size'] * 0.4  # Sell 40% of remainder
-            logging.warning(f"💰 PROFIT 25%: {token[:8]} - selling 40% more")
-            result = execute_optimized_sell(token, sell_size)
-            if result and result != "no-tokens":
-                position['size'] *= 0.6
-                position['profit_25'] = True
-                position['partial_sold'] = True
-                
-        elif price_change >= 50 and not position.get('profit_50'):
-            # Third profit at 50%
-            sell_size = position['size'] * 0.5  # Sell half of remainder
-            logging.warning(f"🚀 MOONSHOT 50%: {token[:8]} - selling 50% of remainder")
-            result = execute_optimized_sell(token, sell_size)
-            if result and result != "no-tokens":
-                position['size'] *= 0.5
-                position['profit_50'] = True
-                
-        elif price_change >= 100:
-            # Final exit at 100%
-            logging.warning(f"🎯 MEGA PUMP 100%+: {token[:8]} - FULL EXIT!")
-            self.ensure_position_sold(token, position, "MEGA_PUMP")
-            return
-        
-        # AGGRESSIVE STOP LOSS - Tighter for non-partial positions
-        if not position.get('partial_sold'):
-            if price_change <= -8:  # Just 8% loss
-                logging.warning(f"🛑 QUICK STOP: {token[:8]} down {price_change:.1f}%")
-                self.ensure_position_sold(token, position, "STOP_LOSS")
-                return
-        else:
-            # Wider stop after taking profits (it's house money)
-            if price_change <= -25:
-                logging.warning(f"🛑 TRAILING STOP: {token[:8]} down {price_change:.1f}%")
-                self.ensure_position_sold(token, position, "TRAILING_STOP")
-                return
-        
-        # MOMENTUM HEALTH CHECK
-        volume = get_recent_volume(token)
-        liquidity = get_token_liquidity(token)
-        
-        if volume and liquidity and liquidity > 0:
-            current_vol_liq_ratio = volume / liquidity
-            
-            # Store initial ratio if not set
-            if 'initial_vol_liq_ratio' not in position:
-                position['initial_vol_liq_ratio'] = current_vol_liq_ratio
-                
-            # Exit if momentum dies
-            if current_vol_liq_ratio < position.get('initial_vol_liq_ratio', 1) * 0.3:
-                logging.warning(f"📉 MOMENTUM DIED: Vol/Liq dropped to {current_vol_liq_ratio:.1f}x")
+        # Check if momentum is fading
+        current_volume = get_24h_volume(token)
+        current_liquidity = get_token_liquidity(token)
+        if current_volume and current_liquidity:
+            if current_volume < current_liquidity:
+                logging.warning(f"📉 MOMENTUM FADING: Volume dropped below liquidity")
                 self.ensure_position_sold(token, position, "MOMENTUM_FADE")
                 return
-        
-        # TIME-BASED EXITS - Aggressive timeouts
-        if hold_time > 600 and price_change < 5 and not position.get('partial_sold'):  # 10 minutes
-            logging.warning(f"⏰ QUICK TIMEOUT: No movement after 10 minutes")
-            self.ensure_position_sold(token, position, "QUICK_TIMEOUT")
-            return
-        elif hold_time > 1800 and price_change < 10:  # 30 minutes
-            logging.warning(f"⏰ FINAL TIMEOUT: Exiting after 30 minutes")
-            self.ensure_position_sold(token, position, "TIMEOUT")
+    
+        # 30-minute timeout if no movement
+        if hold_time > 1800 and price_change < 10:
+            logging.warning(f"⏰ MOMENTUM TIMEOUT: No significant move after 30 minutes")
+            self.ensure_position_sold(token, position, "MOMENTUM_TIMEOUT")
             return
         
-        # Status logging every 2 minutes
-        if int(hold_time) % 120 == 0:
-            vol_status = f"Vol/Liq: {current_vol_liq_ratio:.1f}x" if 'current_vol_liq_ratio' in locals() else "No vol data"
-            profits_taken = []
-            if position.get('profit_15'): profits_taken.append("15%")
-            if position.get('profit_25'): profits_taken.append("25%")
-            if position.get('profit_50'): profits_taken.append("50%")
-            
-            status = f"Profits taken: {', '.join(profits_taken)}" if profits_taken else "No profits yet"
-            logging.info(f"📊 MOMENTUM: {token[:8]} - {hold_time/60:.0f}m, P&L: {price_change:+.1f}%, {status}, {vol_status}")
+        # Status update every 5 minutes
+        if int(hold_time) % 300 == 0:
+            logging.info(f"📊 MOMENTUM STATUS: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
