@@ -1976,12 +1976,42 @@ class AdaptiveAlphaTrader:
             logging.error(f"   Score: {score}, Reasons: {', '.join(reasons)}")
             return False
         
-        # VORTEX SCAM CHECK - NEW!
-        is_vortex_scam, vortex_score, vortex_reasons = self.detect_vortex_scam(token_address)
-        if is_vortex_scam:
-            logging.error(f"🚨 BLOCKED VORTEX-STYLE SCAM: {token_address[:8]}")
-            logging.error(f"   Score: {vortex_score}, Reasons: {', '.join(vortex_reasons)}")
-            return False
+        # VORTEX SCAM CHECK - WITH WHITELIST
+        # First check if token has good fundamentals
+        good_token_signs = 0
+        
+        # Check burn percentage (you might need to implement this)
+        try:
+            # Simple check - if top holder is burn address
+            url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenLargestAccounts",
+                "params": [token_address]
+            }
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result'] and len(data['result']['value']) > 0:
+                    # Check if burn address is top holder
+                    top_holder = data['result']['value'][0]
+                    if top_holder.get('address') == '1nc1nerator11111111111111111111111111111111':
+                        good_token_signs += 1
+                        logging.info(f"✅ Token has burn")
+        except:
+            pass
+        
+        # If token shows good signs, skip Vortex check
+        if good_token_signs > 0:
+            logging.info(f"✅ Token shows good fundamentals - skipping aggressive Vortex check")
+        else:
+            # Only check for extreme Vortex patterns
+            is_vortex_scam, vortex_score, vortex_reasons = self.detect_vortex_scam(token_address)
+            if is_vortex_scam:
+                logging.error(f"🚨 BLOCKED VORTEX-STYLE SCAM: {token_address}")
+                logging.error(f"   Score: {vortex_score}, Reasons: {', '.join(vortex_reasons)}")
+                return False
         
         # ADDITIONAL SELL ROUTE VERIFICATION (double-check for all trades)
         if not self.verify_sell_route_exists(token_address):
@@ -4090,6 +4120,7 @@ class AdaptiveAlphaTrader:
                     
                     # AGGRESSIVE: Any activity is good
                     volume_liq_ratio = volume / liquidity
+                    logging.info(f"📊 Checking {token}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
                     if volume_liq_ratio > 1:
                         momentum_score += 20
                     elif volume_liq_ratio > 0.5:
@@ -4108,7 +4139,7 @@ class AdaptiveAlphaTrader:
                     
                     # Log EVERYTHING that's new
                     if age and age < 60:
-                        logging.info(f"🆕 NEW: {token[:8]} - Age: {age}m, Score: {momentum_score}")
+                        logging.info(f"🆕 NEW: {token} - Age: {age}m, Score: {momentum_score}")
                     
                     # AGGRESSIVE: Low threshold
                     if momentum_score >= 40:  # Very low bar
@@ -4134,7 +4165,7 @@ class AdaptiveAlphaTrader:
                 # Trade the NEWEST token with decent score
                 for candidate in momentum_candidates[:10]:  # Check top 10
                     if candidate['score'] >= 50:  # Low threshold
-                        logging.warning(f"🚀 AGGRESSIVE BUY: {candidate['token'][:8]}")
+                        logging.warning(f"🚀 AGGRESSIVE BUY: {candidate['token']}")
                         logging.warning(f"   Age: {candidate['age']}m 🆕")
                         logging.warning(f"   Score: {candidate['score']}")
                         logging.warning(f"   Holders: {candidate['holders']}")
@@ -4961,7 +4992,7 @@ class AdaptiveAlphaTrader:
             
 
     def detect_vortex_scam(self, token_address):
-        """Detect ONLY obvious Vortex scams - don't block good tokens"""
+        """Only block OBVIOUS scams - let potential winners through"""
         try:
             scam_score = 0
             reasons = []
@@ -4969,89 +5000,24 @@ class AdaptiveAlphaTrader:
             # Get basic data
             holders = get_holder_count(token_address)
             age = get_token_age_minutes(token_address)
-            recent_txs = get_recent_trade_history(token_address, hours=1)
-            liquidity = get_token_liquidity(token_address)
-            volume = get_24h_volume(token_address)
             
-            # 1. EXTREME bot activity only
-            if holders and age and age < 10 and holders > 500:
-                # 500+ holders in 10 minutes = definitely bots
-                scam_score += 100
-                reasons.append(f"Extreme bot activity: {holders} holders in {age}m")
-                return True, scam_score, reasons  # Instant fail
-            
-            # 2. Check for OBVIOUS pump patterns
-            if recent_txs and len(recent_txs) > 100:
-                # Only flag if REALLY suspicious
-                if age and age < 30 and len(recent_txs) > 200:
-                    scam_score += 60
-                    reasons.append(f"Suspicious activity: {len(recent_txs)} txs in {age}m")
-            
-            # 3. Unnatural growth ONLY if extreme
-            if holders and age and age > 0:
-                holders_per_minute = holders / age
-                if holders_per_minute > 20:  # ONLY flag if growing 20+ holders/minute
-                    scam_score += 50
-                    reasons.append(f"Unnatural growth: {holders_per_minute:.0f} holders/min")
-            
-            # 4. Check for wash trading - ONLY if obvious
-            if liquidity and volume and liquidity > 0:
-                vol_liq_ratio = volume / liquidity
-                # Only flag if EXTREME volume with no price movement
-                if vol_liq_ratio > 20:  # 20x volume vs liquidity is extreme
-                    scam_score += 40
-                    reasons.append(f"Possible wash trading: {vol_liq_ratio:.1f}x vol/liq")
-            
-            # 5. Check for coordinated wallets - ONLY if many
-            try:
-                url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTokenLargestAccounts",
-                    "params": [token_address]
-                }
+            # ONLY block if REALLY extreme
+            if holders and age:
+                # 10,000+ holders in 5 minutes = definitely bots
+                if age < 5 and holders > 10000:
+                    return True, 100, ["Impossible growth: 10k+ holders in 5 min"]
                 
-                response = requests.post(url, json=payload, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'result' in data and 'value' in data['result']:
-                        top_holders = data['result']['value'][:10]
-                        
-                        if len(top_holders) >= 5:
-                            # Check for similar balances
-                            amounts = []
-                            for holder in top_holders:
-                                if holder.get('amount'):
-                                    amounts.append(float(holder['amount']))
-                            
-                            if amounts:
-                                similar_count = 0
-                                for i in range(len(amounts)-1):
-                                    for j in range(i+1, len(amounts)):
-                                        if amounts[i] > 0 and amounts[j] > 0:
-                                            ratio = amounts[i] / amounts[j]
-                                            if 0.98 <= ratio <= 1.02:  # Within 2%
-                                                similar_count += 1
-                                
-                                if similar_count >= 5:  # ONLY if many similar
-                                    scam_score += 30
-                                    reasons.append(f"Coordinated wallets: {similar_count} similar balances")
-            except:
-                pass  # Don't fail on API errors
+                # 5,000+ holders in 10 minutes = very suspicious
+                if age < 10 and holders > 5000:
+                    return True, 100, [f"Extreme growth: {holders} holders in {age}m"]
+                
+                # Otherwise, popular tokens can grow fast!
+                # 2000 holders in 2 minutes might be LEGITIMATE hype
             
-            # BE LENIENT - Only block if REALLY suspicious
-            is_vortex_scam = scam_score >= 100  # Raised from 60
-            
-            if is_vortex_scam:
-                logging.warning(f"🚨 VORTEX SCAM: {token_address[:8]} - Score: {scam_score}")
-                for reason in reasons:
-                    logging.warning(f"   - {reason}")
-            
-            return is_vortex_scam, scam_score, reasons
+            # Don't block for other reasons - let your other safety checks handle it
+            return False, 0, []
             
         except Exception as e:
-            logging.error(f"Error detecting Vortex scam: {e}")
             # If detection fails, LET IT THROUGH
             return False, 0, []
             
