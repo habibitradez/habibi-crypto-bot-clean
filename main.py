@@ -2061,6 +2061,29 @@ class AdaptiveAlphaTrader:
                 logging.error(f"❌ MOMENTUM BLOCKED: Only {holders} holders (need 30+)")
                 return False
         
+        # COLLECT ML ENTRY FEATURES BEFORE TRADE
+        volume = get_24h_volume(token_address)
+        holders = get_holder_count(token_address) if 'holders' not in locals() else holders
+        age = get_token_age_minutes(token_address)
+        
+        # Get liquidity if not already fetched
+        if liquidity is None:
+            liquidity = get_token_liquidity(token_address) or 0
+        
+        ml_entry_features = {
+            'token': token_address,
+            'timestamp': time.time(),
+            'liquidity': liquidity,
+            'volume': volume,
+            'holders': holders,
+            'age': age,
+            'vol_liq_ratio': volume / liquidity if liquidity and liquidity > 0 else 0,
+            'market_condition': self.get_market_condition(),
+            'strategy': strategy,
+            'position_size': position_size,
+            'entry_price': entry_price
+        }
+        
         logging.info(f"🎯 ATTEMPTING TRADE: {strategy} on {token_address[:8]} with {position_size} SOL")
     
         # Set targets based on strategy - UPDATED WITH REALISTIC TARGETS
@@ -2097,8 +2120,22 @@ class AdaptiveAlphaTrader:
                 'signature': signature,
                 'source_wallet': source_wallet,  # Track which alpha we're following
                 'partial_sold': False,  # Track partial profit taking
-                'initial_vol_liq_ratio': get_24h_volume(token_address) / max(liquidity, 1) if liquidity else None
+                'initial_vol_liq_ratio': get_24h_volume(token_address) / max(liquidity, 1) if liquidity else None,
+                # ADD ML TRACKING DATA
+                'ml_entry_features': ml_entry_features,
+                'initial_holders': holders,
+                'initial_volume': volume,
+                'initial_liquidity': liquidity,
+                'entry_age': age
             }
+            
+            # RECORD ML TRADE ENTRY
+            if hasattr(self, 'brain') and self.brain:
+                try:
+                    self.brain.record_trade_entry(ml_entry_features)
+                    logging.debug(f"📊 ML entry features recorded for {token_address[:8]}")
+                except Exception as e:
+                    logging.debug(f"ML recording error: {e}")
         
             # Update brain stats
             self.brain.daily_stats['trades'] += 1
@@ -4467,52 +4504,210 @@ class AdaptiveAlphaTrader:
                 
 
     def monitor_momentum_position(self, token, position):
-        """Special exit logic for momentum trades - ORIGINAL VERSION THAT WORKED"""
+        """Ultimate momentum monitoring with all optimizations"""
         if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
         
         hold_time = time.time() - position['entry_time']
-    
-        # WAIT 5 MINUTES - This is KEY!
-        if hold_time < 300:
-            return
-    
+        
         current_price = get_token_price(token)
         if not current_price:
             return
-    
-        price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
-    
-        # 50% TAKE PROFIT - Let winners run!
-        if price_change > 50:
-            logging.warning(f"🎯 MOMENTUM TAKE PROFIT: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "MOMENTUM_PROFIT")
-            return
-    
-        # -15% STOP LOSS - Give it room
-        if price_change < -15:
-            logging.warning(f"🛑 MOMENTUM STOP LOSS: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "MOMENTUM_STOP")
-            return
         
-        # Check if momentum is fading
+        price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
+        position_value = position['size'] * current_price * 240  # USD value
+        
+        # GET REAL-TIME DATA
         current_volume = get_24h_volume(token)
         current_liquidity = get_token_liquidity(token)
-        if current_volume and current_liquidity:
-            if current_volume < current_liquidity:
-                logging.warning(f"📉 MOMENTUM FADING: Volume dropped below liquidity")
-                self.ensure_position_sold(token, position, "MOMENTUM_FADE")
+        current_holders = get_holder_count(token)
+        
+        # PRICE ACCELERATION DETECTION
+        if 'price_history' not in position:
+            position['price_history'] = []
+        
+        position['price_history'].append((time.time(), current_price))
+        position['price_history'] = [(t, p) for t, p in position['price_history'] if t > time.time() - 30]
+        
+        if len(position['price_history']) >= 5:
+            prices = [p for _, p in position['price_history']]
+            time_span = position['price_history'][-1][0] - position['price_history'][0][0]
+            
+            if time_span > 0:
+                price_velocity = ((prices[-1] - prices[0]) / prices[0]) * 100 / time_span  # % per second
+                
+                if price_velocity > 1.0:  # 1% per second = explosive
+                    logging.warning(f"🚀 EXPLOSIVE MOVE: {price_velocity:.2f}%/sec - PUMP DETECTED!")
+                    if not position.get('pump_detected'):
+                        position['pump_detected'] = True
+                        position['pump_start_price'] = current_price
+        
+        # LOG EVERY 5 SECONDS with full data
+        if int(hold_time) % 5 == 0:
+            vol_liq_ratio = (current_volume / current_liquidity) if current_liquidity and current_liquidity > 0 else 0
+            logging.info(f"📊 {token[:8]}: {price_change:+.1f}% (${position_value:.0f}) - {hold_time:.0f}s - Vol/Liq: {vol_liq_ratio:.1f}x - Holders: {current_holders}")
+        
+        # HOLDER GROWTH MONITORING
+        if 'last_holder_check' in position:
+            time_since_check = time.time() - position['last_holder_check_time']
+            if time_since_check > 30 and current_holders:
+                holder_growth = current_holders - position['last_holder_check']
+                growth_rate = (holder_growth / time_since_check) * 60  # Per minute
+                
+                if growth_rate > 10:
+                    logging.info(f"👥 Strong holder growth: +{growth_rate:.0f}/min")
+                    position['strong_fundamentals'] = True
+                elif growth_rate < -5 and not position.get('partial_sold'):
+                    logging.warning(f"👥 HOLDERS LEAVING: {growth_rate:.0f}/min")
+                    self.ensure_position_sold(token, position, "HOLDERS_EXODUS")
+                    return
+                
+                position['last_holder_check'] = current_holders
+                position['last_holder_check_time'] = time.time()
+        else:
+            position['last_holder_check'] = current_holders
+            position['last_holder_check_time'] = time.time()
+        
+        # VOLUME SPIKE DETECTION
+        if 'last_volume' in position and current_volume:
+            volume_change = ((current_volume - position['last_volume']) / position['last_volume']) * 100 if position['last_volume'] > 0 else 0
+            
+            if volume_change > 100:  # Volume doubled!
+                logging.warning(f"📈 VOLUME EXPLOSION: +{volume_change:.0f}%")
+                position['volume_spike'] = True
+        else:
+            position['initial_volume'] = current_volume
+        
+        position['last_volume'] = current_volume
+        
+        # NEWS/CATALYST DETECTION
+        if current_volume and current_holders:
+            initial_vol = position.get('initial_volume', current_volume)
+            initial_holders = position.get('initial_holders', current_holders)
+            
+            if current_volume > initial_vol * 5 and current_holders > initial_holders * 2:
+                logging.warning(f"📰 POSSIBLE NEWS CATALYST - Volume {current_volume/initial_vol:.1f}x, Holders {current_holders/initial_holders:.1f}x")
+                position['catalyst_detected'] = True
+        
+        if 'initial_holders' not in position:
+            position['initial_holders'] = current_holders
+        
+        # MOMENTUM HEALTH CHECK
+        if current_volume and current_liquidity and current_liquidity > 0:
+            vol_liq_ratio = current_volume / current_liquidity
+            
+            if 'initial_vol_liq_ratio' not in position:
+                position['initial_vol_liq_ratio'] = vol_liq_ratio
+            
+            # Momentum crash detection
+            if vol_liq_ratio < position['initial_vol_liq_ratio'] * 0.3:
+                if not position.get('partial_sold') and not position.get('catalyst_detected'):
+                    logging.warning(f"📉 MOMENTUM CRASHED: {vol_liq_ratio:.1f}x vs {position['initial_vol_liq_ratio']:.1f}x initial")
+                    self.ensure_position_sold(token, position, "MOMENTUM_CRASH")
+                    return
+        
+        # SMART EXIT SCALING
+        if not position.get('partial_sold'):
+            if price_change >= 20 and hold_time > 30:
+                # Take initial investment at 20%
+                sell_percentage = 1 / (1 + price_change/100)
+                sell_size = position['size'] * sell_percentage
+                logging.warning(f"💰 Taking initial at {price_change:.1f}% - rest is free ride")
+                
+                result = execute_optimized_sell(token, sell_size)
+                if result and result != "no-tokens":
+                    position['size'] *= (1 - sell_percentage)
+                    position['partial_sold'] = True
+                    position['initial_secured'] = True
+                    
+            elif price_change >= 40:
+                # Big gain - take 70%
+                sell_size = position['size'] * 0.7
+                logging.warning(f"🚀 BIG GAIN +{price_change:.1f}%! Securing 70%")
+                
+                result = execute_optimized_sell(token, sell_size)
+                if result and result != "no-tokens":
+                    position['size'] *= 0.3
+                    position['partial_sold'] = True
+                    position['secured_profit'] = True
+        
+        # TRAILING STOP for secured positions
+        elif position.get('initial_secured'):
+            if 'peak_price' not in position or current_price > position['peak_price']:
+                position['peak_price'] = current_price
+                position['peak_price_change'] = price_change
+            
+            drop_from_peak = ((position['peak_price'] - current_price) / position['peak_price']) * 100
+            
+            # Dynamic trailing stop based on peak gains
+            if position['peak_price_change'] >= 100 and drop_from_peak > 30:
+                logging.warning(f"📉 TRAILING STOP: Dropped {drop_from_peak:.1f}% from peak {position['peak_price_change']:.1f}%")
+                self.ensure_position_sold(token, position, "TRAILING_STOP")
                 return
-    
-        # 30-minute timeout if no movement
-        if hold_time > 1800 and price_change < 10:
-            logging.warning(f"⏰ MOMENTUM TIMEOUT: No significant move after 30 minutes")
-            self.ensure_position_sold(token, position, "MOMENTUM_TIMEOUT")
+            elif position['peak_price_change'] >= 50 and drop_from_peak > 20:
+                logging.warning(f"📉 TRAILING STOP: Dropped {drop_from_peak:.1f}% from peak {position['peak_price_change']:.1f}%")
+                self.ensure_position_sold(token, position, "TRAILING_STOP")
+                return
+        
+        # MOONSHOT CHECK
+        if price_change >= 100:
+            logging.warning(f"🎯 MOONSHOT {price_change:.1f}% - Taking remaining position!")
+            self.ensure_position_sold(token, position, "MOONSHOT")
             return
         
-        # Status update every 5 minutes
-        if int(hold_time) % 300 == 0:
-            logging.info(f"📊 MOMENTUM STATUS: {token[:8]} - Held {hold_time/60:.0f}m, P&L: {price_change:+.1f}%")
+        # STOP LOSS - More lenient if we have catalysts or pump detected
+        stop_loss_threshold = -15
+        if position.get('catalyst_detected') or position.get('pump_detected'):
+            stop_loss_threshold = -25  # Give more room
+        
+        if price_change <= stop_loss_threshold:
+            if position.get('partial_sold'):
+                logging.info(f"📉 Down {price_change:.1f}% but already secured profit")
+            else:
+                logging.warning(f"🛑 STOP LOSS: {price_change:.1f}%")
+                self.ensure_position_sold(token, position, "STOP_LOSS")
+                return
+        
+        # RAPID DUMP DETECTION
+        if hasattr(position, 'last_price'):
+            recent_move = ((current_price - position['last_price']) / position['last_price']) * 100
+            if recent_move < -5 and not position.get('partial_sold'):
+                logging.error(f"🚨 RAPID DUMP {recent_move:.1f}% - PANIC SELL!")
+                self.ensure_position_sold(token, position, "RAPID_DUMP")
+                return
+        position['last_price'] = current_price
+        
+        # WAIT PERIOD - Shorter if pump detected
+        min_hold_time = 60 if position.get('pump_detected') else 120
+        if hold_time < min_hold_time:
+            return
+        
+        # VOLUME DEATH CHECK
+        if current_volume and current_volume < 1000 and not position.get('partial_sold'):
+            logging.warning(f"💀 VOLUME DIED: Only ${current_volume:.0f}")
+            self.ensure_position_sold(token, position, "VOLUME_DEATH")
+            return
+        
+        # MARKET CONDITION ADJUSTMENT
+        market_condition = self.get_market_condition()
+        
+        # BOREDOM EXIT - Adjusted by market condition
+        boredom_threshold = 10
+        if market_condition == "BEARISH":
+            boredom_threshold = 5  # Exit faster in bear market
+        elif market_condition == "BULLISH":
+            boredom_threshold = 15  # Hold longer in bull market
+        
+        if hold_time > 600 and price_change < boredom_threshold:
+            logging.warning(f"💤 BORING: Only {price_change:.1f}% after 10 minutes (Market: {market_condition})")
+            self.ensure_position_sold(token, position, "BORING")
+            return
+        
+        # FINAL TIMEOUT
+        if hold_time > 1800:
+            logging.warning(f"⏰ TIMEOUT: {price_change:.1f}% after 30 minutes")
+            self.ensure_position_sold(token, position, "TIMEOUT")
+            return
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
@@ -4918,11 +5113,14 @@ class AdaptiveAlphaTrader:
                     logging.warning("🚨 NO SELL ROUTES FOUND - HONEYPOT!")
                     return False
         
-            return None  # Uncertain
+            # CHANGE: Return True instead of None when uncertain
+            logging.debug("Jupiter API uncertain response - allowing trade")
+            return True  # Give benefit of doubt
         
         except Exception as e:
             logging.error(f"Error simulating sell: {e}")
-            return None
+            # CHANGE: Return True on error - don't block trades due to API issues
+            return True  # Allow trade when API fails
 
     def check_stuck_positions(self):
         """Identify positions that can't be sold"""
@@ -5242,6 +5440,75 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             logging.error(f"Error collecting momentum: {e}")
             return []
+
+    def get_market_condition(self):
+        """Check if market is pumping or dumping based on SOL price"""
+        try:
+            sol_price_now = get_token_price("So11111111111111111111111111111111111111112")
+            
+            if not hasattr(self, 'sol_price_history'):
+                self.sol_price_history = []
+            
+            self.sol_price_history.append((time.time(), sol_price_now))
+            
+            # Keep last 5 minutes of data
+            self.sol_price_history = [(t, p) for t, p in self.sol_price_history if t > time.time() - 300]
+            
+            if len(self.sol_price_history) >= 2:
+                # Compare to 1 minute ago
+                one_min_ago = time.time() - 60
+                old_prices = [p for t, p in self.sol_price_history if t <= one_min_ago]
+                
+                if old_prices:
+                    old_price = old_prices[-1]
+                    sol_change = ((sol_price_now - old_price) / old_price) * 100
+                    
+                    if sol_change > 1:
+                        return "BULLISH"
+                    elif sol_change < -1:
+                        return "BEARISH"
+            
+            return "NEUTRAL"
+            
+        except Exception as e:
+            logging.debug(f"Error checking market condition: {e}")
+            return "NEUTRAL"
+
+    def check_position_correlation(self):
+        """Avoid holding multiple tokens that move together"""
+        try:
+            if len(self.positions) > 2:
+                price_changes = {}
+                
+                for token, pos in self.positions.items():
+                    price = get_token_price(token)
+                    if price:
+                        change = ((price - pos['entry_price']) / pos['entry_price']) * 100
+                        price_changes[token] = change
+                
+                # If multiple big winners, take some profits
+                big_winners = [(t, c) for t, c in price_changes.items() if c > 30]
+                
+                if len(big_winners) > 2:
+                    logging.warning(f"🎯 {len(big_winners)} positions up 30%+ - taking profits on biggest")
+                    
+                    # Sort by gain
+                    big_winners.sort(key=lambda x: x[1], reverse=True)
+                    
+                    # Take profits on biggest winner
+                    token_to_sell = big_winners[0][0]
+                    position = self.positions[token_to_sell]
+                    
+                    if not position.get('correlation_sold'):
+                        sell_size = position['size'] * 0.5
+                        logging.warning(f"💰 CORRELATION SALE: Taking 50% of {token_to_sell[:8]} at {big_winners[0][1]:.1f}%")
+                        execute_optimized_sell(token_to_sell, sell_size)
+                        position['size'] *= 0.5
+                        position['correlation_sold'] = True
+                        
+        except Exception as e:
+            logging.debug(f"Error checking correlation: {e}")
+            
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
