@@ -18,6 +18,11 @@ import random
 import logging
 import requests
 import base64
+import discord
+import io
+import asyncio
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import traceback
 import subprocess
 from typing import Dict, List, Tuple, Optional, Any
@@ -31,6 +36,8 @@ from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from collections import deque
 from psycopg2.extras import RealDictCursor
+from discord.ext import commands
+from discord_alerts import DiscordBotAlerts
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
@@ -1194,6 +1201,29 @@ class AdaptiveAlphaTrader:
             'worst_trade': 0
         })
 
+        # Setup Discord bot
+        discord_token = os.getenv('DISCORD_TOKEN')
+        discord_channel = os.getenv('DISCORD_NEWS_CHANNEL_ID')
+        discord_role = os.getenv('DISCORD_ROLE_ID')
+        
+        if discord_token and discord_channel:
+            try:
+                self.discord = DiscordBotAlerts(discord_token, discord_channel, discord_role)
+                logging.info("✅ Discord bot alerts enabled")
+                
+                # Send startup message
+                self.discord.send_alert(
+                    "🚀 Bot Started",
+                    f"Wallet: `{str(wallet_instance.pubkey())[:8]}...`\nBalance: {wallet_instance.get_balance():.3f} SOL",
+                    color=0x00ff00
+                )
+            except Exception as e:
+                logging.error(f"Discord bot setup failed: {e}")
+                self.discord = None
+        else:
+            self.discord = None
+            logging.warning("❌ Discord bot not configured")
+        
         # Safety check for low balance
         try:
             current_balance = self.wallet.get_balance()
@@ -5584,6 +5614,22 @@ class AdaptiveAlphaTrader:
             return False, None
 
 
+    def get_stuck_positions(self):
+        """Get positions that failed to sell"""
+        stuck = {}
+        for token, pos in self.positions.items():
+            if pos.get('failed_sells', 0) > 0:
+                current_price = get_token_price(token)
+                if current_price:
+                    stuck_value = pos['size'] * (current_price - pos['entry_price'])
+                    stuck[token] = {
+                        'stuck_value': stuck_value,
+                        'failed_attempts': pos['failed_sells'],
+                        'price_change': ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                    }
+        return stuck
+    
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -5925,8 +5971,9 @@ def run_adaptive_ai_system():
     last_conversion_check = 0
     last_midnight_check = 0
     last_bundle_time = 0 
-    momentum_opportunities = []  # ADD THIS
+    momentum_opportunities = []
     last_momentum_check = 0
+    last_discord_update = 0  # ADD THIS
     iteration = 0
     session_count = 1
     
@@ -5952,30 +5999,6 @@ def run_adaptive_ai_system():
         try:
             current_time = time.time()
             iteration += 1
-            
-            # === OVERNIGHT TRADING OPTIMIZATION ===
-            # Check for session reset every iteration
-           # trader.reset_session_limits()
-           # trader.adjust_overnight_settings()
-            
-            # Show session info if changed
-           # if not hasattr(trader, 'last_logged_session') or trader.session_number != trader.last_logged_session:
-               # trader.last_logged_session = trader.session_number
-               # logging.info(f"📊 Trading Session #{trader.session_number}")
-               # logging.info(f"   Trade Limit: {trader.daily_trade_limit}")
-               # logging.info(f"   Current Hour: {datetime.now().hour}:00")
-                
-               # market_session = "US"
-               # if 23 <= datetime.now().hour or datetime.now().hour < 4:
-                   # market_session = "ASIA"
-               # elif 4 <= datetime.now().hour < 8:
-                   # market_session = "ASIA/EU"
-               # elif 8 <= datetime.now().hour < 13:
-                   # market_session = "EUROPE"
-               # elif 13 <= datetime.now().hour < 16:
-                   # market_session = "EU/US"
-                
-               # logging.info(f"   Market: {market_session} session")
             
             # EMERGENCY STOP CHECKS - CRITICAL!
             current_balance = trader.wallet.get_balance()  # Use trader's wallet instance
@@ -6280,6 +6303,33 @@ def run_adaptive_ai_system():
                             logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
                     except:
                         pass
+            
+            # 8. Send Discord update every hour
+            if current_time - last_discord_update > 3600:  # Every hour
+                last_discord_update = current_time
+                
+                if hasattr(trader, 'discord') and trader.discord:
+                    # Prepare stats for Discord
+                    stats = {
+                        'pnl_sol': trader.brain.daily_stats.get('pnl_sol', 0),
+                        'pnl_usd': trader.brain.daily_stats.get('pnl_sol', 0) * 240,
+                        'trades': trader.brain.daily_stats.get('trades', 0),
+                        'wins': trader.brain.daily_stats.get('wins', 0),
+                        'win_rate': (trader.brain.daily_stats.get('wins', 0) / trader.brain.daily_stats.get('trades', 1)) * 100 if trader.brain.daily_stats.get('trades', 0) > 0 else 0,
+                        'best_trade': trader.brain.daily_stats.get('best_trade', 0),
+                        'worst_trade': trader.brain.daily_stats.get('worst_trade', 0),
+                        'target_usd': float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
+                    }
+                    
+                    # Get stuck positions
+                    stuck_positions = trader.get_stuck_positions()
+                    
+                    # Send hourly report with charts
+                    try:
+                        trader.discord.send_hourly_report(stats, trader.positions, stuck_positions)
+                        logging.info("📊 Discord hourly report sent")
+                    except Exception as e:
+                        logging.error(f"Discord report error: {e}")
                 
             time.sleep(5)  # Check every 5 seconds
             
@@ -6295,6 +6345,10 @@ def run_adaptive_ai_system():
             trader.brain.show_insights()
             # Save trading history
             trader.brain.save_history()
+            
+            # Close Discord bot if active
+            if hasattr(trader, 'discord') and trader.discord:
+                trader.discord.close()
             
             # Close database
             if hasattr(trader, 'db_manager'):
@@ -13867,6 +13921,328 @@ def validate_token_before_trading(token_address: str) -> bool:
     except Exception as e:
         logging.error(f"❌ Error in token validation: {str(e)}")
         return False
+
+class DiscordBotAlerts:
+    def __init__(self, token, channel_id, role_id=None):
+        self.token = token
+        self.channel_id = int(channel_id)
+        self.role_id = role_id
+        self.bot = commands.Bot(command_prefix='!', intents=discord.Intents.default())
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        
+        # Track data for charts
+        self.pnl_history = []
+        self.trade_history = []
+        
+        # Start bot in background
+        self.bot_task = self.loop.create_task(self.start_bot())
+        
+    async def start_bot(self):
+        """Start the Discord bot"""
+        try:
+            await self.bot.start(self.token)
+        except Exception as e:
+            logging.error(f"Discord bot error: {e}")
+    
+    def create_pnl_chart(self):
+        """Create P&L chart"""
+        try:
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            if len(self.pnl_history) > 0:
+                times = [item['time'] for item in self.pnl_history]
+                pnl_sol = [item['pnl_sol'] for item in self.pnl_history]
+                pnl_usd = [item['pnl_usd'] for item in self.pnl_history]
+                
+                # Create twin axis for USD
+                ax2 = ax.twinx()
+                
+                # Plot SOL P&L
+                line1 = ax.plot(times, pnl_sol, 'b-', linewidth=2, label='P&L (SOL)')
+                ax.fill_between(times, 0, pnl_sol, alpha=0.3, color='blue')
+                
+                # Plot USD P&L
+                line2 = ax2.plot(times, pnl_usd, 'g--', linewidth=1, alpha=0.7, label='P&L (USD)')
+                
+                # Add zero line
+                ax.axhline(y=0, color='white', linestyle='-', alpha=0.3)
+                
+                # Format
+                ax.set_xlabel('Time', fontsize=12)
+                ax.set_ylabel('P&L (SOL)', fontsize=12, color='blue')
+                ax2.set_ylabel('P&L (USD)', fontsize=12, color='green')
+                ax.set_title('📊 Profit & Loss Over Time', fontsize=16, pad=20)
+                
+                # Format x-axis
+                ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                plt.xticks(rotation=45)
+                
+                # Legend
+                lines = line1 + line2
+                labels = [l.get_label() for l in lines]
+                ax.legend(lines, labels, loc='upper left')
+                
+                # Grid
+                ax.grid(True, alpha=0.2)
+                
+                # Current P&L annotation
+                current_pnl_sol = pnl_sol[-1] if pnl_sol else 0
+                current_pnl_usd = pnl_usd[-1] if pnl_usd else 0
+                
+                color = 'green' if current_pnl_sol >= 0 else 'red'
+                ax.text(0.02, 0.98, f'Current: {current_pnl_sol:+.4f} SOL (${current_pnl_usd:+.2f})',
+                       transform=ax.transAxes, fontsize=14, weight='bold',
+                       verticalalignment='top', color=color,
+                       bbox=dict(boxstyle='round', facecolor='black', alpha=0.8))
+            
+            plt.tight_layout()
+            
+            # Save to bytes
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#0C0E10')
+            buf.seek(0)
+            plt.close()
+            
+            return buf
+            
+        except Exception as e:
+            logging.error(f"Chart creation error: {e}")
+            return None
+    
+    def create_progress_chart(self, current_pnl, target_pnl, stuck_positions=None):
+        """Create progress to goal chart"""
+        try:
+            plt.style.use('dark_background')
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1]})
+            
+            # Progress Bar
+            progress = (current_pnl / target_pnl * 100) if target_pnl > 0 else 0
+            progress = min(progress, 100)  # Cap at 100%
+            
+            # Main progress bar
+            ax1.barh(0, progress, height=0.5, color='lime' if progress >= 100 else 'cyan', alpha=0.8)
+            ax1.barh(0, 100-progress, height=0.5, left=progress, color='gray', alpha=0.3)
+            
+            # Add milestone markers
+            milestones = [25, 50, 75, 100]
+            for milestone in milestones:
+                ax1.axvline(x=milestone, color='white', linestyle='--', alpha=0.3)
+                ax1.text(milestone, -0.7, f'{milestone}%', ha='center', fontsize=10)
+            
+            # Current progress text
+            ax1.text(progress/2, 0, f'{progress:.1f}%', ha='center', va='center', 
+                    fontsize=20, weight='bold', color='black')
+            
+            # Labels
+            ax1.text(50, 1.2, f'Progress to Daily Goal: ${target_pnl:.2f}', 
+                    ha='center', fontsize=16, weight='bold')
+            ax1.text(50, 0.8, f'Current P&L: ${current_pnl:.2f}', 
+                    ha='center', fontsize=14)
+            
+            # Format
+            ax1.set_xlim(0, 100)
+            ax1.set_ylim(-1, 1.5)
+            ax1.axis('off')
+            
+            # Stuck Positions Chart
+            if stuck_positions:
+                positions = list(stuck_positions.items())[:5]  # Top 5
+                tokens = [pos[0][:8] for pos in positions]
+                values = [pos[1]['stuck_value'] for pos in positions]
+                colors = ['red' if v < 0 else 'yellow' for v in values]
+                
+                bars = ax2.barh(tokens, values, color=colors, alpha=0.8)
+                
+                # Add value labels
+                for i, (token, value) in enumerate(zip(tokens, values)):
+                    ax2.text(value + 0.01 if value > 0 else value - 0.01, i, 
+                            f'{value:+.3f} SOL', 
+                            ha='left' if value > 0 else 'right', va='center')
+                
+                ax2.set_xlabel('Stuck Value (SOL)')
+                ax2.set_title('⚠️ Positions Requiring Attention', fontsize=12, pad=10)
+                ax2.grid(True, alpha=0.2)
+                
+                # Add zero line
+                ax2.axvline(x=0, color='white', linestyle='-', alpha=0.5)
+            else:
+                ax2.text(0.5, 0.5, 'No Stuck Positions! 🎉', 
+                        ha='center', va='center', transform=ax2.transAxes,
+                        fontsize=16, weight='bold', color='lime')
+                ax2.axis('off')
+            
+            plt.tight_layout()
+            
+            # Save to bytes
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#0C0E10')
+            buf.seek(0)
+            plt.close()
+            
+            return buf
+            
+        except Exception as e:
+            logging.error(f"Progress chart error: {e}")
+            return None
+    
+    def create_positions_chart(self, positions):
+        """Create current positions chart"""
+        try:
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(figsize=(10, 6))
+            
+            if positions:
+                # Sort by P&L
+                sorted_positions = sorted(positions.items(), 
+                                        key=lambda x: x[1]['pnl_percent'], 
+                                        reverse=True)[:10]  # Top 10
+                
+                tokens = [pos[0][:8] for pos in sorted_positions]
+                pnl_percents = [pos[1]['pnl_percent'] for pos in sorted_positions]
+                pnl_sols = [pos[1]['pnl_sol'] for pos in sorted_positions]
+                
+                # Color based on profit/loss
+                colors = ['lime' if pnl > 0 else 'red' for pnl in pnl_percents]
+                
+                # Create bars
+                bars = ax.barh(tokens, pnl_percents, color=colors, alpha=0.8)
+                
+                # Add value labels
+                for i, (pnl_pct, pnl_sol) in enumerate(zip(pnl_percents, pnl_sols)):
+                    label = f'{pnl_pct:+.1f}% ({pnl_sol:+.4f} SOL)'
+                    ax.text(pnl_pct + (2 if pnl_pct > 0 else -2), i, label,
+                           ha='left' if pnl_pct > 0 else 'right', va='center',
+                           fontsize=10, weight='bold')
+                
+                # Format
+                ax.set_xlabel('P&L %', fontsize=12)
+                ax.set_title('📈 Current Positions Performance', fontsize=16, pad=20)
+                ax.grid(True, alpha=0.2, axis='x')
+                
+                # Add zero line
+                ax.axvline(x=0, color='white', linestyle='-', linewidth=2)
+                
+                # Set x-axis limits
+                max_val = max(abs(min(pnl_percents)), max(pnl_percents)) * 1.3
+                ax.set_xlim(-max_val, max_val)
+                
+            else:
+                ax.text(0.5, 0.5, 'No Active Positions', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=20, weight='bold', color='gray')
+                ax.axis('off')
+            
+            plt.tight_layout()
+            
+            # Save to bytes
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='#0C0E10')
+            buf.seek(0)
+            plt.close()
+            
+            return buf
+            
+        except Exception as e:
+            logging.error(f"Positions chart error: {e}")
+            return None
+    
+    def send_chart_alert(self, title, description, chart_buffer, color=0x0099ff, ping_role=False):
+        """Send alert with chart"""
+        async def _send():
+            try:
+                channel = self.bot.get_channel(self.channel_id)
+                if not channel:
+                    return
+                
+                # Create embed
+                embed = discord.Embed(
+                    title=title,
+                    description=description,
+                    color=color,
+                    timestamp=datetime.utcnow()
+                )
+                
+                # Create file from buffer
+                file = discord.File(chart_buffer, filename='chart.png')
+                embed.set_image(url='attachment://chart.png')
+                
+                # Send
+                content = f"<@&{self.role_id}>" if ping_role and self.role_id else None
+                await channel.send(content=content, embed=embed, file=file)
+                
+            except Exception as e:
+                logging.error(f"Discord chart send error: {e}")
+        
+        asyncio.run_coroutine_threadsafe(_send(), self.bot.loop)
+    
+    def send_hourly_report(self, stats, positions, stuck_positions=None):
+        """Send comprehensive hourly report with charts"""
+        try:
+            # Update P&L history
+            self.pnl_history.append({
+                'time': datetime.now(),
+                'pnl_sol': stats.get('pnl_sol', 0),
+                'pnl_usd': stats.get('pnl_sol', 0) * 240
+            })
+            
+            # Keep only last 24 hours
+            cutoff = datetime.now() - timedelta(hours=24)
+            self.pnl_history = [h for h in self.pnl_history if h['time'] > cutoff]
+            
+            # Create P&L chart
+            pnl_chart = self.create_pnl_chart()
+            if pnl_chart:
+                self.send_chart_alert(
+                    "📊 Hourly P&L Report",
+                    f"**Session Stats:**\n"
+                    f"• Trades: {stats.get('trades', 0)}\n"
+                    f"• Win Rate: {stats.get('win_rate', 0):.1f}%\n"
+                    f"• Best Trade: {stats.get('best_trade', 0):+.4f} SOL\n"
+                    f"• Worst Trade: {stats.get('worst_trade', 0):+.4f} SOL",
+                    pnl_chart,
+                    color=0x00ff00 if stats.get('pnl_sol', 0) > 0 else 0xff0000
+                )
+            
+            # Create progress chart
+            progress_chart = self.create_progress_chart(
+                stats.get('pnl_usd', 0),
+                stats.get('target_usd', 50),
+                stuck_positions
+            )
+            if progress_chart:
+                self.send_chart_alert(
+                    "🎯 Progress to Daily Goal",
+                    f"**Target:** ${stats.get('target_usd', 50):.2f}\n"
+                    f"**Current:** ${stats.get('pnl_usd', 0):.2f}",
+                    progress_chart
+                )
+            
+            # Create positions chart
+            if positions:
+                positions_data = {}
+                for token, pos in positions.items():
+                    current_price = get_token_price(token)
+                    if current_price:
+                        pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                        pnl_sol = pos['size'] * (current_price - pos['entry_price'])
+                        positions_data[token] = {
+                            'pnl_percent': pnl_pct,
+                            'pnl_sol': pnl_sol
+                        }
+                
+                positions_chart = self.create_positions_chart(positions_data)
+                if positions_chart:
+                    self.send_chart_alert(
+                        "💼 Active Positions",
+                        f"**Total Positions:** {len(positions)}\n"
+                        f"**Position Value:** {sum(p['size'] for p in positions.values()):.3f} SOL",
+                        positions_chart
+                    )
+                    
+        except Exception as e:
+            logging.error(f"Hourly report error: {e}")
 
 def get_newest_tokens_quicknode():
     """Get newest tokens using QuickNode's pump.fun API integration."""
