@@ -95,7 +95,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -5461,6 +5461,35 @@ class JitoBundler:
             logging.error(f"Bundle error: {e}")
             return None
 
+def check_apis_working():
+    """Check if our APIs are actually working"""
+    logging.info("🔍 Checking API connections...")
+    
+    # Check Birdeye
+    birdeye_key = os.getenv('BIRDEYE_API_KEY')
+    if birdeye_key:
+        logging.info(f"✅ Birdeye API Key found: {birdeye_key[:10]}...")
+        
+        # Test with a known token (SOL)
+        test_token = "So11111111111111111111111111111111111111112"
+        test_liq = get_token_liquidity(test_token)
+        logging.info(f"   Test liquidity for SOL: ${test_liq:,.0f}")
+        
+        if test_liq == 3000:
+            logging.error("❌ Birdeye returning default values - API not working!")
+        elif test_liq > 1000000:
+            logging.info("✅ Birdeye API working correctly!")
+        else:
+            logging.warning(f"⚠️ Unexpected liquidity value: ${test_liq}")
+    else:
+        logging.error("❌ BIRDEYE_API_KEY not found in environment!")
+    
+    # Check Helius
+    helius_key = os.getenv('HELIUS_API_KEY')
+    if helius_key:
+        logging.info(f"✅ Helius API Key found: {helius_key[:10]}...")
+    else:
+        logging.error("❌ HELIUS_API_KEY not found!")
 
 
 def run_adaptive_ai_system():
@@ -5483,6 +5512,8 @@ def run_adaptive_ai_system():
     # Initialize components
     trader = AdaptiveAlphaTrader(wallet)
     trader.load_wallet_status()
+    
+    check_apis_working()
     
     ml_working = trader.verify_ml_status()
     if not ml_working:
@@ -9888,6 +9919,8 @@ def get_token_liquidity(token_address):
         # Method 1: Use Birdeye API if available
         birdeye_api_key = os.getenv('BIRDEYE_API_KEY')
         if birdeye_api_key:
+            logging.debug(f"Using Birdeye API for {token_address[:8]}")
+            
             birdeye_url = f"https://public-api.birdeye.so/defi/token/overview?address={token_address}"
             headers = {
                 'accept': 'application/json',
@@ -9896,6 +9929,8 @@ def get_token_liquidity(token_address):
             
             try:
                 response = requests.get(birdeye_url, headers=headers, timeout=5)
+                logging.debug(f"Birdeye response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
                     if data and isinstance(data, dict) and 'data' in data:
@@ -9905,13 +9940,23 @@ def get_token_liquidity(token_address):
                             if liquidity and liquidity > 0:
                                 logging.debug(f"✅ Birdeye liquidity for {token_address[:8]}: ${liquidity:,.0f}")
                                 return float(liquidity)
+                            else:
+                                logging.debug(f"Birdeye returned no liquidity for {token_address[:8]}")
+                elif response.status_code == 404:
+                    logging.debug(f"Token {token_address[:8]} not found on Birdeye")
+                else:
+                    logging.debug(f"Birdeye API error: {response.status_code} - {response.text[:100]}")
             except Exception as e:
                 logging.debug(f"Birdeye API error: {e}")
+        else:
+            logging.debug("No Birdeye API key - trying DexScreener")
         
         # Method 2: Try DexScreener as backup (free, no API key needed)
         try:
+            logging.debug(f"Trying DexScreener for {token_address[:8]}")
             dexscreener_url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
             response = requests.get(dexscreener_url, timeout=5)
+            
             if response.status_code == 200:
                 data = response.json()
                 if data and isinstance(data, dict) and 'pairs' in data:
@@ -9929,10 +9974,67 @@ def get_token_liquidity(token_address):
                         if max_liquidity > 0:
                             logging.debug(f"✅ DexScreener liquidity for {token_address[:8]}: ${max_liquidity:,.0f}")
                             return max_liquidity
+                        else:
+                            logging.debug(f"DexScreener found no liquidity for {token_address[:8]}")
+                    else:
+                        logging.debug(f"DexScreener found no pairs for {token_address[:8]}")
+                else:
+                    logging.debug(f"DexScreener invalid response format")
+            else:
+                logging.debug(f"DexScreener API error: {response.status_code}")
         except Exception as e:
             logging.debug(f"DexScreener API error: {e}")
         
+        # Method 3: Try Helius as last resort
+        try:
+            logging.debug(f"Trying Helius for {token_address[:8]}")
+            url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+            
+            # Get token supply first
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenSupply",
+                "params": [token_address]
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result']:
+                    total_supply = float(data['result']['value']['amount']) / (10 ** data['result']['value']['decimals'])
+                    
+                    # Get largest accounts
+                    payload = {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "getTokenLargestAccounts",
+                        "params": [token_address]
+                    }
+                    
+                    response = requests.post(url, json=payload, timeout=5)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'result' in data and 'value' in data['result']:
+                            # Look for pool-like holdings (30-60% of supply)
+                            for account in data['result']['value'][:5]:
+                                amount = float(account.get('amount', 0))
+                                decimals = account.get('decimals', 9)
+                                tokens_held = amount / (10 ** decimals)
+                                percentage = (tokens_held / total_supply) * 100 if total_supply > 0 else 0
+                                
+                                if 20 <= percentage <= 80:  # Likely a pool
+                                    # Get token price
+                                    token_price = get_token_price(token_address)
+                                    if token_price and token_price > 0:
+                                        estimated_liquidity = tokens_held * token_price * 2
+                                        logging.debug(f"✅ Helius estimated liquidity: ${estimated_liquidity:,.0f}")
+                                        return estimated_liquidity
+        except Exception as e:
+            logging.debug(f"Helius error: {e}")
+        
         # Return default estimate
+        logging.debug(f"All methods failed for {token_address[:8]} - returning default 3000")
         return 3000
         
     except Exception as e:
