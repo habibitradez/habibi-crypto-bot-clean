@@ -1207,8 +1207,7 @@ class AdaptiveAlphaTrader:
 
         if discord_token and discord_channel:
             try:
-            self.discord = DiscordBotAlerts(discord_token, discord_channel, discord_role)
-            logging.info("✅ Discord bot alerts enabled")
+                self.discord = DiscordBotAlerts(discord_token, discord_channel, discord_role)
         
             # FIXED STARTUP MESSAGE:
             try:
