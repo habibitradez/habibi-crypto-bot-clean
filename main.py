@@ -34,7 +34,7 @@ from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.preprocessing import StandardScaler
 from collections import deque
 from psycopg2.extras import RealDictCursor
-from discord_alerts import DiscordWebhookAlerts
+from discord_alerts import LiveDiscordDashboard
 
 # Solana imports using solders instead of solana
 from solders.keypair import Keypair
@@ -1203,7 +1203,7 @@ class AdaptiveAlphaTrader:
         
         if discord_webhook:
             try:
-                self.discord = DiscordWebhookAlerts(discord_webhook)
+                self.discord = LiveDiscordDashboard(discord_webhook, discord_channel)
                 logging.info("✅ Discord webhook alerts enabled")
                 
                 # Send test alert
