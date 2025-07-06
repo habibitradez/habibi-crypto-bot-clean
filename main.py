@@ -1208,41 +1208,42 @@ class AdaptiveAlphaTrader:
         if discord_token and discord_channel:
             try:
                 self.discord = DiscordBotAlerts(discord_token, discord_channel, discord_role)
-        
-            # FIXED STARTUP MESSAGE:
-            try:
-                # Try different wallet methods
-                if hasattr(wallet_instance, 'pubkey'):
-                    wallet_addr = str(wallet_instance.pubkey())[:8]
-                elif hasattr(wallet_instance, 'public_key'):
-                    wallet_addr = str(wallet_instance.public_key)[:8]
-                elif hasattr(wallet_instance, 'get_public_key'):
-                    wallet_addr = str(wallet_instance.get_public_key())[:8]
-                else:
-                    wallet_addr = "Unknown"
-            
-                balance = wallet_instance.get_balance() if hasattr(wallet_instance, 'get_balance') else 0
-            
-                self.discord.send_alert(
-                    "🚀 Bot Started",
-                    f"Wallet: `{wallet_addr}...`\nBalance: {balance:.3f} SOL",
-                    color=0x00ff00
-                )
+                logging.info("✅ Discord bot alerts enabled")
+                
+                # FIXED STARTUP MESSAGE:
+                try:
+                    # Try different wallet methods
+                    if hasattr(wallet_instance, 'pubkey'):
+                        wallet_addr = str(wallet_instance.pubkey())[:8]
+                    elif hasattr(wallet_instance, 'public_key'):
+                        wallet_addr = str(wallet_instance.public_key)[:8]
+                    elif hasattr(wallet_instance, 'get_public_key'):
+                        wallet_addr = str(wallet_instance.get_public_key())[:8]
+                    else:
+                        wallet_addr = "Unknown"
+                    
+                    balance = wallet_instance.get_balance() if hasattr(wallet_instance, 'get_balance') else 0
+                    
+                    self.discord.send_alert(
+                        "🚀 Bot Started",
+                        f"Wallet: `{wallet_addr}...`\nBalance: {balance:.3f} SOL",
+                        color=0x00ff00
+                    )
+                except Exception as e:
+                    logging.error(f"Discord startup message failed: {e}")
+                    # Send simple message without wallet info
+                    self.discord.send_alert(
+                        "🚀 Bot Started",
+                        "Trading bot is now online and ready!",
+                        color=0x00ff00
+                    )
+                    
             except Exception as e:
-                logging.error(f"Discord startup message failed: {e}")
-                # Send simple message without wallet info
-                self.discord.send_alert(
-                    "🚀 Bot Started",
-                    "Trading bot is now online and ready!",
-                    color=0x00ff00
-                )
-            
-        except Exception as e:
-            logging.error(f"Discord bot setup failed: {e}")
+                logging.error(f"Discord bot setup failed: {e}")
+                self.discord = None
+        else:
             self.discord = None
-    else:
-        self.discord = None
-        logging.warning("❌ Discord bot not configured")
+            logging.warning("❌ Discord bot not configured")
         
         # Safety check for low balance
         try:
