@@ -1197,14 +1197,14 @@ class AdaptiveAlphaTrader:
             'best_trade': 0,
             'worst_trade': 0
         })
-
-        # Setup Discord - Use webhook version
+        
+        # Setup Discord - Live Dashboard (webhook only)
         discord_webhook = os.getenv('DISCORD_WEBHOOK_URL')
         
         if discord_webhook:
             try:
-                self.discord = LiveDiscordDashboard(discord_webhook, discord_channel)
-                logging.info("✅ Discord webhook alerts enabled")
+                self.discord = LiveDiscordDashboard(discord_webhook)
+                logging.info("✅ Discord live dashboard enabled")
                 
                 # Send test alert
                 self.discord.send_alert(
