@@ -6339,12 +6339,25 @@ def run_adaptive_ai_system():
                         'target_usd': float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
                     }
                     
-                    # Get stuck positions
-                    stuck_positions = trader.get_stuck_positions()
-                    
                     # Send hourly report with charts
                     try:
-                        trader.discord.send_hourly_report(stats, trader.positions, stuck_positions)
+                        # Prepare positions data for Discord charts
+                        positions_data = {}
+                        if trader.positions:
+                            for token, pos in trader.positions.items():
+                                try:
+                                    current_price = get_token_price(token)
+                                    if current_price:
+                                        pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                                        pnl_sol = pos['size'] * (current_price - pos['entry_price'])
+                                        positions_data[token] = {
+                                            'pnl_percent': pnl_pct,
+                                            'pnl_sol': pnl_sol
+                                        }
+                               except:
+                                    pass
+
+                        trader.discord.send_hourly_report(stats, positions_data)
                         logging.info("📊 Discord hourly report sent")
                     except Exception as e:
                         logging.error(f"Discord report error: {e}")
