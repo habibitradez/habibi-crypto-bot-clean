@@ -1206,12 +1206,12 @@ class AdaptiveAlphaTrader:
                 self.discord = LiveDiscordDashboard(discord_webhook)
                 logging.info("✅ Discord live dashboard enabled")
                 
-                # Send test alert
-                self.discord.send_alert(
-                    "🚀 Trading Bot Online",
-                    f"Wallet: {self.wallet.get_balance():.3f} SOL\nReady for critical alerts!",
-                    color=0x00ff00
-                )
+               # # Send test alert
+               # self.discord.send_alert(
+                   # "🚀 Trading Bot Online",
+                   # f"Wallet: {self.wallet.get_balance():.3f} SOL\nReady for critical alerts!",
+                   # color=0x00ff00
+               # )
                 
             except Exception as e:
                 logging.error(f"Discord setup failed: {e}")
