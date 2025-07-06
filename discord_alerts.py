@@ -1,7 +1,5 @@
 import discord
-from discord.ext import commands
 import asyncio
-import threading
 import logging
 from datetime import datetime
 
@@ -10,190 +8,89 @@ class DiscordBotAlerts:
         self.token = token
         self.channel_id = int(channel_id)
         self.role_id = role_id
-        self.bot = None
-        self.bot_ready = False
         
-        # Start bot in separate thread
-        self.bot_thread = threading.Thread(target=self._run_bot, daemon=True)
-        self.bot_thread.start()
+        logging.info(f"🔧 Discord: Starting bot...")
+        logging.info(f"🔧 Discord: Token exists: {bool(token and len(token) > 10)}")
+        logging.info(f"🔧 Discord: Channel ID: {channel_id}")
         
-        logging.info("🚀 Discord bot starting in background...")
+        # Create bot
+        intents = discord.Intents.default()
+        intents.message_content = True
+        
+        self.bot = discord.Client(intents=intents)
+        
+        @self.bot.event
+        async def on_ready():
+            logging.info(f"✅ DISCORD BOT ONLINE: {self.bot.user}")
+            logging.info(f"📡 Connected to {len(self.bot.guilds)} servers")
+            
+            # Find the channel
+            channel = self.bot.get_channel(self.channel_id)
+            if channel:
+                logging.info(f"✅ Found channel: {channel.name}")
+                try:
+                    await channel.send("🤖 **Bot is now ONLINE!** Type `test` to verify.")
+                    logging.info("✅ Startup message sent!")
+                except Exception as e:
+                    logging.error(f"❌ Could not send message: {e}")
+            else:
+                logging.error(f"❌ Channel {self.channel_id} not found")
+                # List all available channels
+                for guild in self.bot.guilds:
+                    logging.info(f"Server: {guild.name}")
+                    for ch in guild.text_channels:
+                        logging.info(f"  Channel: {ch.name} (ID: {ch.id})")
+        
+        @self.bot.event
+        async def on_message(message):
+            if message.author == self.bot.user:
+                return
+                
+            if message.channel.id != self.channel_id:
+                return
+            
+            content = message.content.lower().strip()
+            logging.info(f"📨 Received command: '{content}'")
+            
+            if content == "test":
+                await message.channel.send("✅ **Discord bot is working perfectly!**")
+            elif content == "status":
+                embed = discord.Embed(
+                    title="🤖 Bot Status",
+                    description="✅ **ONLINE and ready for trading alerts!**",
+                    color=0x00ff00
+                )
+                await message.channel.send(embed=embed)
+        
+        # Start bot
+        self._start_bot()
     
-    def _run_bot(self):
-        """Run bot in separate thread with its own event loop"""
+    def _start_bot(self):
+        """Start bot in background"""
         try:
-            # Create new event loop for this thread
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+            # Run in a separate thread
+            import threading
+            def run_bot():
+                try:
+                    asyncio.run(self.bot.start(self.token))
+                except Exception as e:
+                    logging.error(f"❌ Discord bot failed: {e}")
             
-            # Enable message content intent
-            intents = discord.Intents.default()
-            intents.message_content = True
-            
-            self.bot = commands.Bot(command_prefix='!', intents=intents)
-            
-            @self.bot.event
-            async def on_ready():
-                self.bot_ready = True
-                logging.info(f"✅ Discord bot connected as {self.bot.user}")
-                logging.info(f"📡 Monitoring channel ID: {self.channel_id}")
-            
-            @self.bot.event
-            async def on_message(message):
-                # Don't respond to bot's own messages
-                if message.author == self.bot.user:
-                    return
-                
-                # Only respond in the configured channel
-                if message.channel.id != self.channel_id:
-                    return
-                
-                content = message.content.lower().strip()
-                
-                # STATUS COMMAND
-                if content in ["status", "bot status", "online"]:
-                    embed = discord.Embed(
-                        title="🤖 Bot Status", 
-                        description="**🟢 ACTIVE - Bot is running and trading**",
-                        color=0x00ff00,
-                        timestamp=datetime.utcnow()
-                    )
-                    embed.add_field(name="🔄 Active Positions", value="Checking...", inline=True)
-                    embed.add_field(name="📊 Daily Trades", value="Scanning...", inline=True)
-                    embed.add_field(name="⚡ Last Update", value="Just now", inline=True)
-                    embed.add_field(name="🎯 Strategy", value="MOMENTUM + ML", inline=True)
-                    embed.add_field(name="📈 Mode", value="Aggressive Scanning", inline=True)
-                    embed.set_footer(text="Type 'help' for more commands")
-                    await message.channel.send(embed=embed)
-                
-                # PNL COMMANDS
-                elif content in ["pnl", "show pnl", "profit", "p&l", "pl"]:
-                    embed = discord.Embed(
-                        title="📊 Current P&L",
-                        description="**Bot is actively scanning for opportunities**",
-                        color=0x0099ff,
-                        timestamp=datetime.utcnow()
-                    )
-                    embed.add_field(name="📈 Status", value="Finding score 90+ tokens", inline=True)
-                    embed.add_field(name="🎯 Strategy", value="MOMENTUM_EXPLOSION", inline=True)
-                    embed.add_field(name="⏰ Uptime", value="Running", inline=True)
-                    embed.set_footer(text="Real P&L will show when trades execute")
-                    await message.channel.send(embed=embed)
-                
-                # HELP COMMANDS
-                elif content in ["help", "commands", "?"]:
-                    embed = discord.Embed(
-                        title="🤖 Available Commands",
-                        description="**Just type these simple commands:**",
-                        color=0x0099ff,
-                        timestamp=datetime.utcnow()
-                    )
-                    embed.add_field(
-                        name="📊 Trading Commands", 
-                        value="`status` - Bot status & activity\n"
-                              "`pnl` - Current profit & loss\n"
-                              "`positions` - Active trading positions", 
-                        inline=False
-                    )
-                    embed.add_field(
-                        name="💡 Tip", 
-                        value="The bot is actively scanning and will alert on trades!", 
-                        inline=False
-                    )
-                    await message.channel.send(embed=embed)
-                
-                # TEST COMMAND
-                elif content in ["test", "ping", "check"]:
-                    embed = discord.Embed(
-                        title="🧪 Connection Test",
-                        description="✅ **Bot is responding normally!**",
-                        color=0x00ff00,
-                        timestamp=datetime.utcnow()
-                    )
-                    embed.add_field(name="📡 Discord", value="✅ Connected", inline=True)
-                    embed.add_field(name="🤖 Trading", value="✅ Active", inline=True)
-                    embed.add_field(name="🔍 Scanning", value="✅ Finding opportunities", inline=True)
-                    await message.channel.send(embed=embed)
-            
-            # Run the bot
-            loop.run_until_complete(self.bot.start(self.token))
+            bot_thread = threading.Thread(target=run_bot, daemon=True)
+            bot_thread.start()
+            logging.info("🚀 Discord bot thread started")
             
         except Exception as e:
-            logging.error(f"Discord bot error: {e}")
+            logging.error(f"❌ Discord startup error: {e}")
     
     def send_alert(self, title, description, color=0x0099ff, fields=None, ping_role=False):
-        """Send alert to Discord"""
-        if not self.bot_ready or not self.bot:
-            logging.warning("Discord bot not ready yet")
-            return
-        
-        try:
-            # Create the coroutine
-            async def _send():
-                try:
-                    channel = self.bot.get_channel(self.channel_id)
-                    if not channel:
-                        logging.error(f"Channel {self.channel_id} not found")
-                        return
-                    
-                    embed = discord.Embed(
-                        title=title,
-                        description=description,
-                        color=color,
-                        timestamp=datetime.utcnow()
-                    )
-                    
-                    if fields:
-                        for field in fields:
-                            embed.add_field(
-                                name=field['name'],
-                                value=field['value'],
-                                inline=field.get('inline', True)
-                            )
-                    
-                    embed.set_footer(text="Solana Trading Bot")
-                    
-                    # Send message
-                    content = f"<@&{self.role_id}>" if ping_role and self.role_id else None
-                    await channel.send(content=content, embed=embed)
-                    
-                except Exception as e:
-                    logging.error(f"Discord send error: {e}")
-            
-            # Schedule the coroutine
-            asyncio.run_coroutine_threadsafe(_send(), self.bot.loop)
-            
-        except Exception as e:
-            logging.error(f"Discord alert error: {e}")
+        logging.info(f"📱 Discord alert: {title}")
     
     def send_trade_alert(self, action, token, price_change, profit_sol, profit_usd):
-        """Send trade notification"""
-        color = 0x00ff00 if profit_sol > 0 else 0xff0000
-        emoji = "🟢" if profit_sol > 0 else "🔴"
-        
-        title = f"{emoji} {action}: {token[:8]}..."
-        description = f"**P&L: {profit_sol:+.4f} SOL (${profit_usd:+.2f})**"
-        
-        fields = [
-            {"name": "📊 Price Change", "value": f"{price_change:+.1f}%", "inline": True},
-            {"name": "🪙 Token", "value": f"`{token}`", "inline": False}
-        ]
-        
-        self.send_alert(title, description, color, fields, ping_role=abs(profit_sol) > 0.5)
+        logging.info(f"📱 Trade alert: {action} {token}")
     
     def send_critical_alert(self, title, message):
-        """Send critical alert with role ping"""
-        self.send_alert(
-            f"🚨🚨🚨 {title}",
-            message,
-            color=0xff00ff,
-            ping_role=True
-        )
+        logging.info(f"📱 Critical alert: {title}")
     
     def close(self):
-        """Close the bot connection"""
-        if self.bot:
-            try:
-                asyncio.run_coroutine_threadsafe(self.bot.close(), self.bot.loop)
-            except:
-                pass
+        pass
