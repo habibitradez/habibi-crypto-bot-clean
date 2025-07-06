@@ -5921,8 +5921,8 @@ def run_adaptive_ai_system():
     check_apis_working()
 
     if hasattr(trader, 'discord') and trader.discord:
-    logging.info("🧪 Testing Discord integration...")
-    trader.test_discord()
+        logging.info("🧪 Testing Discord integration...")
+        trader.test_discord()
     
     ml_working = trader.verify_ml_status()
     if not ml_working:
