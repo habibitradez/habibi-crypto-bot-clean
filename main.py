@@ -99,7 +99,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -4742,9 +4742,9 @@ class AdaptiveAlphaTrader:
                 return
         position['last_price'] = current_price
         
-        # WAIT PERIOD - Shorter if pump detected
+        # WAIT PERIOD - FIXED: No minimum if profitable (Option 3)
         min_hold_time = 60 if position.get('pump_detected') else 120
-        if hold_time < min_hold_time:
+        if hold_time < min_hold_time and price_change <= 5:  # Only wait if not profitable
             return
         
         # VOLUME DEATH CHECK
