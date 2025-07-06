@@ -6321,6 +6321,14 @@ def run_adaptive_ai_system():
                             logging.info(f"   🤖 ML training data: {total_trades}/100 trades")
                     except:
                         pass
+                
+                # ADD LIVE DISCORD DASHBOARD UPDATE - Every 5 minutes
+                if hasattr(trader, 'discord') and trader.discord:
+                    try:
+                        trader.discord.send_live_dashboard_update(trader)
+                        logging.info("📱 Live Discord dashboard updated")
+                    except Exception as e:
+                        logging.error(f"Live dashboard error: {e}")
             
             # 8. Send Discord update every hour
             if current_time - last_discord_update > 3600:  # Every hour
@@ -6358,8 +6366,10 @@ def run_adaptive_ai_system():
                                 except:
                                     pass
         
-                        trader.discord.send_hourly_report(stats_discord, positions_data)
-                        logging.info("📊 Discord hourly report sent")
+                        # Use send_hourly_report if it exists, otherwise skip
+                        if hasattr(trader.discord, 'send_hourly_report'):
+                            trader.discord.send_hourly_report(stats_discord, positions_data)
+                            logging.info("📊 Discord hourly report sent")
                     except Exception as e:
                         logging.error(f"Discord report error: {e}")
                 
