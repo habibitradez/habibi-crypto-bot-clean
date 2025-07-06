@@ -293,14 +293,14 @@ class DiscordBotAlerts:
                 if not channel:
                     logging.error(f"Channel {self.channel_id} not found")
                     return
-                
+            
                 embed = discord.Embed(
                     title=title,
                     description=description,
                     color=color,
                     timestamp=datetime.utcnow()
                 )
-                
+            
                 if fields:
                     for field in fields:
                         embed.add_field(
@@ -308,18 +308,24 @@ class DiscordBotAlerts:
                             value=field['value'],
                             inline=field.get('inline', True)
                         )
-                
+            
                 embed.set_footer(text="Solana Trading Bot")
-                
+            
                 # Send message with optional role ping
                 content = f"<@&{self.role_id}>" if ping_role and self.role_id else None
                 await channel.send(content=content, embed=embed)
-                
+            
             except Exception as e:
                 logging.error(f"Discord send error: {e}")
-        
-        # Run in the bot's event loop
-        asyncio.run_coroutine_threadsafe(_send(), self.bot.loop)
+    
+        # FIXED: Better async handling
+        try:
+            if self.bot.loop and not self.bot.loop.is_closed():
+                asyncio.run_coroutine_threadsafe(_send(), self.bot.loop)
+            else:
+                logging.warning("Discord bot loop not ready")
+        except Exception as e:
+            logging.error(f"Discord alert scheduling error: {e}")
     
     def send_trade_alert(self, action, token, price_change, profit_sol, profit_usd):
         """Send trade notification"""
