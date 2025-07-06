@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import numpy as np
+import time
 
 class LiveDiscordDashboard:
     def __init__(self, webhook_url, channel_id=None):
