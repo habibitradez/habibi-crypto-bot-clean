@@ -209,45 +209,51 @@ class LiveDiscordDashboard:
             # Send text update if chart fails
             self.send_text_dashboard_update(balance, session_pnl, session_pnl_usd, trades, win_rate)
     
-    def send_live_dashboard_with_chart(self, img_buffer, balance, session_pnl, session_pnl_usd, trades, win_rate, active_pos, unrealized_pnl):
-        """Send live dashboard with chart image"""
+    def send_live_dashboard_update(self, trader):
+        """Send live dashboard update every 5 minutes with simple chart"""
+        current_time = time.time()
+    
+        # Update every 5 minutes (300 seconds) 
+        if current_time - self.last_live_update < 300:
+            return
+    
+        self.last_live_update = current_time
+    
         try:
-            # Convert image to base64
-            img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
-            
-            # Create summary description
-            pnl_emoji = "🟢" if session_pnl > 0 else "🔴" if session_pnl < 0 else "⚪"
-            
-            description = (
-                f"🔴 **LIVE TRADING DASHBOARD** 🔴\n\n"
-                f"💰 **Balance:** {balance:.3f} SOL\n"
-                f"{pnl_emoji} **Session P&L:** {session_pnl:+.4f} SOL (${session_pnl_usd:+.2f})\n"
-                f"📊 **Trades:** {trades} | **Win Rate:** {win_rate:.1f}%\n"
-                f"💼 **Active Positions:** {active_pos}\n"
-                f"📈 **Unrealized P&L:** {unrealized_pnl:+.4f} SOL\n\n"
-                f"⏰ **Auto-updates every 2 minutes**"
+            # Get real-time data from trader
+            current_balance = trader.wallet.get_balance()
+            session_pnl = trader.brain.daily_stats.get('pnl_sol', 0)
+            session_pnl_usd = session_pnl * 240
+            trades = trader.brain.daily_stats.get('trades', 0)
+            wins = trader.brain.daily_stats.get('wins', 0)
+            win_rate = (wins / trades) * 100 if trades > 0 else 0
+        
+            # Get positions
+            total_unrealized_pnl = 0
+            if trader.positions:
+                for token, pos in trader.positions.items():
+                    try:
+                        current_price = get_token_price(token)
+                        if current_price and pos.get('entry_price'):
+                            pnl_sol = pos.get('size', 0) * (current_price - pos['entry_price'])
+                            total_unrealized_pnl += pnl_sol
+                    except:
+                        pass
+        
+            # Create simple chart
+            img_buffer = self.create_simple_dashboard_chart(
+                current_balance, session_pnl, session_pnl_usd, 
+                trades, win_rate, trader.positions, total_unrealized_pnl
             )
-            
-            # Create embed with image
-            embed = {
-                "title": "📊 Live Trading Dashboard",
-                "description": description,
-                "color": 0x00ff00 if session_pnl > 0 else 0xff0000 if session_pnl < 0 else 0x0099ff,
-                "timestamp": datetime.utcnow().isoformat(),
-                "image": {"url": f"data:image/png;base64,{img_base64}"},
-                "footer": {"text": "Live Dashboard • Updates every 2 minutes"}
-            }
-            
-            data = {"embeds": [embed]}
-            
-            response = requests.post(self.webhook_url, json=data, timeout=15)
-            if response.status_code == 204:
-                logging.info("✅ Live dashboard sent to Discord")
+        
+            if img_buffer:
+                self.send_simple_dashboard_with_chart(img_buffer, current_balance, session_pnl, session_pnl_usd, trades, win_rate)
             else:
-                logging.error(f"Live dashboard failed: {response.status_code}")
-                
+                # Fallback to text
+                self.send_text_dashboard_update(current_balance, session_pnl, session_pnl_usd, trades, win_rate)
+            
         except Exception as e:
-            logging.error(f"Live dashboard error: {e}")
+            logging.error(f"Live dashboard update error: {e}")
     
     def send_text_dashboard_update(self, balance, session_pnl, session_pnl_usd, trades, win_rate):
         """Send text-only dashboard if chart fails"""
