@@ -4978,214 +4978,266 @@ class AdaptiveAlphaTrader:
         return final_position
 
     def is_honeypot(self, token_address):
-        """Balanced honeypot detection - protect but don't overblock"""
+        """COMPREHENSIVE honeypot detection with STRICT rules"""
         try:
-            logging.info(f"🔍 Checking honeypot status for {token_address[:8]}...")
+            logging.info(f"🔍 COMPREHENSIVE HONEYPOT CHECK: {token_address[:8]}")
             
-            # Get token data
-            holders = get_holder_count(token_address)
-            liquidity = get_token_liquidity(token_address)
-            age = get_token_age_minutes(token_address)
+            # Run all checks
+            checks = {
+                'sell_routes': self.verify_sell_route_exists(token_address),
+                'sell_simulation': self.simulate_sell_transaction(token_address),
+                'emergency_check': self.emergency_honeypot_check(token_address),
+                'pattern_check': not self.check_honeypot_patterns(token_address)  # NOT honeypot patterns
+            }
             
-            # RED FLAGS for honeypots
-            honeypot_score = 0
-            reasons = []
+            failed = [k for k, v in checks.items() if not v]
+            passed = len([k for k, v in checks.items() if v])
             
-            # 1. CRITICAL - Check if we can sell (MOST IMPORTANT)
-            if not self.verify_sell_route_exists(token_address):
-                honeypot_score += 100
-                reasons.append("NO SELL ROUTE EXISTS")
-                return True, honeypot_score, reasons
+            # STRICT: Must pass ALL checks
+            if len(failed) > 0:
+                logging.error(f"🚨 HONEYPOT DETECTED: {token_address[:8]} failed: {', '.join(failed)}")
+                logging.error(f"📊 Score: {passed}/4 checks passed")
+                return True, 100, failed
             
-            # 2. MINIMUM LIQUIDITY CHECK - but don't reject if we can't get data
-            if liquidity is not None and liquidity < 1000:  # Lowered back to 1000
-                honeypot_score += 30  # Not instant fail
-                reasons.append(f"Low liquidity: ${liquidity}")
-            
-            # 3. CHECK BUYS VS SELLS - ONLY FOR OLDER TOKENS
-            if age and age > 30:  # Only check if token is 30+ minutes old
-                recent_txs = get_recent_trade_history(token_address, hours=1)
-                if len(recent_txs) > 10:  # Need enough data
-                    # This is where you'd check for sells
-                    # For now, skip this check for new tokens
-                    pass
-            
-            # 4. LIQUIDITY PER HOLDER - Make it reasonable
-            if liquidity and holders and holders > 0:
-                liq_per_holder = liquidity / holders
-                if liq_per_holder < 10:  # Lowered from 20
-                    honeypot_score += 20  # Small penalty
-                    reasons.append(f"Low liq/holder: ${liq_per_holder:.1f}")
-            
-            # 5. AGE VS HOLDERS - Only extreme cases
-            if age and holders:
-                # Only flag EXTREME anomalies
-                if age < 5 and holders > 500:  # VERY extreme
-                    honeypot_score += 50
-                    reasons.append(f"Bot buyers: {holders} holders in {age}m")
-                
-                if age > 120 and holders < 20:  # 2 hours old, no interest
-                    honeypot_score += 50
-                    reasons.append(f"Dead token: only {holders} after {age}m")
-            
-            # 6. TOP HOLDER CHECK - Only block extreme concentration
-            try:
-                url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
-                payload = {
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "getTokenLargestAccounts",
-                    "params": [token_address]
-                }
-                
-                response = requests.post(url, json=payload, timeout=5)
-                if response.status_code == 200:
-                    data = response.json()
-                    if 'result' in data and 'value' in data['result']:
-                        top_holders = data['result']['value'][:5]
-                        total_supply = sum(float(h.get('amount', 0)) for h in data['result']['value'])
-                        
-                        if total_supply > 0 and len(top_holders) > 0:
-                            # Check top 1 holder
-                            top1_amount = float(top_holders[0].get('amount', 0))
-                            top1_percent = (top1_amount / total_supply) * 100
-                            
-                            if top1_percent > 90:  # ONLY extreme concentration
-                                honeypot_score += 100
-                                reasons.append(f"Top wallet owns {top1_percent:.0f}%")
-                                return True, honeypot_score, reasons
-                            elif top1_percent > 70:
-                                honeypot_score += 30
-                                reasons.append(f"High concentration: {top1_percent:.0f}%")
-            except:
-                pass  # Don't fail on API errors
-            
-            # DECISION - Higher threshold
-            is_honeypot = honeypot_score >= 80  # Raised from 40
-            
-            if is_honeypot:
-                logging.warning(f"🚨 HONEYPOT DETECTED! Score: {honeypot_score}")
-                for reason in reasons:
-                    logging.warning(f"   - {reason}")
-            else:
-                logging.info(f"✅ Token appears safe. Score: {honeypot_score}")
-                
-            return is_honeypot, honeypot_score, reasons
+            logging.info(f"✅ TOKEN VERIFIED SAFE: {token_address[:8]} passed all {len(checks)} checks")
+            return False, 0, ["All checks passed"]
             
         except Exception as e:
-            logging.error(f"Error checking honeypot: {e}")
-            # Don't auto-reject on errors
-            return False, 0, ["Error in check - proceeding with caution"]
+            logging.error(f"Honeypot check error: {e}")
+            # STRICT: Block on errors
+            return True, 100, [f"Error: {e}"]
             
 
-    def verify_sell_route_exists(self, token_address, amount_lamports=1000000):
-        """ENHANCED: Check multiple amounts and slippages"""
+    def check_honeypot_patterns(self, token_address):
+        """Check for known honeypot patterns"""
         try:
-            # Try multiple configurations
-            configs = [
-                {'amount': '1000000', 'slippage': '1000'},    # 0.001 token, 10% slip
-                {'amount': '10000000', 'slippage': '2000'},   # 0.01 token, 20% slip
-                {'amount': '100000', 'slippage': '5000'},     # 0.0001 token, 50% slip
+            # Check top holder concentration
+            url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenLargestAccounts",
+                "params": [token_address]
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result']:
+                    accounts = data['result']['value']
+                    if len(accounts) > 0:
+                        # Get total supply
+                        total_supply = sum(float(acc.get('amount', 0)) for acc in accounts)
+                        
+                        if total_supply > 0:
+                            # Check top holder
+                            top_holder = float(accounts[0].get('amount', 0))
+                            top_percent = (top_holder / total_supply) * 100
+                            
+                            # STRICT: Block high concentration
+                            if top_percent > 50:  # Top holder owns >50%
+                                logging.warning(f"🚨 HIGH CONCENTRATION: Top holder owns {top_percent:.1f}%")
+                                return True
+                            
+                            # Check top 3 holders
+                            top3_total = sum(float(accounts[i].get('amount', 0)) for i in range(min(3, len(accounts))))
+                            top3_percent = (top3_total / total_supply) * 100
+                            
+                            if top3_percent > 80:  # Top 3 own >80%
+                                logging.warning(f"🚨 HIGH TOP3 CONCENTRATION: {top3_percent:.1f}%")
+                                return True
+            
+            return False
+            
+        except Exception as e:
+            logging.error(f"Pattern check error: {e}")
+            # Assume suspicious on error
+            return True
+    
+    def verify_sell_route_exists(self, token_address, amount_lamports=1000000):
+        """STRICT: Must have working sell routes or BLOCK"""
+        try:
+            # Try multiple realistic sell amounts
+            test_amounts = [
+                '1000000',    # 0.001 token
+                '10000000',   # 0.01 token  
+                '100000000'   # 0.1 token
             ]
             
-            successful_checks = 0
+            working_routes = 0
             
-            for config in configs:
+            for amount in test_amounts:
+                quote_url = "https://quote-api.jup.ag/v6/quote"
+                params = {
+                    'inputMint': token_address,
+                    'outputMint': 'So11111111111111111111111111111111111111112',  # SOL
+                    'amount': amount,
+                    'slippageBps': '1000',  # 10% slippage
+                    'onlyDirectRoutes': 'false'
+                }
+                
+                try:
+                    response = requests.get(quote_url, params=params, timeout=5)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # STRICT CHECK: Must have actual routes AND output amount
+                        if (data.get('routePlan') and 
+                            len(data.get('routePlan', [])) > 0 and 
+                            data.get('outAmount') and 
+                            int(data.get('outAmount', 0)) > 0):
+                            
+                            working_routes += 1
+                            logging.info(f"✅ Sell route works for amount {amount}")
+                        else:
+                            logging.warning(f"❌ No valid route for amount {amount}")
+                    else:
+                        logging.warning(f"❌ Jupiter API error {response.status_code} for amount {amount}")
+                        
+                except Exception as e:
+                    logging.warning(f"❌ Route check failed for amount {amount}: {e}")
+                
+                # Small delay between requests
+                time.sleep(0.1)
+            
+            # STRICT: Need at least 2/3 working routes
+            if working_routes >= 2:
+                logging.info(f"✅ SELL ROUTES VERIFIED: {working_routes}/3 amounts work")
+                return True
+            else:
+                logging.error(f"🚨 INSUFFICIENT SELL ROUTES: Only {working_routes}/3 work - BLOCKING!")
+                return False
+                
+        except Exception as e:
+            logging.error(f"Sell route verification failed: {e}")
+            # STRICT: Block on API failures
+            return False
+
+    
+    def emergency_honeypot_check(self, token_address):
+        """ULTRA-STRICT emergency check - blocks suspicious tokens"""
+        try:
+            logging.info(f"🔍 EMERGENCY HONEYPOT CHECK: {token_address[:8]}")
+            
+            # Get data with retries
+            liquidity = get_token_liquidity(token_address)
+            holders = get_holder_count(token_address)
+            age = get_token_age_minutes(token_address)
+            
+            # STRICT REQUIREMENTS
+            failed_checks = []
+            
+            # 1. LIQUIDITY - Must have minimum
+            if liquidity is None:
+                failed_checks.append("NO_LIQUIDITY_DATA")
+            elif liquidity < 5000:  # Raised minimum to $5k
+                failed_checks.append(f"LOW_LIQUIDITY_${liquidity}")
+            
+            # 2. HOLDERS - Must have decent holder count
+            if holders is None:
+                failed_checks.append("NO_HOLDER_DATA")
+            elif holders < 50:  # Raised minimum to 50 holders
+                failed_checks.append(f"FEW_HOLDERS_{holders}")
+            
+            # 3. AGE - Must not be brand new
+            if age is None:
+                failed_checks.append("NO_AGE_DATA")
+            elif age < 10:  # Must be at least 10 minutes old
+                failed_checks.append(f"TOO_NEW_{age}min")
+            
+            # 4. SELL ROUTES - MOST CRITICAL
+            if not self.verify_sell_route_exists(token_address):
+                failed_checks.append("NO_SELL_ROUTES")
+            
+            # 5. HOLDER-TO-LIQUIDITY RATIO
+            if liquidity and holders and liquidity > 0 and holders > 0:
+                liq_per_holder = liquidity / holders
+                if liq_per_holder < 50:  # $50 per holder minimum
+                    failed_checks.append(f"LOW_LIQ_PER_HOLDER_${liq_per_holder:.0f}")
+            
+            # 6. CHECK FOR KNOWN HONEYPOT PATTERNS
+            if self.check_honeypot_patterns(token_address):
+                failed_checks.append("HONEYPOT_PATTERNS")
+            
+            if failed_checks:
+                logging.error(f"🚨 EMERGENCY BLOCK: {token_address[:8]} failed: {', '.join(failed_checks)}")
+                return False
+            
+            logging.info(f"✅ EMERGENCY CHECK PASSED: {token_address[:8]}")
+            return True
+            
+        except Exception as e:
+            logging.error(f"Emergency check error: {e}")
+            # STRICT: Block on errors
+            return False
+
+    def simulate_sell_transaction(self, token_address):
+        """STRICT simulation with multiple checks"""
+        try:
+            logging.info(f"🧪 SIMULATING SELL: {token_address[:8]}")
+            
+            # Test multiple scenarios
+            test_configs = [
+                {'amount': '1000000', 'slippage': '500'},    # 0.001 token, 5% slip
+                {'amount': '10000000', 'slippage': '1000'},  # 0.01 token, 10% slip
+                {'amount': '50000000', 'slippage': '2000'},  # 0.05 token, 20% slip
+            ]
+            
+            successful_sims = 0
+            
+            for config in test_configs:
                 quote_url = "https://quote-api.jup.ag/v6/quote"
                 params = {
                     'inputMint': token_address,
                     'outputMint': 'So11111111111111111111111111111111111111112',
                     'amount': config['amount'],
                     'slippageBps': config['slippage'],
+                    'onlyDirectRoutes': 'false'
                 }
                 
-                response = requests.get(quote_url, params=params, timeout=3)
+                try:
+                    response = requests.get(quote_url, params=params, timeout=5)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # STRICT VALIDATION
+                        if (data.get('routePlan') and 
+                            len(data.get('routePlan', [])) > 0 and 
+                            data.get('outAmount') and 
+                            int(data.get('outAmount', 0)) > 1000):  # Must get at least some output
+                            
+                            # Check if slippage is reasonable
+                            in_amount = int(config['amount'])
+                            out_amount = int(data.get('outAmount', 0))
+                            
+                            if out_amount > 0:  # Any output is good
+                                successful_sims += 1
+                                logging.info(f"✅ Simulation {successful_sims} passed")
+                            else:
+                                logging.warning(f"❌ Zero output for config {config}")
+                        else:
+                            logging.warning(f"❌ Invalid response for config {config}")
+                    else:
+                        logging.warning(f"❌ API error {response.status_code} for config {config}")
+                        
+                except Exception as e:
+                    logging.warning(f"❌ Simulation failed for config {config}: {e}")
                 
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('routePlan') and len(data.get('routePlan', [])) > 0:
-                        successful_checks += 1
+                time.sleep(0.1)  # Rate limit
             
-            # Need at least 2/3 successful configurations
-            if successful_checks >= 2:
-                logging.info(f"✅ Sell route verified ({successful_checks}/3 configs work)")
+            # STRICT: Need majority to pass
+            if successful_sims >= 2:
+                logging.info(f"✅ SELL SIMULATION PASSED: {successful_sims}/3 scenarios work")
                 return True
             else:
-                logging.error(f"🚨 POOR SELL ROUTES: Only {successful_checks}/3 work")
+                logging.error(f"🚨 SELL SIMULATION FAILED: Only {successful_sims}/3 scenarios work")
                 return False
                 
         except Exception as e:
-            logging.error(f"Error checking sell route: {e}")
+            logging.error(f"Sell simulation error: {e}")
             return False
-
-    def emergency_honeypot_check(self, token_address):
-        """Last-resort check before ANY trade - FIXED VERSION"""
-        try:
-            # Get actual data
-            liquidity = get_token_liquidity(token_address)
-            holders = get_holder_count(token_address)
-            age = get_token_age_minutes(token_address)
-            
-            # More reasonable checks
-            checks = {
-                'has_liquidity': liquidity is None or liquidity > 500,  # Lower threshold, allow None
-                'has_holders': holders is None or holders > 10,  # Lower threshold, allow None
-                'can_sell': self.verify_sell_route_exists(token_address),  # This is critical
-                'not_too_new': age is None or age > 2  # Just 2 minutes! Not 5!
-            }
-            
-            failed = [k for k, v in checks.items() if not v]
-            if failed:
-                # Only log details if it's not a known good token
-                if liquidity and liquidity > 100000:  # High liquidity = probably good
-                    logging.warning(f"⚠️ High liquidity token ({liquidity}) failed checks: {failed}")
-                else:
-                    logging.error(f"🚨 EMERGENCY BLOCK: {', '.join(failed)} failed")
-                return False
-            return True
-            
-        except Exception as e:
-            # If emergency check fails, LET IT THROUGH
-            logging.warning(f"Emergency check error: {e} - allowing trade")
-            return True
-
-    def simulate_sell_transaction(self, token_address):
-        """Simulate a sell to check if it would succeed"""
-        try:
-            # Use Jupiter API to simulate a small sell
-            quote_url = "https://quote-api.jup.ag/v6/quote"
-        
-            # Simulate selling a tiny amount
-            params = {
-                'inputMint': token_address,
-                'outputMint': 'So11111111111111111111111111111111111111112',  # SOL
-                'amount': '1000000',  # Small amount
-                'slippageBps': '1000',  # 10% slippage
-                'onlyDirectRoutes': 'false'
-            }
-        
-            response = requests.get(quote_url, params=params, timeout=3)
-        
-            if response.status_code == 200:
-                data = response.json()
-                # FIX: Check data structure properly
-                # Jupiter v6 returns routePlan, not data
-                if data and 'routePlan' in data and data['routePlan'] is not None:
-                    # If we get routes, selling is possible
-                    return True
-                else:
-                    # No routes = can't sell = honeypot
-                    logging.warning("🚨 NO SELL ROUTES FOUND - HONEYPOT!")
-                    return False
-        
-            # CHANGE: Return True instead of None when uncertain
-            logging.debug("Jupiter API uncertain response - allowing trade")
-            return True  # Give benefit of doubt
-        
-        except Exception as e:
-            logging.error(f"Error simulating sell: {e}")
-            # CHANGE: Return True on error - don't block trades due to API issues
-            return True  # Allow trade when API fails
 
     def check_stuck_positions(self):
         """Identify positions that can't be sold"""
