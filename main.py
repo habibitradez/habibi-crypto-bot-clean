@@ -6341,25 +6341,21 @@ def run_adaptive_ai_system():
                     
                     # Send hourly report with charts
                     try:
-                        # Prepare positions data for Discord charts
+                        # Calculate stats...
+                        stats = { ... }
+    
+                        # Prepare positions data...
                         positions_data = {}
                         if trader.positions:
                             for token, pos in trader.positions.items():
                                 try:
-                                    current_price = get_token_price(token)
-                                    if current_price:
-                                        pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
-                                        pnl_sol = pos['size'] * (current_price - pos['entry_price'])
-                                        positions_data[token] = {
-                                            'pnl_percent': pnl_pct,
-                                            'pnl_sol': pnl_sol
-                                        }
-                               except:
-                                    pass
-
+                                    # Price calculation...
+                                except:
+                                    pass  # This except is for the inner try block
+    
                         trader.discord.send_hourly_report(stats, positions_data)
                         logging.info("📊 Discord hourly report sent")
-                    except Exception as e:
+                    except Exception as e:  # This except is properly aligned with the outer try
                         logging.error(f"Discord report error: {e}")
                 
             time.sleep(5)  # Check every 5 seconds
