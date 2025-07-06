@@ -3493,8 +3493,8 @@ class AdaptiveAlphaTrader:
             current_balance = self.wallet.get_balance()
             
             # SMART CONVERSION RULES
-            MIN_TRADING_BALANCE = 2.0  # Always keep 2 SOL for tomorrow
-            MIN_CONVERT_AMOUNT = 0.5   # Don't convert tiny amounts
+            MIN_TRADING_BALANCE = 1.8  # Always keep 2 SOL for tomorrow
+            MIN_CONVERT_AMOUNT = 0.3   # Don't convert tiny amounts
             
             # Calculate what we can actually convert
             available_to_convert = current_balance - MIN_TRADING_BALANCE
