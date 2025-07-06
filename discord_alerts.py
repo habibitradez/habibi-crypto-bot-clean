@@ -208,6 +208,73 @@ class LiveDiscordDashboard:
             logging.error(f"Chart creation error: {e}")
             # Send text update if chart fails
             self.send_text_dashboard_update(balance, session_pnl, session_pnl_usd, trades, win_rate)
+
+    
+    def create_simple_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
+        """Create simple dashboard chart matching the working size"""
+        try:
+            # Create smaller, simpler figure like the working one
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(1, 1, figsize=(8, 6))  # Much smaller size
+            fig.patch.set_facecolor('#2b2d31')
+        
+            # Create simple progress chart
+            ax.axis('off')
+        
+            # Title
+            ax.text(0.5, 0.95, '📊 Live Trading Dashboard', ha='center', va='top', 
+                    fontsize=16, fontweight='bold', color='white', transform=ax.transAxes)
+        
+            # Balance section
+            ax.text(0.1, 0.85, f'💰 Balance:', ha='left', va='center', fontsize=12, 
+                    color='#87ceeb', transform=ax.transAxes)
+            ax.text(0.9, 0.85, f'{balance:.3f} SOL', ha='right', va='center', fontsize=12, 
+                    color='white', fontweight='bold', transform=ax.transAxes)
+        
+            # Session P&L
+            pnl_color = '#00ff00' if session_pnl > 0 else '#ff0000' if session_pnl < 0 else '#ffffff'
+            ax.text(0.1, 0.75, f'📈 Session P&L:', ha='left', va='center', fontsize=12, 
+                    color='#87ceeb', transform=ax.transAxes)
+            ax.text(0.9, 0.75, f'{session_pnl:+.4f} SOL', ha='right', va='center', fontsize=12, 
+                    color=pnl_color, fontweight='bold', transform=ax.transAxes)
+            ax.text(0.9, 0.70, f'(${session_pnl_usd:+.2f})', ha='right', va='center', fontsize=10, 
+                    color=pnl_color, transform=ax.transAxes)
+        
+            # Trading stats
+            ax.text(0.1, 0.6, f'🎯 Trades:', ha='left', va='center', fontsize=12, 
+                    color='#87ceeb', transform=ax.transAxes)
+            ax.text(0.9, 0.6, f'{trades}', ha='right', va='center', fontsize=12, 
+                    color='white', fontweight='bold', transform=ax.transAxes)
+        
+           ax.text(0.1, 0.5, f'📊 Win Rate:', ha='left', va='center', fontsize=12, 
+                    color='#87ceeb', transform=ax.transAxes)
+            wr_color = '#00ff00' if win_rate > 60 else '#ffff00' if win_rate > 40 else '#ff0000'
+            ax.text(0.9, 0.5, f'{win_rate:.1f}%', ha='right', va='center', fontsize=12, 
+                    color=wr_color, fontweight='bold', transform=ax.transAxes)
+        
+            # Active positions
+            ax.text(0.1, 0.4, f'💼 Positions:', ha='left', va='center', fontsize=12, 
+                    color='#87ceeb', transform=ax.transAxes)
+            ax.text(0.9, 0.4, f'{len(positions) if positions else 0}', ha='right', va='center', fontsize=12, 
+                    color='white', fontweight='bold', transform=ax.transAxes)
+        
+            # Timestamp
+            ax.text(0.99, 0.01, f'Updated: {datetime.now().strftime("%H:%M:%S")}', 
+                    ha='right', va='bottom', fontsize=8, color='#87ceeb', transform=ax.transAxes)
+        
+            plt.tight_layout()
+        
+            # Save with smaller size
+            img_buffer = io.BytesIO()
+            plt.savefig(img_buffer, format='png', facecolor='#2b2d31', dpi=80, bbox_inches='tight')
+            img_buffer.seek(0)
+            plt.close()
+        
+            return img_buffer
+        
+        except Exception as e:
+            logging.error(f"Simple chart creation error: {e}")
+            return None
     
     def send_live_dashboard_update(self, trader):
         """Send live dashboard update every 5 minutes with simple chart"""
