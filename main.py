@@ -5991,7 +5991,7 @@ def run_adaptive_ai_system():
     last_bundle_time = 0 
     momentum_opportunities = []
     last_momentum_check = 0
-    last_discord_update = 0  # ADD THIS
+    last_discord_update = 0
     iteration = 0
     session_count = 1
     
@@ -6328,7 +6328,7 @@ def run_adaptive_ai_system():
                 
                 if hasattr(trader, 'discord') and trader.discord:
                     # Prepare stats for Discord
-                    stats = {
+                    stats_discord = {
                         'pnl_sol': trader.brain.daily_stats.get('pnl_sol', 0),
                         'pnl_usd': trader.brain.daily_stats.get('pnl_sol', 0) * 240,
                         'trades': trader.brain.daily_stats.get('trades', 0),
@@ -6336,26 +6336,31 @@ def run_adaptive_ai_system():
                         'win_rate': (trader.brain.daily_stats.get('wins', 0) / trader.brain.daily_stats.get('trades', 1)) * 100 if trader.brain.daily_stats.get('trades', 0) > 0 else 0,
                         'best_trade': trader.brain.daily_stats.get('best_trade', 0),
                         'worst_trade': trader.brain.daily_stats.get('worst_trade', 0),
-                        'target_usd': float(CONFIG.get('DAILY_PROFIT_TARGET', 50))
+                        'target_usd': float(CONFIG.get('DAILY_PROFIT_TARGET', 50)),
+                        'total_pnl': trader.brain.daily_stats.get('pnl_sol', 0)
                     }
                     
                     # Send hourly report with charts
                     try:
-                        # Calculate stats...
-                        stats = { ... }
-    
-                        # Prepare positions data...
+                        # Prepare positions data for Discord charts
                         positions_data = {}
                         if trader.positions:
                             for token, pos in trader.positions.items():
                                 try:
-                                    # Price calculation...
+                                    current_price = get_token_price(token)
+                                    if current_price:
+                                        pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
+                                        pnl_sol = pos['size'] * (current_price - pos['entry_price'])
+                                        positions_data[token] = {
+                                            'pnl_percent': pnl_pct,
+                                            'pnl_sol': pnl_sol
+                                        }
                                 except:
-                                    pass  # This except is for the inner try block
-    
-                        trader.discord.send_hourly_report(stats, positions_data)
+                                    pass
+        
+                        trader.discord.send_hourly_report(stats_discord, positions_data)
                         logging.info("📊 Discord hourly report sent")
-                    except Exception as e:  # This except is properly aligned with the outer try
+                    except Exception as e:
                         logging.error(f"Discord report error: {e}")
                 
             time.sleep(5)  # Check every 5 seconds
