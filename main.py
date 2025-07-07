@@ -4134,13 +4134,17 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """AGGRESSIVE momentum detection - catch LAFUFU-type winners early"""
+        """AGGRESSIVE momentum detection - catch BARK/PUP-type winners with DEBUG logging"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:300]  # Check MORE tokens
             tokens_checked = 0
             momentum_candidates = []
+            
+            # DEBUG: Track what we're finding
+            high_volume_found = []
+            new_tokens_found = []
             
             for token in tokens:
                 try:
@@ -4153,6 +4157,12 @@ class AdaptiveAlphaTrader:
                     
                     if not current_price:
                         continue
+                    
+                    # DEBUG: Log ALL tokens with decent volume or newness (FULL CA)
+                    if volume and volume > 25000:  # Lowered to catch smaller opportunities
+                        high_volume_found.append(f"{token}: ${volume:,.0f}")  # FULL CA
+                    if age and age < 60:
+                        new_tokens_found.append(f"{token}: {age}m old")  # FULL CA
                     
                     # AGGRESSIVE: Always assume some liquidity/volume
                     if not liquidity or liquidity <= 0:
@@ -4181,24 +4191,40 @@ class AdaptiveAlphaTrader:
                     else:
                         momentum_score += 35  # Unknown = probably new
                     
-                    # VOLUME BONUS - NEW: Reward high volume tokens like LAFUFU
+                    # VOLUME BONUS - Catch smaller opportunities too (25K-50K)
                     if volume:
-                        if volume > 100000:  # 100K+ volume (like LAFUFU's 101K)
+                        if volume > 250000:  # 250K+ volume (PUP-level)
+                            momentum_score += 40  # MASSIVE bonus
+                            logging.error(f"🚀 ULTRA VOLUME: {token} has ${volume:,.0f} volume (+40 points)")
+                        elif volume > 200000:  # 200K+ volume  
+                            momentum_score += 35  # Big bonus
+                            logging.error(f"🔥 HUGE VOLUME: {token} has ${volume:,.0f} volume (+35 points)")
+                        elif volume > 100000:  # 100K+ volume (like LAFUFU's 101K)
                             momentum_score += 30  # BIG bonus for high volume
-                            logging.info(f"🚀 HIGH VOLUME BONUS: {token[:8]} has ${volume:,.0f} volume (+30 points)")
+                            logging.warning(f"🚀 HIGH VOLUME: {token} has ${volume:,.0f} volume (+30 points)")
                         elif volume > 75000:   # 75K+ volume
                             momentum_score += 25
-                            logging.info(f"📈 GOOD VOLUME BONUS: {token[:8]} has ${volume:,.0f} volume (+25 points)")
-                        elif volume > 50000:   # 50K+ volume
+                            logging.warning(f"📈 GOOD VOLUME: {token} has ${volume:,.0f} volume (+25 points)")
+                        elif volume > 50000:   # 50K+ volume - profitable range
                             momentum_score += 20
-                        elif volume > 25000:   # 25K+ volume  
+                            logging.info(f"💰 DECENT VOLUME: {token} has ${volume:,.0f} volume (+20 points)")
+                        elif volume > 35000:   # 35K+ volume - still profitable
+                            momentum_score += 18
+                            logging.info(f"📊 MEDIUM VOLUME: {token} has ${volume:,.0f} volume (+18 points)")
+                        elif volume > 25000:   # 25K+ volume - early opportunity
                             momentum_score += 15
+                            logging.info(f"🎯 EARLY VOLUME: {token} has ${volume:,.0f} volume (+15 points)")
+                        elif volume > 15000:   # 15K+ volume
+                            momentum_score += 12
                         elif volume > 10000:   # 10K+ volume
                             momentum_score += 10
                     
                     # AGGRESSIVE: Volume/Liquidity ratio check
                     volume_liq_ratio = volume / liquidity
-                    logging.info(f"📊 Checking {token[:8]}: Vol=${volume:,.0f}, Liq=${liquidity:,.0f}, Ratio={volume_liq_ratio:.1f}, Age={age}m, Holders={holders}")
+                    
+                    # DEBUG: Log interesting tokens
+                    if volume > 100000 or (age and age < 30) or momentum_score > 50:
+                        logging.warning(f"🎯 INTERESTING: {token[:8]} - Vol: ${volume:,.0f}, Age: {age}m, Score: {momentum_score}")
                     
                     if volume_liq_ratio > 1:
                         momentum_score += 20
@@ -4229,14 +4255,20 @@ class AdaptiveAlphaTrader:
                         elif liquidity > 10000:  # $10K+ liquidity
                             momentum_score += 5
                     
-                    # Log promising tokens
-                    if momentum_score >= 45:
+                    # SPECIAL LOGGING for BARK/PUP-type opportunities
+                    if volume > 150000 or momentum_score > 70:
+                        logging.error(f"🔥 BARK/PUP-TYPE DETECTED: {token[:8]}")
+                        logging.error(f"   📊 Score: {momentum_score}/100")
+                        logging.error(f"   💰 Volume: ${volume:,.0f}")
+                        logging.error(f"   💧 Liquidity: ${liquidity:,.0f}")
+                        logging.error(f"   👥 Holders: {holders}")
+                        logging.error(f"   🆕 Age: {age}m")
+                        logging.error(f"   📈 Vol/Liq: {volume_liq_ratio:.2f}x")
+                    elif momentum_score >= 45:
                         logging.warning(f"🎯 HIGH SCORE: {token[:8]} - Score: {momentum_score}, Vol: ${volume:,.0f}, Age: {age}m")
-                    elif age and age < 60:
-                        logging.info(f"🆕 NEW: {token[:8]} - Age: {age}m, Score: {momentum_score}")
                     
-                    # LOWERED THRESHOLD: Catch more opportunities
-                    if momentum_score >= 40:  # Lowered from 50 to 40
+                    # ULTRA LOW THRESHOLD: Catch everything decent
+                    if momentum_score >= 35:  # Even lower threshold!
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
@@ -4248,27 +4280,46 @@ class AdaptiveAlphaTrader:
                             'volume_liq_ratio': volume_liq_ratio
                         })
                 
-                except Exception:
+                except Exception as e:
+                    logging.debug(f"Error checking token: {e}")
                     continue
+            
+            # DEBUG SUMMARY - Show what we found (with volume breakdown)
+            logging.error(f"🔍 SCAN SUMMARY:")
+            logging.error(f"   📊 Tokens checked: {tokens_checked}")
+            logging.error(f"   💰 Volume tokens (25K+): {len(high_volume_found)}")
+            logging.error(f"   🆕 New tokens (<60m): {len(new_tokens_found)}")
+            logging.error(f"   🎯 Candidates found: {len(momentum_candidates)}")
+            
+            # Show high volume tokens found (FULL CA)
+            if high_volume_found:
+                logging.error(f"🚀 VOLUME TOKENS FOUND (25K+):")
+                for token_info in high_volume_found[:15]:  # Show top 15
+                    logging.error(f"   {token_info}")
+            
+            # Show new tokens found (FULL CA)
+            if new_tokens_found:
+                logging.error(f"🆕 NEW TOKENS FOUND:")
+                for token_info in new_tokens_found[:15]:  # Show top 15
+                    logging.error(f"   {token_info}")
             
             # Sort by SCORE first (highest first), then age (newest first)
             momentum_candidates.sort(key=lambda x: (-x['score'], x['age'] if x['age'] else 999))
             
             if momentum_candidates:
-                logging.warning(f"📊 Found {len(momentum_candidates)} momentum candidates")
+                logging.error(f"📊 TOP CANDIDATES:")
                 
-                # Show top candidates
-                for i, candidate in enumerate(momentum_candidates[:5]):
-                    logging.info(f"  #{i+1}: {candidate['token'][:8]} - Score: {candidate['score']}, Vol: ${candidate['volume']:,.0f}")
+                # Show top candidates (FULL CA)
+                for i, candidate in enumerate(momentum_candidates[:10]):
+                    logging.error(f"  #{i+1}: {candidate['token']} - Score: {candidate['score']}, Vol: ${candidate['volume']:,.0f}, Age: {candidate['age']}m")
                 
                 # Trade the BEST scoring token
-                for candidate in momentum_candidates[:5]:  # Check top 5
-                    if candidate['score'] >= 40:  # Lowered threshold
+                for candidate in momentum_candidates[:3]:  # Check top 3
+                    if candidate['score'] >= 35:  # Ultra low threshold
                         
                         # OPTIONAL NEWS BONUS CHECK
                         if hasattr(self, 'check_news_catalyst') and os.getenv('NEWSAPI_KEY'):
                             try:
-                                # Try to get symbol (you'd need to implement get_token_symbol)
                                 symbol = None
                                 if hasattr(self, 'get_token_symbol'):
                                     symbol = self.get_token_symbol(candidate['token'])
@@ -4280,31 +4331,29 @@ class AdaptiveAlphaTrader:
                                         candidate['score'] += 10
                                         candidate['has_news_bonus'] = True
                             except:
-                                pass  # Don't care if news check fails
+                                pass
                         
-                        logging.warning(f"🚀 MOMENTUM BUY TARGET: {candidate['token'][:8]}")
-                        logging.warning(f"   📊 Score: {candidate['score']}/100")
-                        logging.warning(f"   💰 Volume: ${candidate['volume']:,.0f}")
-                        logging.warning(f"   💧 Liquidity: ${candidate['liquidity']:,.0f}")
-                        logging.warning(f"   👥 Holders: {candidate['holders']}")
-                        logging.warning(f"   🆕 Age: {candidate['age']}m")
-                        logging.warning(f"   📈 Vol/Liq Ratio: {candidate['volume_liq_ratio']:.2f}x")
+                        logging.error(f"🚀 EXECUTING BUY: {candidate['token']}")
+                        logging.error(f"   📊 Score: {candidate['score']}/100")
+                        logging.error(f"   💰 Volume: ${candidate['volume']:,.0f}")
+                        logging.error(f"   💧 Liquidity: ${candidate['liquidity']:,.0f}")
+                        logging.error(f"   👥 Holders: {candidate['holders']}")
+                        logging.error(f"   🆕 Age: {candidate['age']}m")
+                        logging.error(f"   📈 Vol/Liq Ratio: {candidate['volume_liq_ratio']:.2f}x")
                         if candidate.get('has_news_bonus'):
-                            logging.warning(f"   📰 News catalyst detected!")
+                            logging.error(f"   📰 News catalyst detected!")
                         
-                        # SMART POSITION SIZING using your ML system
-                        # Calculate ML confidence for position sizing
+                        # ML-driven position sizing
                         ml_confidence = 0.65  # Default
                         if hasattr(self, 'ml_brain') and self.ml_brain.is_trained:
                             try:
-                                # Use your existing ML features
                                 features = self.extract_features_for_ml(candidate['token'])
                                 if features:
                                     ml_confidence = self.ml_brain.predict_confidence(features)
                             except:
                                 pass
                         
-                        # Prepare token_data for your position sizing function
+                        # Prepare token_data for position sizing
                         token_data = {
                             'volume': candidate['volume'],
                             'liquidity': candidate['liquidity'],
@@ -4314,41 +4363,47 @@ class AdaptiveAlphaTrader:
                             'price': candidate['price']
                         }
                         
-                        # Use YOUR position sizing functions with ML integration
+                        # Use ML-driven position sizing
                         try:
-                            # Try your calculate_position_size function first
                             position_size = self.calculate_position_size('MOMENTUM_EXPLOSION', ml_confidence, token_data)
-                        except:
-                            try:
-                                # Fallback to get_dynamic_position_size if available
-                                position_size = self.get_dynamic_position_size(candidate['token'], 'MOMENTUM_EXPLOSION', ml_confidence)
-                            except:
-                                # Last fallback to calculate_optimal_position_size if available  
-                                try:
-                                    wallet_stats = {'win_rate': 65, 'total_trades': 50}  # Dummy stats
-                                    position_size = self.calculate_optimal_position_size(wallet_stats)
-                                except:
-                                    # Final fallback - simple calculation
-                                    base_size = 0.03
-                                    volume_bonus = 1.5 if candidate['volume'] > 100000 else 1.2 if candidate['volume'] > 50000 else 1.0
-                                    position_size = min(base_size * volume_bonus * ml_confidence, 0.08)
+                            logging.error(f"   💎 ML Position Size: {position_size:.4f} SOL (Confidence: {ml_confidence:.0%})")
+                        except Exception as e:
+                            # Fallback for ultra-high volume tokens
+                            base_size = 0.04
+                            if candidate['volume'] > 250000:
+                                position_size = 0.08  # Max for ultra-high volume
+                            elif candidate['volume'] > 150000:
+                                position_size = 0.06  
+                            elif candidate['volume'] > 100000:
+                                position_size = 0.05
+                            else:
+                                position_size = base_size
+                            logging.warning(f"   💎 Fallback Position Size: {position_size:.4f} SOL (Volume-based)")
                         
-                        logging.warning(f"   💎 Position Size: {position_size:.4f} SOL (ML: {ml_confidence:.0%})")
-                        
-                        self.execute_trade(
+                        # Execute the trade
+                        success = self.execute_trade(
                             candidate['token'],
                             'MOMENTUM_EXPLOSION',
                             position_size,
                             candidate['price'],
                             source_wallet='MOMENTUM_DETECT'
                         )
-                        return True
+                        
+                        if success:
+                            logging.error(f"✅ TRADE EXECUTED: {candidate['token'][:8]} for {position_size:.4f} SOL")
+                        else:
+                            logging.error(f"❌ TRADE FAILED: {candidate['token'][:8]}")
+                        
+                        return success
+            else:
+                logging.error(f"❌ NO CANDIDATES FOUND - All tokens scored below 35 points")
             
-            logging.info(f"🔍 Scanned {tokens_checked} tokens, found {len(momentum_candidates)} candidates")
             return False
             
         except Exception as e:
             logging.error(f"Error in momentum detection: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
             return False
             
     
