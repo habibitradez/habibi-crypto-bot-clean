@@ -117,12 +117,15 @@ class LiveDiscordDashboard:
             # Main stats
             pnl_emoji = "🟢" if session_pnl > 0 else "🔴" if session_pnl < 0 else "⚪"
             unrealized_emoji = "🟢" if unrealized_pnl > 0 else "🔴" if unrealized_pnl < 0 else "⚪"
-            
+        
+            # Calculate wins from win_rate
+            wins = int(trades * win_rate / 100) if trades > 0 else 0
+        
             # Progress calculation
             daily_target = 200  # $200 target
             progress_pct = min(100, (session_pnl_usd / daily_target) * 100) if session_pnl_usd > 0 else 0
             progress_bar = self.create_text_progress_bar(progress_pct)
-            
+        
             # Win rate color
             if win_rate > 60:
                 wr_emoji = "🟢"
@@ -130,7 +133,7 @@ class LiveDiscordDashboard:
                 wr_emoji = "🟡"
             else:
                 wr_emoji = "🔴"
-            
+        
             # Main description
             description = (
                 f"📊 **LIVE TRADING DASHBOARD**\n\n"
@@ -138,7 +141,6 @@ class LiveDiscordDashboard:
                 f"{pnl_emoji} **Session P&L:** {session_pnl:+.4f} SOL (${session_pnl_usd:+.2f})\n"
                 f"{unrealized_emoji} **Unrealized:** {unrealized_pnl:+.4f} SOL\n\n"
                 f"📈 **Trading Stats:**\n"
-                wins = int(trades * win_rate / 100) if trades > 0 else 0
                 f"• Trades: {trades} ({wins} wins)\n"
                 f"• {wr_emoji} Win Rate: {win_rate:.1f}%\n"
                 f"• Best: +{best_trade:.4f} SOL\n"
