@@ -138,6 +138,7 @@ class LiveDiscordDashboard:
                 f"{pnl_emoji} **Session P&L:** {session_pnl:+.4f} SOL (${session_pnl_usd:+.2f})\n"
                 f"{unrealized_emoji} **Unrealized:** {unrealized_pnl:+.4f} SOL\n\n"
                 f"📈 **Trading Stats:**\n"
+                wins = int(trades * win_rate / 100) if trades > 0 else 0
                 f"• Trades: {trades} ({wins} wins)\n"
                 f"• {wr_emoji} Win Rate: {win_rate:.1f}%\n"
                 f"• Best: +{best_trade:.4f} SOL\n"
