@@ -4292,7 +4292,7 @@ class AdaptiveAlphaTrader:
                         if candidate.get('has_news_bonus'):
                             logging.warning(f"   📰 News catalyst detected!")
                         
-                        # SMART POSITION SIZING based on confidence and volume
+                        # SMART POSITION SIZING using your ML system
                         # Calculate ML confidence for position sizing
                         ml_confidence = 0.65  # Default
                         if hasattr(self, 'ml_brain') and self.ml_brain.is_trained:
@@ -4304,38 +4304,34 @@ class AdaptiveAlphaTrader:
                             except:
                                 pass
                         
-                        # Use your calculate_position_size function if it exists
-                        if hasattr(self, 'calculate_position_size'):
-                            position_size = self.calculate_position_size(ml_confidence, candidate['score'])
-                        else:
-                            # Fallback position sizing based on confidence and volume
-                            base_size = 0.03  # Conservative base for 2 SOL wallet
-                            
-                            # Volume bonus sizing
-                            if candidate['volume'] > 100000:  # LAFUFU-type volume
-                                volume_multiplier = 1.5  # 50% bigger position
-                            elif candidate['volume'] > 75000:
-                                volume_multiplier = 1.3  # 30% bigger
-                            elif candidate['volume'] > 50000:
-                                volume_multiplier = 1.2  # 20% bigger
-                            else:
-                                volume_multiplier = 1.0
-                            
-                            # ML confidence multiplier
-                            confidence_multiplier = ml_confidence + 0.5  # 0.5-1.5x
-                            
-                            # Age multiplier (newer = bigger risk/reward)
-                            if candidate['age'] and candidate['age'] < 30:
-                                age_multiplier = 1.3
-                            elif candidate['age'] and candidate['age'] < 60:
-                                age_multiplier = 1.1
-                            else:
-                                age_multiplier = 1.0
-                            
-                            position_size = min(
-                                base_size * volume_multiplier * confidence_multiplier * age_multiplier,
-                                0.08  # Max 0.08 SOL per trade (4% of 2 SOL wallet)
-                            )
+                        # Prepare token_data for your position sizing function
+                        token_data = {
+                            'volume': candidate['volume'],
+                            'liquidity': candidate['liquidity'],
+                            'holders': candidate['holders'],
+                            'age': candidate['age'],
+                            'volume_ratio': candidate['volume_liq_ratio'],
+                            'price': candidate['price']
+                        }
+                        
+                        # Use YOUR position sizing functions with ML integration
+                        try:
+                            # Try your calculate_position_size function first
+                            position_size = self.calculate_position_size('MOMENTUM_EXPLOSION', ml_confidence, token_data)
+                        except:
+                            try:
+                                # Fallback to get_dynamic_position_size if available
+                                position_size = self.get_dynamic_position_size(candidate['token'], 'MOMENTUM_EXPLOSION', ml_confidence)
+                            except:
+                                # Last fallback to calculate_optimal_position_size if available  
+                                try:
+                                    wallet_stats = {'win_rate': 65, 'total_trades': 50}  # Dummy stats
+                                    position_size = self.calculate_optimal_position_size(wallet_stats)
+                                except:
+                                    # Final fallback - simple calculation
+                                    base_size = 0.03
+                                    volume_bonus = 1.5 if candidate['volume'] > 100000 else 1.2 if candidate['volume'] > 50000 else 1.0
+                                    position_size = min(base_size * volume_bonus * ml_confidence, 0.08)
                         
                         logging.warning(f"   💎 Position Size: {position_size:.4f} SOL (ML: {ml_confidence:.0%})")
                         
