@@ -4134,7 +4134,7 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """AGGRESSIVE momentum detection - catch everything early"""
+        """AGGRESSIVE momentum detection - catch LAFUFU-type winners early"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
         try:
@@ -4181,9 +4181,25 @@ class AdaptiveAlphaTrader:
                     else:
                         momentum_score += 35  # Unknown = probably new
                     
-                    # AGGRESSIVE: Any activity is good
+                    # VOLUME BONUS - NEW: Reward high volume tokens like LAFUFU
+                    if volume:
+                        if volume > 100000:  # 100K+ volume (like LAFUFU's 101K)
+                            momentum_score += 30  # BIG bonus for high volume
+                            logging.info(f"🚀 HIGH VOLUME BONUS: {token[:8]} has ${volume:,.0f} volume (+30 points)")
+                        elif volume > 75000:   # 75K+ volume
+                            momentum_score += 25
+                            logging.info(f"📈 GOOD VOLUME BONUS: {token[:8]} has ${volume:,.0f} volume (+25 points)")
+                        elif volume > 50000:   # 50K+ volume
+                            momentum_score += 20
+                        elif volume > 25000:   # 25K+ volume  
+                            momentum_score += 15
+                        elif volume > 10000:   # 10K+ volume
+                            momentum_score += 10
+                    
+                    # AGGRESSIVE: Volume/Liquidity ratio check
                     volume_liq_ratio = volume / liquidity
-                    logging.info(f"📊 Checking {token}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
+                    logging.info(f"📊 Checking {token[:8]}: Vol=${volume:,.0f}, Liq=${liquidity:,.0f}, Ratio={volume_liq_ratio:.1f}, Age={age}m, Holders={holders}")
+                    
                     if volume_liq_ratio > 1:
                         momentum_score += 20
                     elif volume_liq_ratio > 0.5:
@@ -4193,19 +4209,34 @@ class AdaptiveAlphaTrader:
                     
                     # AGGRESSIVE: Low holder requirements
                     if holders:
-                        if holders >= 10:  # Just 10 holders!
+                        if holders >= 100:  # Strong community
+                            momentum_score += 25
+                        elif holders >= 50:   # Decent community
                             momentum_score += 20
+                        elif holders >= 10:   # Just 10 holders!
+                            momentum_score += 15
                         if holders < 10 and age and age < 15:
-                            momentum_score += 15  # VERY early is OK
+                            momentum_score += 10  # VERY early is OK
                     else:
                         momentum_score += 10  # Unknown is OK
                     
-                    # Log EVERYTHING that's new
-                    if age and age < 60:
-                        logging.info(f"🆕 NEW: {token} - Age: {age}m, Score: {momentum_score}")
+                    # LIQUIDITY BONUS - Reward decent liquidity
+                    if liquidity:
+                        if liquidity > 50000:  # $50K+ liquidity
+                            momentum_score += 15
+                        elif liquidity > 25000:  # $25K+ liquidity
+                            momentum_score += 10
+                        elif liquidity > 10000:  # $10K+ liquidity
+                            momentum_score += 5
                     
-                    # AGGRESSIVE: Low threshold
-                    if momentum_score >= 40:  # Very low bar
+                    # Log promising tokens
+                    if momentum_score >= 45:
+                        logging.warning(f"🎯 HIGH SCORE: {token[:8]} - Score: {momentum_score}, Vol: ${volume:,.0f}, Age: {age}m")
+                    elif age and age < 60:
+                        logging.info(f"🆕 NEW: {token[:8]} - Age: {age}m, Score: {momentum_score}")
+                    
+                    # LOWERED THRESHOLD: Catch more opportunities
+                    if momentum_score >= 40:  # Lowered from 50 to 40
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
@@ -4213,21 +4244,26 @@ class AdaptiveAlphaTrader:
                             'holders': holders,
                             'liquidity': liquidity,
                             'price': current_price,
-                            'volume': volume
+                            'volume': volume,
+                            'volume_liq_ratio': volume_liq_ratio
                         })
                 
                 except Exception:
                     continue
             
-            # Sort by AGE first, then score
-            momentum_candidates.sort(key=lambda x: (x['age'] if x['age'] else 999, -x['score']))
+            # Sort by SCORE first (highest first), then age (newest first)
+            momentum_candidates.sort(key=lambda x: (-x['score'], x['age'] if x['age'] else 999))
             
             if momentum_candidates:
-                logging.warning(f"📊 Found {len(momentum_candidates)} candidates")
+                logging.warning(f"📊 Found {len(momentum_candidates)} momentum candidates")
                 
-                # Trade the NEWEST token with decent score
-                for candidate in momentum_candidates[:10]:  # Check top 10
-                    if candidate['score'] >= 50:  # Low threshold
+                # Show top candidates
+                for i, candidate in enumerate(momentum_candidates[:5]):
+                    logging.info(f"  #{i+1}: {candidate['token'][:8]} - Score: {candidate['score']}, Vol: ${candidate['volume']:,.0f}")
+                
+                # Trade the BEST scoring token
+                for candidate in momentum_candidates[:5]:  # Check top 5
+                    if candidate['score'] >= 40:  # Lowered threshold
                         
                         # OPTIONAL NEWS BONUS CHECK
                         if hasattr(self, 'check_news_catalyst') and os.getenv('NEWSAPI_KEY'):
@@ -4246,15 +4282,62 @@ class AdaptiveAlphaTrader:
                             except:
                                 pass  # Don't care if news check fails
                         
-                        logging.warning(f"🚀 AGGRESSIVE BUY: {candidate['token']}")
-                        logging.warning(f"   Age: {candidate['age']}m 🆕")
-                        logging.warning(f"   Score: {candidate['score']}")
-                        logging.warning(f"   Holders: {candidate['holders']}")
+                        logging.warning(f"🚀 MOMENTUM BUY TARGET: {candidate['token'][:8]}")
+                        logging.warning(f"   📊 Score: {candidate['score']}/100")
+                        logging.warning(f"   💰 Volume: ${candidate['volume']:,.0f}")
+                        logging.warning(f"   💧 Liquidity: ${candidate['liquidity']:,.0f}")
+                        logging.warning(f"   👥 Holders: {candidate['holders']}")
+                        logging.warning(f"   🆕 Age: {candidate['age']}m")
+                        logging.warning(f"   📈 Vol/Liq Ratio: {candidate['volume_liq_ratio']:.2f}x")
                         if candidate.get('has_news_bonus'):
                             logging.warning(f"   📰 News catalyst detected!")
                         
-                        # Bigger position for newer tokens
-                        position_size = 0.08 if candidate['age'] and candidate['age'] < 30 else 0.05
+                        # SMART POSITION SIZING based on confidence and volume
+                        # Calculate ML confidence for position sizing
+                        ml_confidence = 0.65  # Default
+                        if hasattr(self, 'ml_brain') and self.ml_brain.is_trained:
+                            try:
+                                # Use your existing ML features
+                                features = self.extract_features_for_ml(candidate['token'])
+                                if features:
+                                    ml_confidence = self.ml_brain.predict_confidence(features)
+                            except:
+                                pass
+                        
+                        # Use your calculate_position_size function if it exists
+                        if hasattr(self, 'calculate_position_size'):
+                            position_size = self.calculate_position_size(ml_confidence, candidate['score'])
+                        else:
+                            # Fallback position sizing based on confidence and volume
+                            base_size = 0.03  # Conservative base for 2 SOL wallet
+                            
+                            # Volume bonus sizing
+                            if candidate['volume'] > 100000:  # LAFUFU-type volume
+                                volume_multiplier = 1.5  # 50% bigger position
+                            elif candidate['volume'] > 75000:
+                                volume_multiplier = 1.3  # 30% bigger
+                            elif candidate['volume'] > 50000:
+                                volume_multiplier = 1.2  # 20% bigger
+                            else:
+                                volume_multiplier = 1.0
+                            
+                            # ML confidence multiplier
+                            confidence_multiplier = ml_confidence + 0.5  # 0.5-1.5x
+                            
+                            # Age multiplier (newer = bigger risk/reward)
+                            if candidate['age'] and candidate['age'] < 30:
+                                age_multiplier = 1.3
+                            elif candidate['age'] and candidate['age'] < 60:
+                                age_multiplier = 1.1
+                            else:
+                                age_multiplier = 1.0
+                            
+                            position_size = min(
+                                base_size * volume_multiplier * confidence_multiplier * age_multiplier,
+                                0.08  # Max 0.08 SOL per trade (4% of 2 SOL wallet)
+                            )
+                        
+                        logging.warning(f"   💎 Position Size: {position_size:.4f} SOL (ML: {ml_confidence:.0%})")
                         
                         self.execute_trade(
                             candidate['token'],
@@ -4265,6 +4348,7 @@ class AdaptiveAlphaTrader:
                         )
                         return True
             
+            logging.info(f"🔍 Scanned {tokens_checked} tokens, found {len(momentum_candidates)} candidates")
             return False
             
         except Exception as e:
