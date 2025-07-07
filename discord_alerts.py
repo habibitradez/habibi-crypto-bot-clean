@@ -26,11 +26,11 @@ class LiveDiscordDashboard:
         )
     
     def send_live_dashboard_update(self, trader):
-        """Send live dashboard update every 2 minutes with current data"""
+        """Send live dashboard update every 5 minutes - TEXT ONLY (reliable)"""
         current_time = time.time()
         
-        # Update every 2 minutes (120 seconds) instead of hourly
-        if current_time - self.last_live_update < 120:
+        # Update every 5 minutes (300 seconds) 
+        if current_time - self.last_live_update < 300:
             return
         
         self.last_live_update = current_time
@@ -43,9 +43,11 @@ class LiveDiscordDashboard:
             trades = trader.brain.daily_stats.get('trades', 0)
             wins = trader.brain.daily_stats.get('wins', 0)
             win_rate = (wins / trades) * 100 if trades > 0 else 0
+            best_trade = trader.brain.daily_stats.get('best_trade', 0)
+            worst_trade = trader.brain.daily_stats.get('worst_trade', 0)
             
-            # Get active positions with real-time P&L
-            active_positions = []
+            # Get positions with real-time P&L
+            position_details = []
             total_unrealized_pnl = 0
             
             if trader.positions:
@@ -58,29 +60,108 @@ class LiveDiscordDashboard:
                             total_unrealized_pnl += pnl_sol
                             
                             emoji = "🟢" if pnl_sol > 0 else "🔴" if pnl_sol < 0 else "⚪"
-                            active_positions.append({
-                                'token': token[:8],
-                                'strategy': pos.get('strategy', 'UNKNOWN'),
-                                'pnl_pct': pnl_pct,
-                                'pnl_sol': pnl_sol,
-                                'emoji': emoji
-                            })
+                            strategy = pos.get('strategy', 'UNKNOWN')
+                            hold_time = (current_time - pos.get('entry_time', current_time)) / 60  # minutes
+                            
+                            position_details.append(
+                                f"{emoji} `{token[:8]}` • {strategy}\n"
+                                f"   {pnl_pct:+.1f}% • {pnl_sol:+.4f} SOL • {hold_time:.0f}m"
+                            )
                     except:
                         pass
             
-            # Create live dashboard
-            self.create_live_dashboard_chart(
-                current_balance,
-                session_pnl,
-                session_pnl_usd,
-                trades,
-                win_rate,
-                active_positions,
-                total_unrealized_pnl
+            # Send comprehensive text update
+            self.send_live_text_dashboard(
+                current_balance, session_pnl, session_pnl_usd, trades, 
+                win_rate, best_trade, worst_trade, position_details, total_unrealized_pnl
             )
             
         except Exception as e:
             logging.error(f"Live dashboard update error: {e}")
+    
+    def send_live_text_dashboard(self, balance, session_pnl, session_pnl_usd, trades, win_rate, best_trade, worst_trade, positions, unrealized_pnl):
+        """Send comprehensive text-based live dashboard"""
+        try:
+            # Main stats
+            pnl_emoji = "🟢" if session_pnl > 0 else "🔴" if session_pnl < 0 else "⚪"
+            unrealized_emoji = "🟢" if unrealized_pnl > 0 else "🔴" if unrealized_pnl < 0 else "⚪"
+            
+            # Progress calculation
+            daily_target = 200  # $200 target
+            progress_pct = min(100, (session_pnl_usd / daily_target) * 100) if session_pnl_usd > 0 else 0
+            progress_bar = self.create_text_progress_bar(progress_pct)
+            
+            # Win rate color
+            if win_rate > 60:
+                wr_emoji = "🟢"
+            elif win_rate > 40:
+                wr_emoji = "🟡"
+            else:
+                wr_emoji = "🔴"
+            
+            # Main description
+            description = (
+                f"📊 **LIVE TRADING DASHBOARD**\n\n"
+                f"💰 **Wallet Balance:** {balance:.3f} SOL\n"
+                f"{pnl_emoji} **Session P&L:** {session_pnl:+.4f} SOL (${session_pnl_usd:+.2f})\n"
+                f"{unrealized_emoji} **Unrealized:** {unrealized_pnl:+.4f} SOL\n\n"
+                f"📈 **Trading Stats:**\n"
+                f"• Trades: {trades} ({wins} wins)\n"
+                f"• {wr_emoji} Win Rate: {win_rate:.1f}%\n"
+                f"• Best: +{best_trade:.4f} SOL\n"
+                f"• Worst: {worst_trade:.4f} SOL\n\n"
+                f"🎯 **Daily Progress:**\n"
+                f"{progress_bar}\n"
+                f"{progress_pct:.1f}% to ${daily_target} target\n"
+            )
+            
+            # Add positions if any
+            if positions:
+                description += f"\n💼 **Active Positions ({len(positions)}):**\n"
+                for pos in positions[:3]:  # Show max 3 positions
+                    description += f"{pos}\n"
+                if len(positions) > 3:
+                    description += f"... and {len(positions)-3} more\n"
+            else:
+                description += f"\n💼 **No Active Positions**\n"
+            
+            # Add timestamp
+            description += f"\n⏰ Updated: {datetime.now().strftime('%H:%M:%S')}"
+            
+            # Create fields for additional info
+            fields = []
+            
+            # Market status field
+            if trades > 0:
+                avg_trade = session_pnl / trades if trades > 0 else 0
+                fields.append({
+                    "name": "📊 Performance",
+                    "value": f"Avg per trade: {avg_trade:+.4f} SOL\nTotal positions: {len(positions)}",
+                    "inline": True
+                })
+            
+            # Next update field
+            fields.append({
+                "name": "🔄 Updates",
+                "value": "Every 5 minutes\nAuto-refresh enabled",
+                "inline": True
+            })
+            
+            color = 0x00ff00 if session_pnl > 0 else 0xff0000 if session_pnl < 0 else 0x0099ff
+            
+            self.send_alert("📱 Live Dashboard", description, color, fields)
+            
+        except Exception as e:
+            logging.error(f"Live text dashboard error: {e}")
+            
+    
+    def create_text_progress_bar(self, percentage):
+        """Create a text-based progress bar"""
+        filled = int(percentage / 10)
+        empty = 10 - filled
+        bar = "🟩" * filled + "⬜" * empty
+        return f"`{bar}` {percentage:.1f}%"
+        
     
     def create_live_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
         """Create live dashboard chart with all key metrics"""
@@ -348,51 +429,6 @@ class LiveDiscordDashboard:
             logging.error(f"Simple chart creation error: {e}")
             return None
     
-    def send_live_dashboard_update(self, trader):
-        """Send live dashboard update every 5 minutes with simple chart"""
-        current_time = time.time()
-    
-        # Update every 5 minutes (300 seconds) 
-        if current_time - self.last_live_update < 300:
-            return
-    
-        self.last_live_update = current_time
-    
-        try:
-            # Get real-time data from trader
-            current_balance = trader.wallet.get_balance()
-            session_pnl = trader.brain.daily_stats.get('pnl_sol', 0)
-            session_pnl_usd = session_pnl * 240
-            trades = trader.brain.daily_stats.get('trades', 0)
-            wins = trader.brain.daily_stats.get('wins', 0)
-            win_rate = (wins / trades) * 100 if trades > 0 else 0
-        
-            # Get positions
-            total_unrealized_pnl = 0
-            if trader.positions:
-                for token, pos in trader.positions.items():
-                    try:
-                        current_price = get_token_price(token)
-                        if current_price and pos.get('entry_price'):
-                            pnl_sol = pos.get('size', 0) * (current_price - pos['entry_price'])
-                            total_unrealized_pnl += pnl_sol
-                    except:
-                        pass
-        
-            # Create simple chart
-            img_buffer = self.create_simple_dashboard_chart(
-                current_balance, session_pnl, session_pnl_usd, 
-                trades, win_rate, trader.positions, total_unrealized_pnl
-            )
-        
-            if img_buffer:
-                self.send_simple_dashboard_with_chart(img_buffer, current_balance, session_pnl, session_pnl_usd, trades, win_rate)
-            else:
-                # Fallback to text
-                self.send_text_dashboard_update(current_balance, session_pnl, session_pnl_usd, trades, win_rate)
-            
-        except Exception as e:
-            logging.error(f"Live dashboard update error: {e}")
     
     def send_text_dashboard_update(self, balance, session_pnl, session_pnl_usd, trades, win_rate):
         """Send text-only dashboard if chart fails"""
