@@ -209,6 +209,45 @@ class LiveDiscordDashboard:
             # Send text update if chart fails
             self.send_text_dashboard_update(balance, session_pnl, session_pnl_usd, trades, win_rate)
 
+
+    def send_simple_dashboard_with_chart(self, img_buffer, balance, session_pnl, session_pnl_usd, trades, win_rate):
+        """Send simple dashboard with chart image"""
+        try:
+            # Convert image to base64
+            img_base64 = base64.b64encode(img_buffer.getvalue()).decode()
+            
+            # Create summary description
+            pnl_emoji = "🟢" if session_pnl > 0 else "🔴" if session_pnl < 0 else "⚪"
+            
+            description = (
+                f"📱 **LIVE DASHBOARD** 📱\n\n"
+                f"💰 **Balance:** {balance:.3f} SOL\n"
+                f"{pnl_emoji} **Session:** {session_pnl:+.4f} SOL (${session_pnl_usd:+.2f})\n"
+                f"📊 **Stats:** {trades} trades | {win_rate:.1f}% WR\n"
+                f"⏰ **Auto-updates every 5 minutes**"
+            )
+            
+            # Create embed with image
+            embed = {
+                "title": "📊 Live Trading Dashboard",
+                "description": description,
+                "color": 0x00ff00 if session_pnl > 0 else 0xff0000 if session_pnl < 0 else 0x0099ff,
+                "timestamp": datetime.utcnow().isoformat(),
+                "image": {"url": f"data:image/png;base64,{img_base64}"},
+                "footer": {"text": "Live Dashboard • Compact Format"}
+            }
+            
+            data = {"embeds": [embed]}
+            
+            response = requests.post(self.webhook_url, json=data, timeout=15)
+            if response.status_code == 204:
+                logging.info("✅ Live dashboard sent to Discord")
+            else:
+                logging.error(f"Live dashboard failed: {response.status_code}")
+                
+        except Exception as e:
+            logging.error(f"Live dashboard error: {e}")
+            
     
     def create_simple_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
         """Create simple dashboard chart matching the working size"""
