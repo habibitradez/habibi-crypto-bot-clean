@@ -46,14 +46,20 @@ class LiveDiscordDashboard:
             best_trade = trader.brain.daily_stats.get('best_trade', 0)
             worst_trade = trader.brain.daily_stats.get('worst_trade', 0)
             
-            # Get positions with real-time P&L
+            # Get positions with SAFE price handling
             position_details = []
             total_unrealized_pnl = 0
             
             if trader.positions:
                 for token, pos in trader.positions.items():
                     try:
-                        current_price = get_token_price(token)
+                        # SAFE: Get price from trader or skip if not available
+                        current_price = None
+                        if hasattr(trader, 'get_token_price'):
+                            current_price = trader.get_token_price(token)
+                        elif hasattr(trader, 'price_cache') and token in trader.price_cache:
+                            current_price = trader.price_cache[token]
+                        
                         if current_price and pos.get('entry_price'):
                             pnl_pct = ((current_price - pos['entry_price']) / pos['entry_price']) * 100
                             pnl_sol = pos.get('size', 0) * (current_price - pos['entry_price'])
@@ -67,8 +73,18 @@ class LiveDiscordDashboard:
                                 f"{emoji} `{token[:8]}` • {strategy}\n"
                                 f"   {pnl_pct:+.1f}% • {pnl_sol:+.4f} SOL • {hold_time:.0f}m"
                             )
+                        else:
+                            # FALLBACK: Show position without P&L if price unavailable
+                            emoji = "⚪"
+                            strategy = pos.get('strategy', 'UNKNOWN')
+                            hold_time = (current_time - pos.get('entry_time', current_time)) / 60
+                            
+                            position_details.append(
+                                f"{emoji} `{token[:8]}` • {strategy}\n"
+                                f"   Price unavailable • {hold_time:.0f}m"
+                            )
                     except:
-                        pass
+                        pass  # Skip problematic positions
             
             # Send comprehensive text update
             self.send_live_text_dashboard(
@@ -78,6 +94,22 @@ class LiveDiscordDashboard:
             
         except Exception as e:
             logging.error(f"Live dashboard update error: {e}")
+            # FALLBACK: Send basic update if everything fails
+            try:
+                basic_balance = trader.wallet.get_balance()
+                basic_pnl = trader.brain.daily_stats.get('pnl_sol', 0)
+                self.send_alert(
+                    "📱 Live Update", 
+                    f"💰 Balance: {basic_balance:.3f} SOL\n🔴 Session: {basic_pnl:+.4f} SOL\n⏰ {datetime.now().strftime('%H:%M:%S')}", 
+                    0x0099ff
+                )
+            except:
+                # Last resort - just send a basic message
+                self.send_alert(
+                    "📱 Live Update", 
+                    f"Bot is running - {datetime.now().strftime('%H:%M:%S')}", 
+                    0x0099ff
+                )
     
     def send_live_text_dashboard(self, balance, session_pnl, session_pnl_usd, trades, win_rate, best_trade, worst_trade, positions, unrealized_pnl):
         """Send comprehensive text-based live dashboard"""
