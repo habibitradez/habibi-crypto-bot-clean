@@ -217,20 +217,20 @@ class LiveDiscordDashboard:
             plt.style.use('dark_background')
             fig, ax = plt.subplots(1, 1, figsize=(8, 6))  # Much smaller size
             fig.patch.set_facecolor('#2b2d31')
-        
+            
             # Create simple progress chart
             ax.axis('off')
-        
+            
             # Title
             ax.text(0.5, 0.95, '📊 Live Trading Dashboard', ha='center', va='top', 
                     fontsize=16, fontweight='bold', color='white', transform=ax.transAxes)
-        
+            
             # Balance section
             ax.text(0.1, 0.85, f'💰 Balance:', ha='left', va='center', fontsize=12, 
                     color='#87ceeb', transform=ax.transAxes)
             ax.text(0.9, 0.85, f'{balance:.3f} SOL', ha='right', va='center', fontsize=12, 
                     color='white', fontweight='bold', transform=ax.transAxes)
-        
+            
             # Session P&L
             pnl_color = '#00ff00' if session_pnl > 0 else '#ff0000' if session_pnl < 0 else '#ffffff'
             ax.text(0.1, 0.75, f'📈 Session P&L:', ha='left', va='center', fontsize=12, 
@@ -239,39 +239,72 @@ class LiveDiscordDashboard:
                     color=pnl_color, fontweight='bold', transform=ax.transAxes)
             ax.text(0.9, 0.70, f'(${session_pnl_usd:+.2f})', ha='right', va='center', fontsize=10, 
                     color=pnl_color, transform=ax.transAxes)
-        
+            
             # Trading stats
             ax.text(0.1, 0.6, f'🎯 Trades:', ha='left', va='center', fontsize=12, 
                     color='#87ceeb', transform=ax.transAxes)
             ax.text(0.9, 0.6, f'{trades}', ha='right', va='center', fontsize=12, 
                     color='white', fontweight='bold', transform=ax.transAxes)
-        
-           ax.text(0.1, 0.5, f'📊 Win Rate:', ha='left', va='center', fontsize=12, 
+            
+            ax.text(0.1, 0.5, f'📊 Win Rate:', ha='left', va='center', fontsize=12, 
                     color='#87ceeb', transform=ax.transAxes)
             wr_color = '#00ff00' if win_rate > 60 else '#ffff00' if win_rate > 40 else '#ff0000'
             ax.text(0.9, 0.5, f'{win_rate:.1f}%', ha='right', va='center', fontsize=12, 
                     color=wr_color, fontweight='bold', transform=ax.transAxes)
-        
+            
             # Active positions
             ax.text(0.1, 0.4, f'💼 Positions:', ha='left', va='center', fontsize=12, 
                     color='#87ceeb', transform=ax.transAxes)
             ax.text(0.9, 0.4, f'{len(positions) if positions else 0}', ha='right', va='center', fontsize=12, 
                     color='white', fontweight='bold', transform=ax.transAxes)
-        
+            
+            # Unrealized P&L
+            if unrealized_pnl != 0:
+                unrealized_color = '#00ff00' if unrealized_pnl > 0 else '#ff0000'
+                ax.text(0.1, 0.3, f'📍 Unrealized:', ha='left', va='center', fontsize=12, 
+                        color='#87ceeb', transform=ax.transAxes)
+                ax.text(0.9, 0.3, f'{unrealized_pnl:+.4f} SOL', ha='right', va='center', fontsize=12, 
+                        color=unrealized_color, fontweight='bold', transform=ax.transAxes)
+            
+            # Progress bar for daily target
+            daily_target_usd = 200  # Updated target
+            progress = min(100, (session_pnl_usd / daily_target_usd) * 100) if session_pnl_usd > 0 else 0
+            
+            # Simple progress bar
+            bar_width = 0.8
+            bar_height = 0.05
+            bar_x = 0.1
+            bar_y = 0.15
+            
+            # Background bar
+            ax.add_patch(plt.Rectangle((bar_x, bar_y), bar_width, bar_height, 
+                                     facecolor='#444444', transform=ax.transAxes))
+            
+            # Progress bar
+            if progress > 0:
+                progress_width = bar_width * (progress / 100)
+                bar_color = '#00ff00' if progress > 50 else '#ffff00' if progress > 25 else '#ff0000'
+                ax.add_patch(plt.Rectangle((bar_x, bar_y), progress_width, bar_height, 
+                                         facecolor=bar_color, transform=ax.transAxes))
+            
+            # Progress text
+            ax.text(0.5, 0.08, f'Daily Progress: {progress:.1f}% (${session_pnl_usd:+.0f}/${daily_target_usd})', 
+                    ha='center', va='center', fontsize=10, color='white', transform=ax.transAxes)
+            
             # Timestamp
             ax.text(0.99, 0.01, f'Updated: {datetime.now().strftime("%H:%M:%S")}', 
                     ha='right', va='bottom', fontsize=8, color='#87ceeb', transform=ax.transAxes)
-        
+            
             plt.tight_layout()
-        
-            # Save with smaller size
+            
+            # Save with smaller size and lower DPI
             img_buffer = io.BytesIO()
             plt.savefig(img_buffer, format='png', facecolor='#2b2d31', dpi=80, bbox_inches='tight')
             img_buffer.seek(0)
             plt.close()
-        
+            
             return img_buffer
-        
+            
         except Exception as e:
             logging.error(f"Simple chart creation error: {e}")
             return None
