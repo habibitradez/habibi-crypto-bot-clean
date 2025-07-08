@@ -99,7 +99,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -4169,15 +4169,17 @@ class AdaptiveAlphaTrader:
                     else:
                         continue  # Skip low activity
                     
-                    # Age scoring - prefer 30-120 min old
-                    if 30 <= age <= 120:
-                        momentum_score += 20
+                    # Age scoring - FIXED to prefer 45-120 min old
+                    if 45 <= age <= 120:  # Sweet spot - proven momentum
+                        momentum_score += 25  # Biggest bonus
+                    elif 30 <= age < 45:
+                        momentum_score += 15
                     elif age < 30:
-                        momentum_score += 15  # Still good if very new
+                        momentum_score += 10  # Less bonus for very new
                     elif age > 360:
                         continue  # Too old
                     else:
-                        momentum_score += 10
+                        momentum_score += 5
                     
                     # Holder scoring - not too many
                     if holders > 500:
@@ -4203,8 +4205,8 @@ class AdaptiveAlphaTrader:
                     elif liquidity >= 3000:
                         momentum_score += 5
                     
-                    # LOWER THRESHOLD - Trade more!
-                    if momentum_score >= 50:  # Not 70!
+                    # Add to candidates if score is high enough
+                    if momentum_score >= 50:  # Collect candidates
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
@@ -4224,8 +4226,8 @@ class AdaptiveAlphaTrader:
             if momentum_candidates:
                 best = momentum_candidates[0]
                 
-                # TRADE IT! Don't overthink
-                if best['score'] >= 50:  # Lower threshold
+                # TRADE ONLY HIGH QUALITY - Like successful version
+                if best['score'] >= 70:  # RAISED THRESHOLD (was 50)
                     logging.error(f"🚀 MOMENTUM DETECTED: {best['token']}")
                     logging.error(f"   Score: {best['score']}")
                     logging.error(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
@@ -4246,6 +4248,8 @@ class AdaptiveAlphaTrader:
                     )
                     
                     return success
+                else:
+                    logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
             
             return False
             
@@ -4532,7 +4536,7 @@ class AdaptiveAlphaTrader:
                 
 
     def monitor_momentum_position(self, token, position):
-        """SIMPLE & AGGRESSIVE with moonbags and trailing stops"""
+        """SMART MOMENTUM MONITORING with graduated hold times"""
         if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
             return
         
@@ -4549,7 +4553,45 @@ class AdaptiveAlphaTrader:
         if int(hold_time) % 30 == 0:
             logging.info(f"📊 MOMENTUM: {token[:8]} - {price_change:+.1f}% after {hold_time/60:.0f}m")
         
-        # SMART PROFIT SCALING (Keep this!)
+        # GRADUATED HOLD TIME LOGIC
+        if hold_time < 60:  # First minute - only extreme actions
+            if price_change >= 100:  # 2x in under a minute!
+                sell_size = position['size'] * 0.7
+                logging.warning(f"🚀 INSTANT 2X: {price_change:.1f}% in {hold_time:.0f}s! Taking 70%")
+                result = execute_optimized_sell(token, sell_size)
+                if result and result != "no-tokens":
+                    position['size'] *= 0.3
+                    position['partial_sold'] = True
+                    position['moonbag'] = True
+                return
+                
+            elif price_change <= -25:  # Catastrophic dump
+                logging.warning(f"🚨 QUICK DUMP: {price_change:.1f}% in {hold_time:.0f}s!")
+                self.ensure_position_sold(token, position, "QUICK_STOP")
+                return
+            else:
+                return  # Wait for more data
+                
+        elif hold_time < 300:  # 1-5 minutes - moderate actions
+            if price_change >= 50:  # Good pump
+                sell_size = position['size'] * 0.5
+                logging.warning(f"🔥 QUICK PUMP: {price_change:.1f}% in {hold_time/60:.1f}m! Taking 50%")
+                result = execute_optimized_sell(token, sell_size)
+                if result and result != "no-tokens":
+                    position['size'] *= 0.5
+                    position['partial_sold'] = True
+                return
+                
+            elif price_change <= -15:  # Normal stop loss
+                logging.warning(f"🛑 EARLY STOP LOSS: {price_change:.1f}%")
+                self.ensure_position_sold(token, position, "STOP_LOSS")
+                return
+            else:
+                return  # Keep waiting
+        
+        # AFTER 5 MINUTES - Full normal strategy
+        
+        # SMART PROFIT SCALING
         if not position.get('partial_sold'):
             if price_change >= 20:
                 # Take 50% at 20% gain
@@ -4571,7 +4613,7 @@ class AdaptiveAlphaTrader:
                     position['partial_sold'] = True
                     position['moonbag'] = True
         
-        # TRAILING STOP for moonbags (Keep this!)
+        # TRAILING STOP for moonbags
         elif position.get('moonbag'):
             if 'peak_price' not in position or current_price > position['peak_price']:
                 position['peak_price'] = current_price
@@ -4818,30 +4860,83 @@ class AdaptiveAlphaTrader:
         return final_position
 
     def is_honeypot(self, token_address):
-        """SIMPLIFIED honeypot check - focus on what matters"""
+        """BALANCED honeypot detection - protective but not paranoid"""
         try:
-            logging.info(f"🔍 Honeypot check: {token_address[:8]}")
+            logging.info(f"🔍 Checking honeypot status for {token_address[:8]}...")
             
-            # CRITICAL CHECK: Can we sell?
-            can_sell = self.verify_sell_route_exists(token_address)
-            if not can_sell:
-                logging.error(f"🚨 HONEYPOT: No sell routes!")
-                return True, 100, ["NO_SELL_ROUTES"]
+            # CRITICAL CHECK #1: Can we sell?
+            if not self.verify_sell_route_exists(token_address):
+                return True, 100, ["NO_SELL_ROUTE"]
             
-            # OPTIONAL: Check extreme concentration
-            has_extreme_concentration = self.check_honeypot_patterns(token_address)
-            if has_extreme_concentration:
-                logging.warning(f"⚠️ High concentration but can sell - allowing with caution")
-                # Don't block! Just note it
+            # Get token data
+            holders = get_holder_count(token_address)
+            liquidity = get_token_liquidity(token_address)
+            age = get_token_age_minutes(token_address)
             
-            # If we can sell, it's tradeable!
-            logging.info(f"✅ TOKEN OK: Can sell = safe to trade")
-            return False, 0, ["Can sell"]
+            honeypot_score = 0
+            reasons = []
+            
+            # CHECK #2: Extreme concentration only
+            url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTokenLargestAccounts",
+                "params": [token_address]
+            }
+            
+            response = requests.post(url, json=payload, timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                if 'result' in data and 'value' in data['result']:
+                    accounts = data['result']['value']
+                    if accounts:
+                        total_supply = sum(float(acc.get('amount', 0)) for acc in accounts)
+                        if total_supply > 0:
+                            top_holder = float(accounts[0].get('amount', 0))
+                            top_percent = (top_holder / total_supply) * 100
+                            
+                            # ONLY block EXTREME cases
+                            if top_percent > 95:  # 95%+ is definitely a honeypot
+                                honeypot_score += 100
+                                reasons.append(f"Top holder owns {top_percent:.0f}%")
+                            elif top_percent > 80:  # 80-95% is suspicious
+                                honeypot_score += 30
+                                reasons.append(f"High concentration: {top_percent:.0f}%")
+            
+            # CHECK #3: Basic sanity checks
+            if liquidity and liquidity < 500:  # Less than $500 liquidity
+                honeypot_score += 50
+                reasons.append(f"Tiny liquidity: ${liquidity}")
+            
+            if holders and holders < 10 and age and age > 30:  # Old with no holders
+                honeypot_score += 40
+                reasons.append(f"Dead token: {holders} holders after {age}m")
+            
+            # CHECK #4: Known scam patterns
+            if holders and age and holders > 0 and age > 0:
+                # Sudden massive holder spike (bot buyers)
+                if holders > 1000 and age < 5:
+                    honeypot_score += 50
+                    reasons.append(f"Bot buyers: {holders} in {age}m")
+            
+            # DECISION: Only block if score is HIGH
+            is_honeypot = honeypot_score >= 70  # Raised from 50
+            
+            if is_honeypot:
+                logging.warning(f"🚨 HONEYPOT DETECTED! Score: {honeypot_score}")
+                for reason in reasons:
+                    logging.warning(f"   - {reason}")
+            else:
+                logging.info(f"✅ Token passed checks. Score: {honeypot_score}")
+                
+            return is_honeypot, honeypot_score, reasons
             
         except Exception as e:
-            # Don't block on errors
-            logging.warning(f"Check error: {e} - allowing trade")
-            return False, 0, ["Error but allowing"]
+            logging.error(f"Honeypot check error: {e}")
+            # On error, still allow but log warning
+            logging.warning("⚠️ Honeypot check failed - allowing with caution")
+            return False, 0, ["Check failed but allowing"]
             
 
     def check_honeypot_patterns(self, token_address):
@@ -4887,17 +4982,19 @@ class AdaptiveAlphaTrader:
         except Exception as e:
             # IMPORTANT: Allow on error!
             return False  # Changed from True
+
     
     def verify_sell_route_exists(self, token_address, amount_lamports=1000000):
-        """SIMPLIFIED - Just check if ANY sell route exists"""
+        """BALANCED: Check if we can sell but don't over-block"""
         try:
-            # Test ONE realistic amount
             quote_url = "https://quote-api.jup.ag/v6/quote"
+            
+            # Try with reasonable parameters
             params = {
                 'inputMint': token_address,
-                'outputMint': 'So11111111111111111111111111111111111111112',  # SOL
-                'amount': '100000000',  # 0.1 token - realistic amount
-                'slippageBps': '2000',  # 20% slippage - be generous
+                'outputMint': 'So11111111111111111111111111111111111111112',
+                'amount': '10000000',  # 0.01 token
+                'slippageBps': '2000',  # 20% slippage
                 'onlyDirectRoutes': 'false'
             }
             
@@ -4905,28 +5002,26 @@ class AdaptiveAlphaTrader:
             
             if response.status_code == 200:
                 data = response.json()
-                # If we get ANY route, it's sellable
                 if data.get('routePlan'):
-                    logging.info(f"✅ Sell route exists!")
                     return True
             
-            # Try ONE more time with higher slippage
+            # Try once more with higher slippage
             params['slippageBps'] = '5000'  # 50% slippage
             response = requests.get(quote_url, params=params, timeout=5)
             
             if response.status_code == 200:
                 data = response.json()
                 if data.get('routePlan'):
-                    logging.info(f"✅ Sell route exists (high slippage)")
+                    logging.info(f"✅ Sell route exists (high slippage needed)")
                     return True
             
-            logging.warning(f"❌ No sell routes found")
+            logging.error(f"🚨 NO SELL ROUTE for {token_address[:8]}")
             return False
             
         except Exception as e:
-            # IMPORTANT: Allow on error!
+            # Don't block on API errors - let trade through
             logging.warning(f"Route check error: {e} - allowing trade")
-            return True  # Changed from False
+            return True
             
     
     def emergency_honeypot_check(self, token_address):
