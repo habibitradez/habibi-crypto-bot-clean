@@ -4625,47 +4625,38 @@ class AdaptiveAlphaTrader:
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
-        """Calculate position size based on multiple factors"""
-        base_size = 0.05
+        """More aggressive sizing while keeping safety features"""
+        balance = self.wallet.get_balance()
         
-        # Start with base adjustments
+        # Base percentage (not fixed SOL)
+        base_percentage = 0.08  # 8% of balance
+        
         if strategy == 'MOMENTUM_EXPLOSION':
-            # Check signal strength
             volume_ratio = token_data.get('volume_ratio', token_data.get('volume', 0) / max(token_data.get('liquidity', 1), 1))
             
             if volume_ratio > 5 and ml_confidence > 0.75:
-                # SUPER strong signal - bet bigger
-                position_size = 0.10
+                # SUPER strong signal - 15% of balance
+                position_percentage = 0.15
                 logging.warning(f"💎 PREMIUM SIGNAL: {volume_ratio:.1f}x volume, {ml_confidence:.1%} confidence")
             elif volume_ratio > 3 and ml_confidence > 0.65:
-                # Strong signal
-                position_size = 0.08
+                # Strong signal - 12% of balance
+                position_percentage = 0.12
             else:
-                # Standard momentum
-                position_size = 0.05
+                # Standard momentum - 10% of balance
+                position_percentage = 0.10
         else:
-            # Non-momentum trades stay smaller
-            position_size = 0.03
+            # Non-momentum trades - 6% of balance
+            position_percentage = 0.06
         
-        # Apply Kelly Criterion for optimal sizing (if we have stats)
-        if ml_confidence > 0.5 and hasattr(self.brain, 'strategy_performance'):
-            strategy_data = self.brain.strategy_performance.get(strategy, {})
-            if strategy_data:
-                wins = len([t for t in strategy_data.get('trades', []) if t.get('pnl_percent', 0) > 0])
-                total = len(strategy_data.get('trades', []))
-                
-                if total > 0:
-                    win_rate = wins / total
-                    # Simple Kelly adjustment without complex calculations
-                    if win_rate > 0.5:
-                        position_size *= 1.2  # Increase size for winning strategies
-                    elif win_rate < 0.3:
-                        position_size *= 0.8  # Decrease size for losing strategies
+        position_size = balance * position_percentage
         
-        # Never risk more than 3% of balance
-        max_position = self.wallet.get_balance() * 0.03
-        return min(position_size, max_position)
-
+        # Safety limits
+        min_position = 0.02  # Minimum 0.02 SOL
+        max_position = balance * 0.20  # Maximum 20% per trade (increased from 3%)
+        
+        final_size = max(min_position, min(position_size, max_position))
+        
+        return final_size
     def analyze_time_patterns(self):
         """Track when profitable trades occur"""
         
