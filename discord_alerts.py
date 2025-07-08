@@ -26,6 +26,7 @@ class LiveDiscordDashboard:
         )
     
     def send_live_dashboard_update(self, trader):
+        time.sleep(1)
         """Send live dashboard update every 5 minutes - TEXT ONLY (reliable)"""
         current_time = time.time()
         
@@ -112,6 +113,7 @@ class LiveDiscordDashboard:
                 )
     
     def send_live_text_dashboard(self, balance, session_pnl, session_pnl_usd, trades, win_rate, best_trade, worst_trade, positions, unrealized_pnl):
+        time.sleep(1)
         """Send comprehensive text-based live dashboard"""
         try:
             # Main stats
@@ -191,6 +193,7 @@ class LiveDiscordDashboard:
             
     
     def create_text_progress_bar(self, percentage):
+        time.sleep(1)
         """Create a text-based progress bar"""
         filled = int(percentage / 10)
         empty = 10 - filled
@@ -199,6 +202,7 @@ class LiveDiscordDashboard:
         
     
     def create_live_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
+        time.sleep(1)
         """Create live dashboard chart with all key metrics"""
         try:
             # Create figure with dark theme
@@ -327,6 +331,7 @@ class LiveDiscordDashboard:
 
 
     def send_simple_dashboard_with_chart(self, img_buffer, balance, session_pnl, session_pnl_usd, trades, win_rate):
+        time.sleep(1)
         """Send simple dashboard with chart image"""
         try:
             # Convert image to base64
@@ -366,6 +371,7 @@ class LiveDiscordDashboard:
             
     
     def create_simple_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
+        time.sleep(1)
         """Create simple dashboard chart matching the working size"""
         try:
             # Create smaller, simpler figure like the working one
@@ -480,6 +486,7 @@ class LiveDiscordDashboard:
         self.send_alert("📱 Live Update", description, 0x0099ff)
     
     def send_alert(self, title, description, color=0x0099ff, fields=None):
+        time.sleep(1)
         """Send regular alert via webhook"""
         try:
             embed = {
@@ -509,6 +516,7 @@ class LiveDiscordDashboard:
     
     # Keep all your existing critical alert methods
     def send_critical_alert(self, title, message, token=None):
+        time.sleep(1)
         """Send URGENT alert for manual intervention - HIGHEST PRIORITY"""
         urgent_title = f"🚨🚨🚨 CRITICAL: {title} 🚨🚨🚨"
         urgent_desc = f"**🔥 IMMEDIATE ACTION REQUIRED 🔥**\n\n{message}"
@@ -524,6 +532,7 @@ class LiveDiscordDashboard:
         logging.critical(f"🚨 CRITICAL ALERT SENT: {title}")
     
     def send_stuck_position_alert(self, token, position, attempts):
+        time.sleep(1)
         """Alert for positions that can't be sold - CRITICAL for manual intervention"""
         try:
             current_price = get_token_price(token)
