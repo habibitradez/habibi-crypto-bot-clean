@@ -14,9 +14,11 @@ class LiveDiscordDashboard:
         self.webhook_url = webhook_url
         self.channel_id = channel_id
         self.last_live_update = 0
+        self.min_delay = 1  # 1 second between regular messages
+        self.critical_delay = 2  # 2 seconds for critical alerts
         self.message_id = None  # Store message ID for editing
         
-        logging.info("✅ Live Discord Dashboard initialized")
+        logging.info("📊 Discord Dashboard: Updates every 5 minutes")
         
         # Send startup message
         self.send_alert(
@@ -26,7 +28,7 @@ class LiveDiscordDashboard:
         )
     
     def send_live_dashboard_update(self, trader):
-        time.sleep(1)
+        time.sleep(2)
         """Send live dashboard update every 5 minutes - TEXT ONLY (reliable)"""
         current_time = time.time()
         
@@ -113,7 +115,7 @@ class LiveDiscordDashboard:
                 )
     
     def send_live_text_dashboard(self, balance, session_pnl, session_pnl_usd, trades, win_rate, best_trade, worst_trade, positions, unrealized_pnl):
-        time.sleep(1)
+        time.sleep(2)
         """Send comprehensive text-based live dashboard"""
         try:
             # Main stats
@@ -193,7 +195,7 @@ class LiveDiscordDashboard:
             
     
     def create_text_progress_bar(self, percentage):
-        time.sleep(1)
+        time.sleep(2)
         """Create a text-based progress bar"""
         filled = int(percentage / 10)
         empty = 10 - filled
@@ -202,7 +204,7 @@ class LiveDiscordDashboard:
         
     
     def create_live_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
-        time.sleep(1)
+        time.sleep(2)
         """Create live dashboard chart with all key metrics"""
         try:
             # Create figure with dark theme
@@ -331,7 +333,7 @@ class LiveDiscordDashboard:
 
 
     def send_simple_dashboard_with_chart(self, img_buffer, balance, session_pnl, session_pnl_usd, trades, win_rate):
-        time.sleep(1)
+        time.sleep(2)
         """Send simple dashboard with chart image"""
         try:
             # Convert image to base64
@@ -371,7 +373,7 @@ class LiveDiscordDashboard:
             
     
     def create_simple_dashboard_chart(self, balance, session_pnl, session_pnl_usd, trades, win_rate, positions, unrealized_pnl):
-        time.sleep(1)
+        time.sleep(2)
         """Create simple dashboard chart matching the working size"""
         try:
             # Create smaller, simpler figure like the working one
