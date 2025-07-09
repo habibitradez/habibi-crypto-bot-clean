@@ -4134,128 +4134,136 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """SIMPLE & AGGRESSIVE - Like the one that made 2.2 SOL"""
-        logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
-        
-        try:
-            tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
-            momentum_candidates = []
-            
-            for token in tokens:
-                try:
-                    current_price = get_token_price(token)
-                    liquidity = get_token_liquidity(token) or 3000  # Use placeholder if None
-                    volume = get_24h_volume(token) or (liquidity * 1.5)  # Assume activity
-                    holders = get_holder_count(token) or 50  # Assume some holders
-                    age = get_token_age_minutes(token) or 30  # Assume 30 min if unknown
-                    
-                    if not current_price:
-                        continue
-                    
-                    # Skip really old tokens
-                    if age and age > 1440:  # 24 hours
-                        continue
-                    
-                    momentum_score = 0
-                    volume_liq_ratio = volume / liquidity
-                    
-                    # SIMPLE SCORING - Like your profitable version
-                    if volume_liq_ratio > 5:
-                        momentum_score += 40
-                    elif volume_liq_ratio > 3:
-                        momentum_score += 25
-                    elif volume_liq_ratio > 2:
-                        momentum_score += 10
-                    else:
-                        continue  # Skip low activity
-                    
-                    # Age scoring - FIXED to prefer 45-120 min old
-                    if 45 <= age <= 120:  # Sweet spot - proven momentum
-                        momentum_score += 25  # Biggest bonus
-                    elif 30 <= age < 45:
-                        momentum_score += 15
-                    elif age < 30:
-                        momentum_score += 10  # Less bonus for very new
-                    elif age > 360:
-                        continue  # Too old
-                    else:
-                        momentum_score += 5
-                    
-                    # Holder scoring - not too many
-                    if holders > 500:
-                        continue  # Too late
-                    elif 50 <= holders <= 300:
-                        momentum_score += 20
-                    elif 30 <= holders < 50:
-                        momentum_score += 15
-                    elif holders < 30 and age < 30:
-                        momentum_score += 10  # Early is OK
-                    
-                    # Holder velocity bonus
-                    if age > 0:
-                        holders_per_minute = holders / age
-                        if holders_per_minute > 2:
-                            momentum_score += 10
-                        elif holders_per_minute > 1:
-                            momentum_score += 5
-                    
-                    # Basic liquidity check
-                    if liquidity >= 5000:
-                        momentum_score += 10
-                    elif liquidity >= 3000:
-                        momentum_score += 5
-                    
-                    # Add to candidates if score is high enough
-                    if momentum_score >= 50:  # Collect candidates
-                        momentum_candidates.append({
-                            'token': token,
-                            'score': momentum_score,
-                            'volume_ratio': volume_liq_ratio,
-                            'age': age,
-                            'holders': holders,
-                            'liquidity': liquidity,
-                            'price': current_price
-                        })
-                    
-                except:
-                    continue
-            
-            # Sort by score
-            momentum_candidates.sort(key=lambda x: x['score'], reverse=True)
-            
-            if momentum_candidates:
-                best = momentum_candidates[0]
-                
-                # TRADE ONLY HIGH QUALITY - Like successful version
-                if best['score'] >= 70:  # RAISED THRESHOLD (was 50)
-                    logging.error(f"🚀 MOMENTUM DETECTED: {best['token']}")
-                    logging.error(f"   Score: {best['score']}")
-                    logging.error(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
-                    logging.error(f"   Age: {best['age']}m, Holders: {best['holders']}")
-                    
-                    # Simple position sizing
-                    position_size = 0.05
-                    if best['volume_ratio'] > 5 and best['score'] > 70:
-                        position_size = 0.08  # Bigger for strong signals
-                    
-                    # EXECUTE!
-                    success = self.execute_trade(
-                        best['token'],
-                        'MOMENTUM_EXPLOSION',
-                        position_size,
-                        best['price'],
-                        source_wallet='MOMENTUM_DETECT'
-                    )
-                    
-                    return success
-                else:
-                    logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
-            
-            return False
-            
-        except Exception as e:
-            logging.error(f"Error in momentum detection: {e}")
-            return False
+       """SIMPLE & AGGRESSIVE - Like the one that made 2.2 SOL"""
+       logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
+       
+       try:
+           tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+           momentum_candidates = []
+           
+           for token in tokens:
+               try:
+                   current_price = get_token_price(token)
+                   liquidity = get_token_liquidity(token) or 5000  # Changed to 5000
+                   volume = get_24h_volume(token) or (liquidity * 1.5)  # Assume activity
+                   holders = get_holder_count(token) or 50  # Assume some holders
+                   age = get_token_age_minutes(token) or 30  # Assume 30 min if unknown
+                   
+                   if not current_price:
+                       continue
+                   
+                   # Skip really old tokens
+                   if age and age > 1440:  # 24 hours
+                       continue
+                   
+                   momentum_score = 0
+                   volume_liq_ratio = volume / liquidity
+                   
+                   # SIMPLE SCORING - Like your profitable version
+                   if volume_liq_ratio > 5:
+                       momentum_score += 40
+                   elif volume_liq_ratio > 3:
+                       momentum_score += 25
+                   elif volume_liq_ratio > 2:
+                       momentum_score += 10
+                   else:
+                       continue  # Skip low activity
+                   
+                   # Age scoring - FIXED to prefer 45-120 min old
+                   if 45 <= age <= 120:  # Sweet spot - proven momentum
+                       momentum_score += 25  # Biggest bonus
+                   elif 30 <= age < 45:
+                       momentum_score += 15
+                   elif age < 30:
+                       momentum_score += 10  # Less bonus for very new
+                   elif age > 360:
+                       continue  # Too old
+                   else:
+                       momentum_score += 5
+                   
+                   # Holder scoring - not too many
+                   if holders > 500:
+                       continue  # Too late
+                   elif 80 <= holders <= 300:  # Changed from 50 to 80
+                       momentum_score += 20
+                   elif 30 <= holders < 80:  # Adjusted range
+                       momentum_score += 15
+                   elif holders < 30 and age < 30:
+                       momentum_score += 10  # Early is OK
+                   
+                   # Holder velocity bonus
+                   if age > 0:
+                       holders_per_minute = holders / age
+                       if holders_per_minute > 2:
+                           momentum_score += 10
+                       elif holders_per_minute > 1:
+                           momentum_score += 5
+                   
+                   # Basic liquidity check
+                   if liquidity >= 5000:
+                       momentum_score += 10
+                   elif liquidity >= 3000:
+                       momentum_score += 5
+                   
+                   # Add to candidates if score is high enough
+                   if momentum_score >= 50:  # Collect candidates
+                       momentum_candidates.append({
+                           'token': token,
+                           'score': momentum_score,
+                           'volume_ratio': volume_liq_ratio,
+                           'age': age,
+                           'holders': holders,
+                           'liquidity': liquidity,
+                           'price': current_price
+                       })
+                   
+               except:
+                   continue
+           
+           # Sort by score
+           momentum_candidates.sort(key=lambda x: x['score'], reverse=True)
+           
+           if momentum_candidates:
+               best = momentum_candidates[0]
+               
+               # TRADE ONLY HIGH QUALITY - Like successful version
+               if best['score'] >= 70:  # RAISED THRESHOLD (was 50)
+                   logging.error(f"🚀 MOMENTUM DETECTED: {best['token']}")
+                   logging.error(f"   Score: {best['score']}")
+                   logging.error(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
+                   logging.error(f"   Age: {best['age']}m, Holders: {best['holders']}")
+                   
+                   # Position sizing with 3% cap like profitable version
+                   balance = self.wallet.get_balance()
+                   if best['volume_ratio'] > 5 and best['score'] > 70:
+                       position_size = balance * 0.08  # 8% for strong signals
+                   else:
+                       position_size = balance * 0.05  # 5% standard
+                   
+                   # CRITICAL: Cap at 3% like your profitable version
+                   max_position = balance * 0.03
+                   position_size = min(position_size, max_position)
+                   
+                   logging.info(f"Position sizing: {position_size:.3f} SOL ({(position_size/balance)*100:.1f}% of {balance:.3f} SOL)")
+                   
+                   # EXECUTE!
+                   success = self.execute_trade(
+                       best['token'],
+                       'MOMENTUM_EXPLOSION',
+                       position_size,
+                       best['price'],
+                       source_wallet='MOMENTUM_DETECT'
+                   )
+                   
+                   return success
+               else:
+                   logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
+           
+           return False
+           
+       except Exception as e:
+           logging.error(f"Error in momentum detection: {e}")
+           return False
             
     
     def find_pre_pump_patterns(self):
@@ -4667,38 +4675,47 @@ class AdaptiveAlphaTrader:
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
-        """More aggressive sizing while keeping safety features"""
-        balance = self.wallet.get_balance()
+        """Calculate position size based on multiple factors"""
+        base_size = 0.05
         
-        # Base percentage (not fixed SOL)
-        base_percentage = 0.08  # 8% of balance
-        
+        # Start with base adjustments
         if strategy == 'MOMENTUM_EXPLOSION':
+            # Check signal strength
             volume_ratio = token_data.get('volume_ratio', token_data.get('volume', 0) / max(token_data.get('liquidity', 1), 1))
             
             if volume_ratio > 5 and ml_confidence > 0.75:
-                # SUPER strong signal - 15% of balance
-                position_percentage = 0.15
+                # SUPER strong signal - bet bigger
+                position_size = 0.10
                 logging.warning(f"💎 PREMIUM SIGNAL: {volume_ratio:.1f}x volume, {ml_confidence:.1%} confidence")
             elif volume_ratio > 3 and ml_confidence > 0.65:
-                # Strong signal - 12% of balance
-                position_percentage = 0.12
+                # Strong signal
+                position_size = 0.08
             else:
-                # Standard momentum - 10% of balance
-                position_percentage = 0.10
+                # Standard momentum
+                position_size = 0.05
         else:
-            # Non-momentum trades - 6% of balance
-            position_percentage = 0.06
+            # Non-momentum trades stay smaller
+            position_size = 0.03
         
-        position_size = balance * position_percentage
+        # Apply Kelly Criterion for optimal sizing (if we have stats)
+        if ml_confidence > 0.5 and hasattr(self.brain, 'strategy_performance'):
+            strategy_data = self.brain.strategy_performance.get(strategy, {})
+            if strategy_data:
+                wins = len([t for t in strategy_data.get('trades', []) if t.get('pnl_percent', 0) > 0])
+                total = len(strategy_data.get('trades', []))
+                
+                if total > 0:
+                    win_rate = wins / total
+                    # Simple Kelly adjustment without complex calculations
+                    if win_rate > 0.5:
+                        position_size *= 1.2  # Increase size for winning strategies
+                    elif win_rate < 0.3:
+                        position_size *= 0.8  # Decrease size for losing strategies
         
-        # Safety limits
-        min_position = 0.02  # Minimum 0.02 SOL
-        max_position = balance * 0.20  # Maximum 20% per trade (increased from 3%)
-        
-        final_size = max(min_position, min(position_size, max_position))
-        
-        return final_size
+        # Never risk more than 3% of balance
+        max_position = self.wallet.get_balance() * 0.03
+        return min(position_size, max_position)
+    
     def analyze_time_patterns(self):
         """Track when profitable trades occur"""
         
@@ -5936,7 +5953,7 @@ def run_adaptive_ai_system():
                 trader.find_opportunities_independently()
             
             # 2.5 AGGRESSIVE MOMENTUM CHECK - Every 15 seconds!
-            momentum_interval = int(os.getenv('MOMENTUM_SCAN_INTERVAL', '15'))
+            momentum_interval = int(os.getenv('MOMENTUM_SCAN_INTERVAL', '8'))
             if current_time - last_momentum_check > momentum_interval:
                 last_momentum_check = current_time
                 
@@ -16075,72 +16092,102 @@ def execute_sell_with_retries(token_address, amount, max_retries=3):
     logging.error(f"🚨 ALL SELL ATTEMPTS FAILED for {token_address}")
     return False
 
-def execute_via_javascript(token_address, amount, is_sell=False):
-    """Execute trade via JavaScript with proper amount handling and sell fixes"""
-    global wallet
-    
-    try:
-        import subprocess
-        
-        # USE THE ACTUAL AMOUNT PARAMETER!
-        amount = round(float(amount), 6)
-        trade_amount = str(amount)  # Use the amount passed to the function
-        
-        command_str = f"node swap.js {token_address} {trade_amount} {'true' if is_sell else 'false'}"
-        logging.info(f"⚡ Executing: {command_str}")
-        
-        # Increased timeout for sells (60s) and buys (30s)
-        timeout_duration = 120 if is_sell else 120
-        
-        result = subprocess.run([
-            'node', 'swap.js',
-            token_address,
-            trade_amount,
-            'true' if is_sell else 'false'
-        ], 
-        capture_output=True,
-        text=True,
-        timeout=timeout_duration,  # Dynamic timeout based on operation
-        cwd='/opt/render/project/src'
-        )
-
-        logging.info(f"✅ Subprocess completed without timeout")
-        
-        stdout_output = result.stdout if result.stdout else ""
-        stderr_output = result.stderr if result.stderr else ""
-        combined_output = stdout_output + stderr_output
-        
-        logging.info(f"📤 Output length: {len(combined_output)} characters")
-        
-        # SUCCESS DETECTION
-        success_indicators = [
-            "SUCCESS" in combined_output,
-            "BUY SUCCESS:" in combined_output,
-            "SELL SUCCESS:" in combined_output,
-            "confirmed" in combined_output.lower(),
-            "submitted" in combined_output.lower(),
-            "🎉 SUCCESS" in combined_output  # Your swap.js success indicator
-        ]
-        
-        is_successful = any(success_indicators)
-        
-        action = "SELL" if is_sell else "BUY"
-        
-        if is_successful:
-            logging.info(f"✅ {action} SUCCESS: {token_address}")
-            return True, combined_output
-        else:
-            logging.error(f"❌ {action} FAILED: {token_address}")
-            logging.error(f"Output: {combined_output[:500]}")  # Show first 500 chars of output
-            return False, combined_output
-            
-    except subprocess.TimeoutExpired:
-        timeout_duration = 120 if is_sell else 120
-        logging.error(f"⏰ TIMEOUT: {timeout_duration} seconds exceeded for {token_address}")
-        return False, f"Timeout after {timeout_duration} seconds"
-    except Exception as e:
-        logging.error(f"❌ ERROR: {e}")
-        return False, f"Error: {str(e)}"
+def execute_via_javascript(token_address, amount, is_sell=False, max_retries=3):
+   """Execute trade via JavaScript with proper amount handling and sell fixes"""
+   global wallet
+   
+   for attempt in range(max_retries):
+       try:
+           import subprocess
+           
+           # USE THE ACTUAL AMOUNT PARAMETER!
+           amount = round(float(amount), 6)
+           trade_amount = str(amount)  # Use the amount passed to the function
+           
+           command_str = f"node swap.js {token_address} {trade_amount} {'true' if is_sell else 'false'}"
+           
+           # Add retry info to log
+           if attempt > 0:
+               logging.info(f"⚡ Retry {attempt + 1}/{max_retries}: {command_str}")
+           else:
+               logging.info(f"⚡ Executing: {command_str}")
+           
+           # Reduced timeout - fail faster
+           timeout_duration = 30  # 30 seconds for both buy and sell
+           
+           result = subprocess.run([
+               'node', 'swap.js',
+               token_address,
+               trade_amount,
+               'true' if is_sell else 'false'
+           ], 
+           capture_output=True,
+           text=True,
+           timeout=timeout_duration,  # Reduced from 120
+           cwd='/opt/render/project/src'
+           )
+           logging.info(f"✅ Subprocess completed without timeout")
+           
+           stdout_output = result.stdout if result.stdout else ""
+           stderr_output = result.stderr if result.stderr else ""
+           combined_output = stdout_output + stderr_output
+           
+           logging.info(f"📤 Output length: {len(combined_output)} characters")
+           
+           # SUCCESS DETECTION
+           success_indicators = [
+               "SUCCESS" in combined_output,
+               "BUY SUCCESS:" in combined_output,
+               "SELL SUCCESS:" in combined_output,
+               "confirmed" in combined_output.lower(),
+               "submitted" in combined_output.lower(),
+               "🎉 SUCCESS" in combined_output  # Your swap.js success indicator
+           ]
+           
+           is_successful = any(success_indicators)
+           
+           action = "SELL" if is_sell else "BUY"
+           
+           if is_successful:
+               logging.info(f"✅ {action} SUCCESS: {token_address}")
+               return True, combined_output
+           else:
+               logging.error(f"❌ {action} FAILED: {token_address}")
+               logging.error(f"Output: {combined_output[:500]}")  # Show first 500 chars of output
+               
+               # Don't retry if it's the last attempt
+               if attempt < max_retries - 1:
+                   wait_time = 2 * (attempt + 1)  # 2s, 4s, 6s
+                   logging.warning(f"⏳ Waiting {wait_time}s before retry...")
+                   time.sleep(wait_time)
+                   continue
+               
+               return False, combined_output
+               
+       except subprocess.TimeoutExpired:
+           logging.error(f"⏰ TIMEOUT: {timeout_duration} seconds exceeded for {token_address}")
+           
+           # Retry on timeout
+           if attempt < max_retries - 1:
+               logging.warning(f"🔄 Retrying after timeout...")
+               time.sleep(2)
+               continue
+               
+           return False, f"Timeout after {max_retries} attempts"
+           
+       except Exception as e:
+           logging.error(f"❌ ERROR: {e}")
+           
+           # Retry on other errors too
+           if attempt < max_retries - 1:
+               logging.warning(f"🔄 Retrying after error...")
+               time.sleep(2)
+               continue
+               
+           return False, f"Error after {max_retries} attempts: {str(e)}"
+   
+   # Should never reach here, but just in case
+   return False, "Max retries exceeded"
 
 def get_token_symbol(token_address):
     """Get symbol for token address, or return None if not found."""
