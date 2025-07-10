@@ -99,7 +99,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -3827,26 +3827,32 @@ class AdaptiveAlphaTrader:
             self.schedule_ml_retraining()
 
     def is_token_safe(self, token_address):
-        """Check if token is safe from rug pulls"""
+        """Basic safety check - not too strict"""
         try:
-            # This is a simplified version - implement full checks
+            # CRITICAL: Can we sell it?
+            can_sell = self.simulate_sell_transaction(token_address)
+            if can_sell == False:
+                logging.error(f"🚨 NO SELL ROUTE - BLOCKING {token_address[:8]}")
+                return False
+        
+            # Get data
             liquidity = get_token_liquidity(token_address)
             holders = get_holder_count(token_address)
+        
+            # ADJUSTED: More reasonable minimums
+            if liquidity and liquidity < 1000:  # Was 5000, now 1000
+                logging.warning(f"⚠️ Very low liquidity: ${liquidity}")
+                return False
             
-            # Basic safety checks
-            if liquidity < 5000:  # Less than $5k liquidity
-                logging.warning(f"🚨 Low liquidity: ${liquidity}")
+            if holders and holders < 10:  # Was 50, now 10
+                logging.warning(f"⚠️ Very few holders: {holders}")
                 return False
-                
-            if holders < 50:  # Less than 50 holders
-                logging.warning(f"🚨 Low holders: {holders}")
-                return False
-                
+        
             return True
-            
+        
         except Exception as e:
-            logging.error(f"Error checking token safety: {e}")
-            return False  # Default to unsafe
+            logging.error(f"Safety check error: {e}")
+            return False  # Fail safe on errors
 
 
     def verify_ml_status(self):
@@ -4233,6 +4239,20 @@ class AdaptiveAlphaTrader:
                    logging.error(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
                    logging.error(f"   Age: {best['age']}m, Holders: {best['holders']}")
                    
+                   # ADD HONEYPOT CHECK HERE
+                   is_hp, hp_score, hp_reasons = self.is_honeypot(best['token'])
+                   if is_hp:
+                       logging.error(f"🚨 HONEYPOT BLOCKED: {best['token'][:8]} - {hp_reasons}")
+                       # Try next best candidate
+                       for candidate in momentum_candidates[1:4]:  # Check next 3
+                           if candidate['score'] >= 70:
+                               is_hp, hp_score, hp_reasons = self.is_honeypot(candidate['token'])
+                               if not is_hp:
+                                   best = candidate
+                                   break
+                       else:
+                           return False  # All candidates are honeypots
+                   
                    # Position sizing with 3% cap like profitable version
                    balance = self.wallet.get_balance()
                    if best['volume_ratio'] > 5 and best['score'] > 70:
@@ -4258,6 +4278,11 @@ class AdaptiveAlphaTrader:
                    return success
                else:
                    logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
+                   # ADD DIAGNOSTIC LINE:
+                   logging.warning(f"❌ Best candidate only scored {best['score']} (need 70+) - Token: {best['token'][:8]}")
+           else:
+               # ADD DIAGNOSTIC LINE:
+               logging.warning(f"❌ No momentum candidates found from {len(tokens)} tokens checked")
            
            return False
            
@@ -5530,6 +5555,85 @@ class AdaptiveAlphaTrader:
             return False
 
 
+    def emergency_position_check(self):
+        """Check positions every 5 seconds for rapid drops"""
+        try:
+            for token, position in list(self.active_positions.items()):
+                current_price = get_token_price(token)
+                if not current_price:
+                    continue
+                
+                price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                hold_time = time.time() - position['entry_time']
+                
+                # MULTI-LEVEL EMERGENCY EXITS
+                # Level 1: Catastrophic drop
+                if price_change <= -30:
+                    logging.error(f"🚨 CATASTROPHIC DROP: {token[:8]} down {price_change:.1f}%")
+                    self.force_emergency_sell(token, position, "CATASTROPHIC_DROP")
+                    
+                # Level 2: Quick dump detection (20% drop in under 2 minutes)
+                elif price_change <= -20 and hold_time < 120:
+                    logging.error(f"🚨 QUICK DUMP: {token[:8]} down {price_change:.1f}% in {hold_time:.0f}s")
+                    self.force_emergency_sell(token, position, "QUICK_DUMP")
+                    
+                # Level 3: Panic detection (check last 30 seconds movement)
+                elif hasattr(position, 'last_emergency_price'):
+                    time_diff = 30  # Compare to 30 seconds ago
+                    price_drop = ((current_price - position['last_emergency_price']) / position['last_emergency_price']) * 100
+                    
+                    if price_drop <= -10:  # 10% drop in 30 seconds
+                        logging.error(f"🚨 PANIC SELL DETECTED: {token[:8]} dropped {price_drop:.1f}% in 30s")
+                        self.force_emergency_sell(token, position, "PANIC_SELL")
+                
+                # Update last emergency price every 30 seconds
+                if not hasattr(position, 'last_emergency_check') or time.time() - position['last_emergency_check'] > 30:
+                    position['last_emergency_price'] = current_price
+                    position['last_emergency_check'] = time.time()
+                
+        except Exception as e:
+            logging.error(f"Emergency check error: {e}")
+    
+    def force_emergency_sell(self, token, position, reason):
+        """Force sell with multiple attempts and methods"""
+        logging.error(f"🚨 FORCING EMERGENCY SELL: {reason}")
+        
+        # Try 3 times with different methods
+        for attempt in range(3):
+            try:
+                # Method 1: Normal sell
+                if attempt == 0:
+                    result = execute_optimized_sell(token, position['size'])
+                # Method 2: Higher slippage
+                elif attempt == 1:
+                    result = execute_market_sell(token, position['size'])  # If you have this
+                # Method 3: Partial sell
+                else:
+                    result = execute_optimized_sell(token, position['size'] * 0.95)
+                
+                if result and result != "no-tokens":
+                    logging.error(f"✅ Emergency exit successful on attempt {attempt + 1}")
+                    # Force remove from positions
+                    if token in self.active_positions:
+                        del self.active_positions[token]
+                    return
+                    
+            except Exception as e:
+                logging.error(f"Emergency sell attempt {attempt + 1} failed: {e}")
+            
+            time.sleep(1)
+        
+        # All attempts failed - CRITICAL ALERT
+        if hasattr(self, 'discord') and self.discord:
+            self.discord.send_critical_alert(
+                title="🚨🚨🚨 EMERGENCY SELL FAILED",
+                description=f"MANUAL INTERVENTION REQUIRED NOW!\nToken: {token[:8]}\nReason: {reason}",
+                token_address=token,
+                current_pnl=price_change,
+                entry_price=position['entry_price'],
+                current_price=current_price
+            )
+
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
     import sqlite3
@@ -5878,6 +5982,7 @@ def run_adaptive_ai_system():
     momentum_opportunities = []
     last_momentum_check = 0
     last_discord_update = 0
+    last_emergency_check = 0
     iteration = 0
     session_count = 1
     
@@ -5973,6 +6078,11 @@ def run_adaptive_ai_system():
                             opp for opp in momentum_opportunities 
                             if current_time - opp.get('timestamp', 0) < 120
                         ]
+
+            # 2.6 EMERGENCY POSITION CHECK - Every 30 seconds
+            if current_time - last_emergency_check > 5:
+                last_emergency_check = current_time
+                trader.emergency_position_check()
             
             # BUNDLE EXECUTION - Only if we have 3+ opportunities
             if current_time - last_bundle_time > 30 and len(momentum_opportunities) >= 3:
