@@ -49,7 +49,7 @@ const MIN_SLIPPAGE_FOR_BUYS = 1000;     // CHANGED: 8% instead of 1%
 const MIN_SLIPPAGE_FOR_SELLS = 1500;    // CHANGED: 10% instead of 5%
 const MIN_SLIPPAGE_FOR_SMALL = 2000;   // KEEP: 20% for small positions
 const MIN_PRIORITY_FEE_BUYS = 1000000;   // DOUBLED: 0.0005 SOL for speed
-const MIN_PRIORITY_FEE_SELLS = 2000000; // INCREASED: 0.002 SOL priority
+const MIN_PRIORITY_FEE_SELLS = 5000000; // INCREASED: 0.002 SOL priority
 const MIN_PRIORITY_FEE_SMALL = 3000000; // KEEP: 0.003 SOL for urgency
 
 // QuickNode Metis configuration - UPDATED TO USE CORRECT ENVIRONMENT VARIABLES
@@ -1011,7 +1011,7 @@ async function submitToJito(transactions, keypair) {
     const tipAccount = tipAccounts[Math.floor(Math.random() * tipAccounts.length)];
     
     // Create tip transaction (0.0001 SOL tip)
-    const tipAmount = 1000000; // 0.0001 SOL in lamports
+    const tipAmount = 2000000; // 0.0001 SOL in lamports
     const tipInstruction = await createTipInstruction(
         keypair.publicKey.toBase58(),
         tipAccount,
