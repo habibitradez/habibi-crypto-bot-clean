@@ -99,7 +99,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -5568,100 +5568,53 @@ class AdaptiveAlphaTrader:
 
 
     def emergency_position_check(self):
-        """Check positions every 5 seconds for rapid drops"""
-        try:
-            # Check if positions exist first
-            if not hasattr(self, 'positions') or not self.positions:
-                return
-                
-            for token, position in list(self.positions.items()):  # Changed from self.active_positions
-                current_price = get_token_price(token)
-                if not current_price:
-                    continue
-                
-                price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
-                hold_time = time.time() - position['entry_time']
-                
-                # MULTI-LEVEL EMERGENCY EXITS
-                # Level 1: Catastrophic drop
-                if price_change <= -30:
-                    logging.error(f"🚨 CATASTROPHIC DROP: {token[:8]} down {price_change:.1f}%")
-                    self.force_emergency_sell(token, position, "CATASTROPHIC_DROP")
-                    
-                # Level 2: Quick dump detection (20% drop in under 2 minutes)
-                elif price_change <= -20 and hold_time < 120:
-                    logging.error(f"🚨 QUICK DUMP: {token[:8]} down {price_change:.1f}% in {hold_time:.0f}s")
-                    self.force_emergency_sell(token, position, "QUICK_DUMP")
-                    
-                # Level 3: Panic detection (check last 30 seconds movement)
-                elif hasattr(position, 'last_emergency_price'):
-                    time_diff = 30  # Compare to 30 seconds ago
-                    price_drop = ((current_price - position['last_emergency_price']) / position['last_emergency_price']) * 100
-                    
-                    if price_drop <= -10:  # 10% drop in 30 seconds
-                        logging.error(f"🚨 PANIC SELL DETECTED: {token[:8]} dropped {price_drop:.1f}% in 30s")
-                        self.force_emergency_sell(token, position, "PANIC_SELL")
-                
-                # Update last emergency price every 30 seconds
-                if not hasattr(position, 'last_emergency_check') or time.time() - position['last_emergency_check'] > 30:
-                    position['last_emergency_price'] = current_price
-                    position['last_emergency_check'] = time.time()
-                
-        except Exception as e:
-            logging.error(f"Emergency check error: {e}")
+       """Check positions every 5 seconds for rapid drops"""
+       try:
+           # Check if positions exist first
+           if not hasattr(self, 'positions') or not self.positions:
+               return
+               
+           for token, position in list(self.positions.items()):
+               try:
+                   current_price = get_token_price(token)
+                   if not current_price:
+                       continue
+                   
+                   price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
+                   hold_time = time.time() - position['entry_time']
+                   
+                   # MULTI-LEVEL EMERGENCY EXITS
+                   # Level 1: Catastrophic drop
+                   if price_change <= -30:
+                       logging.error(f"🚨 CATASTROPHIC DROP: {token[:8]} down {price_change:.1f}%")
+                       self.ensure_position_sold(token, position, "CATASTROPHIC_DROP")
+                       
+                   # Level 2: Quick dump detection (20% drop in under 2 minutes)
+                   elif price_change <= -20 and hold_time < 120:
+                       logging.error(f"🚨 QUICK DUMP: {token[:8]} down {price_change:.1f}% in {hold_time:.0f}s")
+                       self.ensure_position_sold(token, position, "QUICK_DUMP")
+                       
+                   # Level 3: Panic detection (check last 30 seconds movement)
+                   elif hasattr(position, 'last_emergency_price'):
+                       time_diff = 30  # Compare to 30 seconds ago
+                       price_drop = ((current_price - position['last_emergency_price']) / position['last_emergency_price']) * 100
+                       
+                       if price_drop <= -10:  # 10% drop in 30 seconds
+                           logging.error(f"🚨 PANIC SELL DETECTED: {token[:8]} dropped {price_drop:.1f}% in 30s")
+                           self.ensure_position_sold(token, position, "PANIC_SELL")
+                   
+                   # Update last emergency price every 30 seconds
+                   if not hasattr(position, 'last_emergency_check') or time.time() - position['last_emergency_check'] > 30:
+                       position['last_emergency_price'] = current_price
+                       position['last_emergency_check'] = time.time()
+                   
+               except Exception as e:
+                   logging.error(f"Error checking position {token[:8]}: {e}")
+                   continue
+                   
+       except Exception as e:
+           logging.error(f"Emergency check error: {e}")
     
-    def force_emergency_sell(self, token, position, reason):
-        """Force sell with multiple attempts and methods"""
-        try:
-            current_price = get_token_price(token)
-            if current_price and position.get('entry_price'):
-                price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
-            else:
-                price_change = -999
-        
-            logging.error(f"🚨 FORCING EMERGENCY SELL: {reason} - Token: {token[:8]}")
-        
-            # Try 3 times with different methods
-            for attempt in range(3):
-                try:
-                    # Try to sell
-                    result = execute_optimized_sell(token, position['size'])
-                
-                    if result and result != "no-tokens":
-                        logging.error(f"✅ Emergency exit successful on attempt {attempt + 1}")
-                        # Force remove from positions
-                        if token in self.positions:
-                            del self.positions[token]
-                        return True
-                    else:
-                        logging.error(f"❌ Attempt {attempt + 1} failed: result={result}")
-                    
-                except Exception as e:
-                    logging.error(f"❌ Emergency sell attempt {attempt + 1} error: {e}")
-            
-                time.sleep(2)  # Wait 2 seconds between attempts
-        
-            # All attempts failed - CRITICAL ALERT
-            logging.error(f"🚨🚨🚨 ALL EMERGENCY SELL ATTEMPTS FAILED for {token[:8]}")
-        
-            if hasattr(self, 'discord') and self.discord:
-                self.discord.send_critical_alert(
-                    title="🚨🚨🚨 EMERGENCY SELL FAILED - MANUAL ACTION REQUIRED",
-                    description=f"Token: {token[:8]}\nReason: {reason}\nP&L: {price_change:.1f}%\nSize: {position.get('size', 0)} SOL",
-                    token_address=token,
-                    current_pnl=price_change,
-                    entry_price=position.get('entry_price', 0),
-                    current_price=current_price if current_price else 0
-                )
-        
-            return False
-            
-        except Exception as e:
-            logging.error(f"Force emergency sell critical error: {e}")
-            import traceback
-            logging.error(traceback.format_exc())
-            return False
-
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
