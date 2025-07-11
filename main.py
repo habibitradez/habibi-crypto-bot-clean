@@ -5614,40 +5614,54 @@ class AdaptiveAlphaTrader:
         """Force sell with multiple attempts and methods"""
         try:
             current_price = get_token_price(token)
-            price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100 if current_price else -999
-            
-            logging.error(f"🚨 FORCING EMERGENCY SELL: {reason}")
-            
+            if current_price and position.get('entry_price'):
+                price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
+            else:
+                price_change = -999
+        
+            logging.error(f"🚨 FORCING EMERGENCY SELL: {reason} - Token: {token[:8]}")
+        
             # Try 3 times with different methods
             for attempt in range(3):
                 try:
+                    # Try to sell
                     result = execute_optimized_sell(token, position['size'])
-                    
+                
                     if result and result != "no-tokens":
                         logging.error(f"✅ Emergency exit successful on attempt {attempt + 1}")
                         # Force remove from positions
-                        if token in self.positions:  # Changed from self.active_positions
+                        if token in self.positions:
                             del self.positions[token]
-                        return
-                        
+                        return True
+                    else:
+                        logging.error(f"❌ Attempt {attempt + 1} failed: result={result}")
+                    
                 except Exception as e:
-                    logging.error(f"Emergency sell attempt {attempt + 1} failed: {e}")
-                
-                time.sleep(1)
+                    logging.error(f"❌ Emergency sell attempt {attempt + 1} error: {e}")
             
+                time.sleep(2)  # Wait 2 seconds between attempts
+        
             # All attempts failed - CRITICAL ALERT
+            logging.error(f"🚨🚨🚨 ALL EMERGENCY SELL ATTEMPTS FAILED for {token[:8]}")
+        
             if hasattr(self, 'discord') and self.discord:
                 self.discord.send_critical_alert(
-                    title="🚨🚨🚨 EMERGENCY SELL FAILED",
-                    description=f"MANUAL INTERVENTION REQUIRED NOW!\nToken: {token[:8]}\nReason: {reason}\nDown: {price_change:.1f}%",
+                    title="🚨🚨🚨 EMERGENCY SELL FAILED - MANUAL ACTION REQUIRED",
+                    description=f"Token: {token[:8]}\nReason: {reason}\nP&L: {price_change:.1f}%\nSize: {position.get('size', 0)} SOL",
                     token_address=token,
                     current_pnl=price_change,
                     entry_price=position.get('entry_price', 0),
-                    current_price=current_price
+                    current_price=current_price if current_price else 0
                 )
-                
+        
+            return False
+            
         except Exception as e:
-            logging.error(f"Force emergency sell error: {e}")
+            logging.error(f"Force emergency sell critical error: {e}")
+            import traceback
+            logging.error(traceback.format_exc())
+            return False
+
 
 def import_sqlite_to_postgres():
     """One-time import from SQLite to PostgreSQL"""
