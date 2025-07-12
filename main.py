@@ -1984,6 +1984,11 @@ class AdaptiveAlphaTrader:
     def execute_trade(self, token_address, strategy, position_size, entry_price, source_wallet=None):
         """Execute the trade using your working function with source wallet tracking and database recording"""
         
+        # CHECK IF ALREADY IN POSITION - ADD THIS
+        if token_address in self.positions:
+            logging.warning(f"⚠️ Already have position in {token_address[:8]} - skipping duplicate buy")
+            return False
+        
         # CHECK DAILY TRADE LIMIT FIRST
         current_date = datetime.now().date()
         if current_date != self.last_trade_date:
@@ -2210,6 +2215,7 @@ class AdaptiveAlphaTrader:
         else:
             logging.error(f"❌ TRADE FAILED for {token_address[:8]}")
             return False
+
             
 
     def execute_bundled_trades(self, trade_opportunities):
@@ -4145,6 +4151,10 @@ class AdaptiveAlphaTrader:
         
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
+            
+            # FILTER OUT TOKENS WE ALREADY OWN - ADD THIS
+            tokens = [t for t in tokens if t not in self.positions]
+            
             momentum_candidates = []
             
             for token in tokens:
