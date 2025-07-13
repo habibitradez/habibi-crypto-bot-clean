@@ -99,7 +99,7 @@ ALPHA_WALLETS_CONFIG = [
     ("5WZXKX9Sy37waFySjeSX7tSS55ZgZM3kFTrK55iPNovA", "Alpha27"),
     ("TonyuYKmxUzETE6QDAmsBFwb3C4qr1nD38G52UGTjta", "Alpha28"),
     ("G5nxEXuFMfV74DSnsrSatqCW32F34XUnBeq3PfDS7w5E", "Alpha29"),
-    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30)
+    ("HB8B5EQ6TE3Siz1quv5oxBwABHdLyjayh35Cc4ReTJef", "Alpha30")
 ]
 
 daily_stats = {
@@ -3846,11 +3846,11 @@ class AdaptiveAlphaTrader:
             holders = get_holder_count(token_address)
         
             # ADJUSTED: More reasonable minimums
-            if liquidity and liquidity < 500:  # Only block VERY low liquidity
+            if liquidity and liquidity < 1000:  # Only block VERY low liquidity
                 logging.warning(f"⚠️ Very low liquidity: ${liquidity}")
                 return False
             
-            if holders and holders < 10:  # Keep this - 10 is reasonable minimum
+            if holders and holders < 30:  # Keep this - 10 is reasonable minimum
                 logging.warning(f"⚠️ Very few holders: {holders}")
                 return False
         
@@ -4146,36 +4146,44 @@ class AdaptiveAlphaTrader:
             return []
 
     def detect_momentum_explosion(self):
-        """SIMPLE & AGGRESSIVE - Like the one that made 2.2 SOL"""
+        """Find tokens with explosive momentum using stricter criteria and scoring"""
         logging.warning("🔍 MOMENTUM SCAN TRIGGERED!")
         
         try:
             tokens = enhanced_find_newest_tokens_with_free_apis()[:100]
-            
-            # FILTER OUT TOKENS WE ALREADY OWN - ADD THIS
-            tokens = [t for t in tokens if t not in self.positions]
-            
+            tokens_checked = 0
             momentum_candidates = []
             
             for token in tokens:
                 try:
+                    tokens_checked += 1
+                    # Get current data
                     current_price = get_token_price(token)
-                    liquidity = get_token_liquidity(token) or 5000  # Changed to 5000
-                    volume = get_24h_volume(token) or (liquidity * 1.5)  # Assume activity
-                    holders = get_holder_count(token) or 50  # Assume some holders
-                    age = get_token_age_minutes(token) or 30  # Assume 30 min if unknown
+                    liquidity = get_token_liquidity(token)
+                    volume = get_24h_volume(token)
+                    holders = get_holder_count(token)
+                    age = get_token_age_minutes(token)
                     
-                    if not current_price:
+                    if not all([current_price, liquidity, volume]):
                         continue
                     
-                    # Skip really old tokens
-                    if age and age > 1440:  # 24 hours
-                        continue
+                    # ADD DEBUG LINES HERE - RIGHT AFTER GETTING DATA
+                    logging.debug(f"DEBUG - Token: {token[:8]}")
+                    logging.debug(f"  Price: ${current_price} (real: {current_price not in [0.00001, 1.0, 0.001]})")
+                    logging.debug(f"  Liquidity: ${liquidity} (real: {liquidity != 5000})")
+                    logging.debug(f"  Volume: ${volume} (real: {volume not in [10000, 25000]})")
+                    logging.debug(f"  Holders: {holders} (real: {holders not in [150, 100, 75]})")
+                    logging.debug(f"  Age: {age}m (real: {age not in [45, 60]})")
                     
+                    # Calculate momentum score
                     momentum_score = 0
                     volume_liq_ratio = volume / liquidity
                     
-                    # SIMPLE SCORING - Like your profitable version
+                    # Log tokens with decent activity
+                    if volume_liq_ratio > 1:
+                        logging.info(f"📊 Active token {token[:8]}: Vol/Liq={volume_liq_ratio:.1f}, Liq=${liquidity:,.0f}, Age={age}m, Holders={holders}")
+                    
+                    # 1. Volume/Liquidity Ratio (most important - 40 points max)
                     if volume_liq_ratio > 5:
                         momentum_score += 40
                     elif volume_liq_ratio > 3:
@@ -4183,58 +4191,55 @@ class AdaptiveAlphaTrader:
                     elif volume_liq_ratio > 2:
                         momentum_score += 10
                     else:
-                        continue  # Skip low activity
+                        continue  # Skip low momentum
                     
-                    # Age scoring - prefer 5-360 minutes
-                    if 45 <= age <= 180:  # Sweet spot - proven momentum
-                        momentum_score += 25  # Biggest bonus
-                    elif 30 <= age < 45:
-                        momentum_score += 20
-                    elif 180 < age <= 360:  # Still good for established tokens
-                        momentum_score += 15
-                    elif age < 30:
-                        momentum_score += 10  # Less bonus for very new
-                    elif age > 360:
-                        continue  # Too old
-                    else:
-                        momentum_score += 5
-                    
-                    # UPDATED HOLDER SCORING - ALLOW ESTABLISHED TOKENS
-                    if holders > 50000:  # Too many holders
-                        continue
-                    elif 5000 <= holders <= 20000:  # PRIME ZONE - Like your 8,694 holder winner
-                        momentum_score += 30  # Biggest bonus for established tokens
-                    elif 1000 <= holders < 5000:  # Good established tokens
-                        momentum_score += 25
-                    elif 300 <= holders < 1000:  # Medium tokens
-                        momentum_score += 20
-                    elif 80 <= holders < 300:  # Smaller but active
-                        momentum_score += 15
-                    elif 50 <= holders < 80:  # Minimum acceptable
-                        momentum_score += 10
-                    elif holders < 50:
-                        continue  # Too few holders
-                    
-                    # Holder velocity bonus
-                    if age > 0:
-                        holders_per_minute = holders / age
-                        if holders_per_minute > 10:  # Viral growth
+                    # 2. Optimal Age (20 points max)
+                    if age:
+                        if 45 <= age <= 120:  # Sweet spot
+                            momentum_score += 20
+                        elif 30 <= age < 45:
                             momentum_score += 15
-                        elif holders_per_minute > 5:  # Strong growth
-                            momentum_score += 10
-                        elif holders_per_minute > 2:  # Good growth
+                        elif age < 30:
+                            momentum_score += 10  # Might be too early
+                        elif age > 360:  # 6 hours
+                            continue  # Too old
+                        else:
                             momentum_score += 5
                     
-                    # Basic liquidity check
-                    if liquidity >= 50000:  # High liquidity bonus
-                        momentum_score += 15
-                    elif liquidity >= 20000:
+                    # 3. Holder Count (20 points max) - JUNE 30TH WINNING LOGIC
+                    if holders:
+                        if holders > 500:
+                            logging.info(f"   ⚠️ Token {token[:8]} has {holders} holders - might be too late")
+                            continue
+                        elif 80 <= holders <= 300:  # Sweet spot
+                            momentum_score += 20
+                        elif 50 <= holders < 80:
+                            momentum_score += 15
+                        elif 30 <= holders < 50:
+                            momentum_score += 10
+                        elif holders < 30:
+                            continue  # Too early
+                        else:  # 300-500
+                            momentum_score += 5
+                    
+                    # 4. Holder Growth Rate (10 points max)
+                    if age and age > 0 and holders:
+                        holders_per_minute = holders / age
+                        if holders_per_minute > 2:  # Rapid adoption
+                            momentum_score += 10
+                        elif holders_per_minute > 1:
+                            momentum_score += 5
+                    
+                    # 5. Liquidity Quality (10 points max)
+                    if liquidity >= 5000:
                         momentum_score += 10
-                    elif liquidity >= 5000:
+                    elif liquidity >= 3000:
                         momentum_score += 5
+                    elif liquidity < 2000:
+                        momentum_score -= 10  # Penalty for low liquidity
                     
                     # Add to candidates if score is high enough
-                    if momentum_score >= 50:  # Collect candidates
+                    if momentum_score >= 50:  # Minimum score to consider
                         momentum_candidates.append({
                             'token': token,
                             'score': momentum_score,
@@ -4242,70 +4247,50 @@ class AdaptiveAlphaTrader:
                             'age': age,
                             'holders': holders,
                             'liquidity': liquidity,
-                            'price': current_price
+                            'price': current_price,
+                            'holders_per_minute': holders / age if age > 0 else 0
                         })
-                    
-                except:
+                
+                except Exception as e:
                     continue
             
-            # Sort by score
+            # Sort by score and log top candidates
             momentum_candidates.sort(key=lambda x: x['score'], reverse=True)
             
             if momentum_candidates:
-                best = momentum_candidates[0]
+                logging.warning(f"📊 Found {len(momentum_candidates)} momentum candidates")
                 
-                # TRADE ONLY HIGH QUALITY - Like successful version
-                if best['score'] >= 70:  # RAISED THRESHOLD (was 50)
-                    logging.error(f"🚀 MOMENTUM DETECTED: {best['token']}")
-                    logging.error(f"   Score: {best['score']}")
-                    logging.error(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
-                    logging.error(f"   Age: {best['age']}m, Holders: {best['holders']}")
+                # Log top 3 candidates
+                for i, candidate in enumerate(momentum_candidates[:3]):
+                    logging.info(f"#{i+1} Score {candidate['score']}: {candidate['token'][:8]} - {candidate['volume_ratio']:.1f}x vol, {candidate['holders']} holders, {candidate['age']}m old")
+                
+                # Trade the best one if score is high enough
+                best = momentum_candidates[0]
+                if best['score'] >= 70:  # High quality threshold
+                    logging.warning(f"🚀 BEST MOMENTUM: {best['token'][:8]}")
+                    logging.warning(f"   Score: {best['score']}/100")
+                    logging.warning(f"   Volume/Liq: {best['volume_ratio']:.1f}x")
+                    logging.warning(f"   Age: {best['age']}m, Holders: {best['holders']}")
+                    logging.warning(f"   Holder velocity: {best['holders_per_minute']:.1f}/min")
                     
-                    # ADD HONEYPOT CHECK HERE
-                    is_hp, hp_score, hp_reasons = self.is_honeypot(best['token'])
-                    if is_hp:
-                        logging.error(f"🚨 HONEYPOT BLOCKED: {best['token'][:8]} - {hp_reasons}")
-                        # Try next best candidate
-                        for candidate in momentum_candidates[1:4]:  # Check next 3
-                            if candidate['score'] >= 70:
-                                is_hp, hp_score, hp_reasons = self.is_honeypot(candidate['token'])
-                                if not is_hp:
-                                    best = candidate
-                                    break
-                        else:
-                            return False  # All candidates are honeypots
+                    # Use dynamic position sizing if available
+                    position_size = 0.05  # Default
+                    if hasattr(self, 'calculate_position_size'):
+                        position_size = self.calculate_position_size('MOMENTUM_EXPLOSION', 0.8, best)
                     
-                    # Position sizing with 3% cap like profitable version
-                    balance = self.wallet.get_balance()
-                    if best['volume_ratio'] > 5 and best['score'] > 70:
-                        position_size = balance * 0.08  # 8% for strong signals
-                    else:
-                        position_size = balance * 0.05  # 5% standard
-                    
-                    # CRITICAL: Cap at 3% like your profitable version
-                    max_position = balance * 0.03
-                    position_size = min(position_size, max_position)
-                    
-                    logging.info(f"Position sizing: {position_size:.3f} SOL ({(position_size/balance)*100:.1f}% of {balance:.3f} SOL)")
-                    
-                    # EXECUTE!
-                    success = self.execute_trade(
+                    # Execute trade
+                    self.execute_trade(
                         best['token'],
                         'MOMENTUM_EXPLOSION',
                         position_size,
                         best['price'],
                         source_wallet='MOMENTUM_DETECT'
                     )
-                    
-                    return success
+                    return True
                 else:
                     logging.info(f"Best score {best['score']} below 70 threshold - waiting for better setup")
-                    # ADD DIAGNOSTIC LINE:
-                    logging.warning(f"❌ Best candidate only scored {best['score']} (need 70+) - Token: {best['token'][:8]}")
-            else:
-                # ADD DIAGNOSTIC LINE:
-                logging.warning(f"❌ No momentum candidates found from {len(tokens)} tokens checked")
             
+            logging.debug(f"🔍 MOMENTUM SCAN: Checked {tokens_checked} tokens, no trades taken")
             return False
             
         except Exception as e:
@@ -4591,177 +4576,54 @@ class AdaptiveAlphaTrader:
                 
 
     def monitor_momentum_position(self, token, position):
-        """SMART MOMENTUM MONITORING with graduated hold times"""
-        if position.get('strategy') not in ['MOMENTUM_EXPLOSION', 'MOMENTUM_DETECT', 'MORI_SETUP', 'PRE_PUMP_PATTERN']:
+        """Monitor momentum positions - JUNE 30TH SIMPLE LOGIC"""
+        if position.get('strategy') not in ['MOMENTUM_EXPLOSION']:
             return
         
         hold_time = time.time() - position['entry_time']
+    
+        # Never exit in first 5 minutes (June 30th patience)
+        if hold_time < 300:
+            return
         
-        # Get current price (REQUIRED)
         current_price = get_token_price(token)
-        if not current_price:
+        if not current_price: 
             return
         
         price_change = ((current_price - position['entry_price']) / position['entry_price']) * 100
-        
-        # LOG EVERY 30 SECONDS
-        if int(hold_time) % 30 == 0:
-            logging.info(f"📊 MOMENTUM: {token[:8]} - {price_change:+.1f}% after {hold_time/60:.0f}m")
-        
-        # GRADUATED HOLD TIME LOGIC
-        if hold_time < 60:  # First minute - only extreme actions
-            if price_change >= 100:  # 2x in under a minute!
-                sell_size = position['size'] * 0.7
-                logging.warning(f"🚀 INSTANT 2X: {price_change:.1f}% in {hold_time:.0f}s! Taking 70%")
-                result = execute_optimized_sell(token, sell_size)
-                if result and result != "no-tokens":
-                    position['size'] *= 0.3
-                    position['partial_sold'] = True
-                    position['moonbag'] = True
-                return
-                
-            elif price_change <= -25:  # Catastrophic dump
-                logging.warning(f"🚨 QUICK DUMP: {price_change:.1f}% in {hold_time:.0f}s!")
-                self.ensure_position_sold(token, position, "QUICK_STOP")
-                return
-            else:
-                return  # Wait for more data
-                
-        elif hold_time < 300:  # 1-5 minutes - moderate actions
-            if price_change >= 50:  # Good pump
-                sell_size = position['size'] * 0.5
-                logging.warning(f"🔥 QUICK PUMP: {price_change:.1f}% in {hold_time/60:.1f}m! Taking 50%")
-                result = execute_optimized_sell(token, sell_size)
-                if result and result != "no-tokens":
-                    position['size'] *= 0.5
-                    position['partial_sold'] = True
-                return
-                
-            elif price_change <= -15:  # Normal stop loss
-                logging.warning(f"🛑 EARLY STOP LOSS: {price_change:.1f}%")
-                self.ensure_position_sold(token, position, "STOP_LOSS")
-                return
-            else:
-                return  # Keep waiting
-        
-        # AFTER 5 MINUTES - Full normal strategy
-        
-        # SMART PROFIT SCALING
-        if not position.get('partial_sold'):
-            if price_change >= 20:
-                # Take 50% at 20% gain
-                sell_size = position['size'] * 0.5
-                logging.warning(f"💰 SECURING PROFIT: Taking 50% at {price_change:.1f}%")
-                result = execute_optimized_sell(token, sell_size)
-                if result and result != "no-tokens":
-                    position['size'] *= 0.5
-                    position['partial_sold'] = True
-                    position['secured_profit'] = True
-                    
-            elif price_change >= 50:
-                # Big gain - take 70%, keep 30% moonbag
-                sell_size = position['size'] * 0.7
-                logging.warning(f"🚀 BIG GAIN: Taking 70% at {price_change:.1f}%, keeping moonbag")
-                result = execute_optimized_sell(token, sell_size)
-                if result and result != "no-tokens":
-                    position['size'] *= 0.3
-                    position['partial_sold'] = True
-                    position['moonbag'] = True
-        
-        # TRAILING STOP for moonbags
-        elif position.get('moonbag'):
-            if 'peak_price' not in position or current_price > position['peak_price']:
-                position['peak_price'] = current_price
-                position['peak_change'] = price_change
-            
-            drop_from_peak = ((position['peak_price'] - current_price) / position['peak_price']) * 100
-            
-            # Let moonbags run but protect profits
-            if drop_from_peak > 30:  # 30% drop from peak
-                logging.warning(f"📉 MOONBAG EXIT: Dropped {drop_from_peak:.1f}% from peak {position['peak_change']:.1f}%")
-                self.ensure_position_sold(token, position, "MOONBAG_TRAIL")
-                return
-        
-        # MOONSHOT CHECK - Take it all at 100%+
-        if price_change >= 100:
-            logging.warning(f"🎯 MOONSHOT {price_change:.1f}% - Taking everything!")
-            self.ensure_position_sold(token, position, "MOONSHOT")
+    
+        # JUNE 30TH SIMPLE EXIT RULES
+        if price_change >= 50:  # Take 50% profits
+            logging.warning(f"🚀 PROFIT TARGET: {price_change:.1f}% - selling!")
+            self.ensure_position_sold(token, position, "MOMENTUM_PROFIT")
             return
         
-        # SIMPLE STOP LOSS - More lenient if we already took profit
-        stop_loss = -15 if not position.get('partial_sold') else -25
-        if price_change <= stop_loss:
+        if price_change <= -15:  # Stop loss at -15%
             logging.warning(f"🛑 STOP LOSS: {price_change:.1f}%")
-            self.ensure_position_sold(token, position, "STOP_LOSS")
-            return
-        
-        # MOMENTUM CHECK - Simple version
-        current_volume = get_24h_volume(token)
-        current_liquidity = get_token_liquidity(token)
-        
-        if current_volume and current_liquidity and current_liquidity > 0:
-            if current_volume < current_liquidity and not position.get('moonbag'):
-                logging.warning(f"📉 MOMENTUM FADING: Volume < Liquidity")
-                self.ensure_position_sold(token, position, "MOMENTUM_FADE")
-                return
-        
-        # PANIC DUMP DETECTION
-        if hasattr(position, 'last_price'):
-            recent_move = ((current_price - position['last_price']) / position['last_price']) * 100
-            if recent_move < -8:  # 8% quick drop
-                logging.warning(f"🚨 PANIC DUMP: {recent_move:.1f}% drop!")
-                self.ensure_position_sold(token, position, "PANIC_DUMP")
-                return
-        position['last_price'] = current_price
-        
-        # SIMPLE TIMEOUT
-        if hold_time > 1800 and price_change < 10 and not position.get('moonbag'):
-            logging.warning(f"⏰ TIMEOUT: Only {price_change:.1f}% after 30m")
-            self.ensure_position_sold(token, position, "TIMEOUT")
+            self.ensure_position_sold(token, position, "MOMENTUM_STOP")
             return
     
 
     def calculate_position_size(self, strategy, ml_confidence, token_data):
-        """Calculate position size based on multiple factors"""
+        """Simplified position sizing - June 30th style with minimal adjustments"""
+    
+        # JUNE 30TH BASE SIZE
         base_size = 0.05
-        
-        # Start with base adjustments
+    
+        # Only adjust for VERY strong signals (keep it simple)
         if strategy == 'MOMENTUM_EXPLOSION':
-            # Check signal strength
-            volume_ratio = token_data.get('volume_ratio', token_data.get('volume', 0) / max(token_data.get('liquidity', 1), 1))
-            
-            if volume_ratio > 5 and ml_confidence > 0.75:
-                # SUPER strong signal - bet bigger
-                position_size = 0.10
-                logging.warning(f"💎 PREMIUM SIGNAL: {volume_ratio:.1f}x volume, {ml_confidence:.1%} confidence")
-            elif volume_ratio > 3 and ml_confidence > 0.65:
-                # Strong signal
-                position_size = 0.08
-            else:
-                # Standard momentum
-                position_size = 0.05
-        else:
-            # Non-momentum trades stay smaller
-            position_size = 0.03
+            volume_ratio = token_data.get('volume_ratio', 1)
         
-        # Apply Kelly Criterion for optimal sizing (if we have stats)
-        if ml_confidence > 0.5 and hasattr(self.brain, 'strategy_performance'):
-            strategy_data = self.brain.strategy_performance.get(strategy, {})
-            if strategy_data:
-                wins = len([t for t in strategy_data.get('trades', []) if t.get('pnl_percent', 0) > 0])
-                total = len(strategy_data.get('trades', []))
-                
-                if total > 0:
-                    win_rate = wins / total
-                    # Simple Kelly adjustment without complex calculations
-                    if win_rate > 0.5:
-                        position_size *= 1.2  # Increase size for winning strategies
-                    elif win_rate < 0.3:
-                        position_size *= 0.8  # Decrease size for losing strategies
-        
-        # Never risk more than 3% of balance
+            # Only increase for exceptional signals
+            if volume_ratio > 8 and ml_confidence > 0.8:
+                base_size = 0.08  # 60% increase for premium signals
+            elif volume_ratio > 6 and ml_confidence > 0.7:
+                base_size = 0.06  # 20% increase for strong signals
+            # Otherwise keep base 0.05
+    
+        # Simple safety cap
         max_position = self.wallet.get_balance() * 0.03
-        return min(position_size, max_position)
+        return min(base_size, max_position)
     
     def analyze_time_patterns(self):
         """Track when profitable trades occur"""
