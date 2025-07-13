@@ -10552,35 +10552,11 @@ def verify_wallet_setup():
         
 
 def get_holder_count(token_address):
-    """Get number of token holders using Helius"""
+    """Get number of token holders using Helius - CORRECTED VERSION"""
     try:
         url = f"https://mainnet.helius-rpc.com/?api-key={HELIUS_API_KEY}"
         
-        # Method 1: Get token accounts
-        payload = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "getTokenAccounts",
-            "params": [
-                token_address,
-                {
-                    "mint": token_address,
-                    "limit": 1000
-                }
-            ]
-        }
-        
-        response = requests.post(url, json=payload, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            if 'result' in data:
-                # Count non-zero balances
-                holders = len([acc for acc in data.get('result', []) 
-                             if float(acc.get('amount', 0)) > 0])
-                if holders > 0:
-                    return holders
-        
-        # Method 2: Use getProgramAccounts with filters
+        # FIXED: Use getProgramAccounts to find all token accounts for this mint
         payload = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -10591,33 +10567,41 @@ def get_holder_count(token_address):
                     "encoding": "jsonParsed",
                     "filters": [
                         {"dataSize": 165},  # Token account size
-                        {"memcmp": {"offset": 0, "bytes": token_address}}  # Filter by mint
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": token_address  # Filter by mint address
+                            }
+                        }
                     ]
                 }
             ]
         }
         
-        response = requests.post(url, json=payload, timeout=5)
+        response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
             data = response.json()
-            if 'result' in data:
+            if 'result' in data and data['result']:
                 # Count accounts with balance > 0
                 holders = 0
                 for account in data['result']:
-                    if 'account' in account and 'data' in account['account']:
+                    try:
                         parsed = account['account']['data'].get('parsed', {})
                         info = parsed.get('info', {})
                         amount = info.get('tokenAmount', {}).get('amount', '0')
                         if int(amount) > 0:
                             holders += 1
-                return holders if holders > 0 else 75
+                    except:
+                        continue
+                
+                return holders if holders > 0 else 0
         
-        # Default for new tokens
-        return 75
+        # If API fails, return 0 (don't trade on unknown data)
+        return 0
         
     except Exception as e:
-        logging.debug(f"Error getting holder count: {e}")
-        return None
+        logging.debug(f"Error getting holder count for {token_address[:8]}: {e}")
+        return 0
         
 
 def get_recent_volume(token_address):
